@@ -1,0 +1,34 @@
+
+GET http://localhost:5000/api/auth/
+
+###
+
+GET http://localhost:5000/auth/pl_users
+
+###
+
+POST http://localhost:5000/auth/register
+Content-Type: application/json
+
+{
+  "username": "ngocanh",
+  "password": "12345678"
+}
+
+###
+
+POST http://localhost:5000/auth/login
+Content-Type: application/json
+
+{
+  "username": "dlc",
+  "password": "dlc"
+}
+
+###
+POST http://localhost:5000/auth/resetUUID
+Content-Type: application/json
+
+{
+  "username": "DiemLinhCo"
+}
