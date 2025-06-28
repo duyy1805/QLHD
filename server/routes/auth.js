@@ -9,7 +9,7 @@ const { poolPromise } = require('../db');
 router.get('/users', async (req, res) => {
 	try {
 		const pool = await poolPromise; // Lấy connection pool
-		const result = await pool.request().query('SELECT * FROM Users'); // Truy vấn SQL
+		const result = await pool.request().query('SELECT * FROM HD_Users'); // Truy vấn SQL
 		res.json(result.recordset); // Trả kết quả dưới dạng JSON
 	} catch (err) {
 		console.error('Query error:', err);
@@ -17,10 +17,10 @@ router.get('/users', async (req, res) => {
 	}
 });
 
-router.get('/pl_users', async (req, res) => {
+router.get('/HD_users', async (req, res) => {
 	try {
 		const pool = await poolPromise; // Lấy connection pool
-		const result = await pool.request().query('SELECT * FROM PL_Users'); // Truy vấn SQL
+		const result = await pool.request().query('SELECT * FROM HD_Users'); // Truy vấn SQL
 		res.json(result.recordset); // Trả kết quả dưới dạng JSON
 	} catch (err) {
 		console.error('Query error:', err);
@@ -32,8 +32,8 @@ router.get('/', verifyToken, async (req, res) => {
 	try {
 		const pool = await poolPromise;
 		const result = await pool.request()
-			.input('id', req.id)
-			.query('SELECT id, username FROM Users WHERE id = @id');
+			.input('id', req.userId)
+			.query('SELECT id, username FROM HD_Users WHERE id = @id');
 
 		const user = result.recordset[0];
 		if (!user)
@@ -62,7 +62,7 @@ router.post('/register', async (req, res) => {
 		// Check for existing user
 		const existingUser = await pool.request()
 			.input('Username', username)
-			.query('SELECT * FROM PL_Users WHERE username = @Username');
+			.query('SELECT * FROM HD_Users WHERE username = @Username');
 
 		if (existingUser.recordset.length > 0)
 			return res.status(400).json({ success: false, message: 'Username already taken' });
@@ -72,12 +72,12 @@ router.post('/register', async (req, res) => {
 		await pool.request()
 			.input('Username', username)
 			.input('Password', hashedPassword)
-			.query('INSERT INTO PL_Users (username, password) VALUES (@username, @password)');
+			.query('INSERT INTO HD_Users (username, password) VALUES (@username, @password)');
 
 		// Return token
 		const result = await pool.request()
 			.input('Username', username)
-			.query('SELECT id FROM PL_Users WHERE username = @Username');
+			.query('SELECT id FROM HD_Users WHERE username = @Username');
 
 		const newUser = result.recordset[0];
 		const accessToken = jwt.sign(
@@ -112,7 +112,7 @@ router.post('/login', async (req, res) => {
 		// Check for existing user
 		const result = await pool.request()
 			.input('Username', username)
-			.query('SELECT * FROM PL_Users WHERE username = @Username');
+			.query('SELECT * FROM HD_Users WHERE username = @Username');
 
 		const user = result.recordset[0];
 		if (!user)

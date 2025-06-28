@@ -1,9 +1,9 @@
 
-GET http://localhost:5000/api/auth/
-
+GET http://localhost:5000/auth/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzUxMDMxMDQ1LCJleHAiOjE3NTEwNTI2NDV9.PlEb1xBy6_j4lw6HWOGFkvy_xA8r0QMfz2DKlhWHqZQ
 ###
 
-GET http://localhost:5000/auth/pl_users
+GET http://localhost:5000/auth/hd_users
 
 ###
 
@@ -11,8 +11,8 @@ POST http://localhost:5000/auth/register
 Content-Type: application/json
 
 {
-  "username": "ngocanh",
-  "password": "12345678"
+  "username": "dlc",
+  "password": "dlc"
 }
 
 ###
