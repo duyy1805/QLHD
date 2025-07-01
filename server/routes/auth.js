@@ -50,11 +50,11 @@ router.get('/', verifyToken, async (req, res) => {
 // @desc Register user
 // @access Public
 router.post('/register', async (req, res) => {
-	const { username, password } = req.body;
+	const { username, password, coQuanId } = req.body;
 
 	// Simple validation
-	if (!username || !password)
-		return res.status(400).json({ success: false, message: 'Missing username and/or password' });
+	if (!username || !password || !coQuanId)
+		return res.status(400).json({ success: false, message: 'Missing username and/or password and/or coQuanId' });
 
 	try {
 		const pool = await poolPromise;
@@ -72,7 +72,8 @@ router.post('/register', async (req, res) => {
 		await pool.request()
 			.input('Username', username)
 			.input('Password', hashedPassword)
-			.query('INSERT INTO HD_Users (username, password) VALUES (@username, @password)');
+			.input('CoQuanId', coQuanId)
+			.query('INSERT INTO HD_Users (username, password, CoQuanId) VALUES (@username, @password, @CoQuanId)');
 
 		// Return token
 		const result = await pool.request()
@@ -133,6 +134,7 @@ router.post('/login', async (req, res) => {
 			success: true,
 			message: 'User logged in successfully',
 			accessToken,
+			coQuanId: user.CoQuanId, // Return the user's CoQuan as part of the response
 			role: user.role // Return the user's role as part of the response
 		});
 	} catch (error) {

@@ -11,7 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import axios, { AxiosError } from "axios";
 
+import apiConfig from "../../apiConfig.json";
 // Biểu tượng SVG đơn giản cho logo
 const CustomLogo = () => (
   <img src="/vite.svg" alt="Vite Logo" className="h-10 w-10" />
@@ -62,13 +64,41 @@ export default function App() {
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
 
-  const handleLogin = () => {
-    if (username === "admin" && password === "123456") {
-      navigate("/admin");
-    } else {
-      alert("Sai tài khoản hoặc mật khẩu");
+  const handleLogin = async () => {
+    try {
+      const res = await axios.post(`${apiConfig.API_BASE_URL}/auth/login`, {
+        username,
+        password,
+      });
+
+      if (res.data.success) {
+        const { accessToken, role, coQuanId } = res.data;
+
+        // ✅ Lưu token vào localStorage (nếu cần dùng để xác thực)
+        localStorage.setItem("accessToken", accessToken);
+        localStorage.setItem("role", role);
+        localStorage.setItem("coQuanId", coQuanId);
+
+        // ✅ Điều hướng theo vai trò
+        if (role === "admin") {
+          navigate("/admin");
+        } else {
+          navigate("/hopdong"); // Hoặc trang phù hợp với vai trò khác
+        }
+      } else {
+        alert("Đăng nhập không thành công!");
+      }
+    } catch (err: unknown) {
+      const error = err as AxiosError<{ message: string }>;
+
+      if (error.response?.data?.message) {
+        alert(error.response.data.message);
+      } else {
+        alert("Lỗi hệ thống, vui lòng thử lại.");
+      }
     }
   };
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4 sm:p-6">
       {/* Logo và Tiêu đề */}

@@ -1,6 +1,6 @@
 
 GET http://localhost:5000/auth/
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzUxMDMxMDQ1LCJleHAiOjE3NTEwNTI2NDV9.PlEb1xBy6_j4lw6HWOGFkvy_xA8r0QMfz2DKlhWHqZQ
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzUxMDc0ODAwLCJleHAiOjE3NTEwOTY0MDB9.t1ff0tzrAeIs7AUz_Li4KaoT7a27liSsOY9ZZPmqobM
 ###
 
 GET http://localhost:5000/auth/hd_users
@@ -11,8 +11,9 @@ POST http://localhost:5000/auth/register
 Content-Type: application/json
 
 {
-  "username": "dlc",
-  "password": "dlc"
+  "username": "cntt2",
+  "password": "123456",
+  "coQuanId": 1
 }
 
 ###
@@ -32,3 +33,15 @@ Content-Type: application/json
 {
   "username": "DiemLinhCo"
 }
+
+###
+
+POST http://localhost:5000/QLHD/hopdong
+Content-Type: application/json
+
+{
+  "SoVanBanNoiBo": "001/Z176-CNTT-HD"
+}
+
+###
+GET http://localhost:5000/QLHD/lookup
