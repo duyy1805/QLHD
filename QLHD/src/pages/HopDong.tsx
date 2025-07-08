@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from "react";
 import HopDongTable from "@/components/hopdong/HopDongTable";
 import {
+  fetchLookup,
+  fetchHopDong,
+  deleteHopDong as apiDeleteHopDong,
+  uploadHopDong,
+} from "../components/services/hopdongService";
+import {
   Dialog,
   DialogTrigger,
   DialogContent,
@@ -11,7 +17,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import axios from "axios";
 import apiConfig from "../../apiConfig.json";
 import { toast } from "sonner";
 import { Combobox } from "@/components/hopdong/ComboBox";
@@ -65,6 +70,7 @@ export default function HopDong() {
   const [file, setFile] = useState<File | null>(null);
   const [hopDongs, setHopDongs] = useState<HopDong[]>([]);
   const coQuanId = localStorage.getItem("coQuanId");
+  const role = localStorage.getItem("role");
   const handleChange = (
     e: React.ChangeEvent<
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
@@ -72,12 +78,6 @@ export default function HopDong() {
   ) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
-
-  // useEffect(() => {
-  //   axios.get(`${apiConfig.API_BASE_URL}/QLHD/lookup`).then((res) => {
-  //     setLookup(res.data);
-  //   });
-  // }, []);
 
   const handleSubmit = async () => {
     console.log(coQuanId);
@@ -128,15 +128,7 @@ export default function HopDong() {
           console.log(`${key}: ${value}`);
         }
       }
-      await axios.post(
-        `${apiConfig.API_BASE_URL}/QLHD/them-hopdong`,
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
-      );
+      await uploadHopDong(formData);
       setOpen(false);
       window.location.reload();
     } catch (err) {
@@ -144,41 +136,39 @@ export default function HopDong() {
     }
   };
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // 1. Gọi lookup
-        const lookupRes = await axios.get(
-          `${apiConfig.API_BASE_URL}/QLHD/lookup`
-        );
-        const lookupData = lookupRes.data;
-        setLookup(lookupData);
+  const handleDeleteHopDong = async (id: number) => {
+    try {
+      await apiDeleteHopDong(id);
+      toast.success("Đã xóa hợp đồng");
+      // Cập nhật lại danh sách hopDongs bằng cách lọc bỏ id
+      setHopDongs((prev) => prev.filter((hd) => hd.Id !== id));
+    } catch (err) {
+      toast.error("Lỗi khi xóa hợp đồng");
+      console.error(err);
+    }
+  };
 
-        // 2. Lấy TenCoQuan từ localStorage
+  const loadHopDongs = async () => {
+    try {
+      const lookupRes = await fetchLookup();
+      setLookup(lookupRes.data);
 
-        const match = (lookupData.coQuan as CoQuan[]).find(
-          (cq) => String(cq.Id) === coQuanId
-        );
-        const tenCoQuan = match?.TenCoQuan ?? null;
-
-        console.log("Lấy cơ quan:", tenCoQuan);
-
-        // 3. Gọi API hợp đồng
-        const hopDongRes = await axios.post<HopDong[]>(
-          `${apiConfig.API_BASE_URL}/QLHD/hopdong`,
-          {
-            TenCoQuan: tenCoQuan,
-            SoVanBanNoiBo: null,
-          }
-        );
-
-        setHopDongs(hopDongRes.data);
-      } catch (err) {
-        console.error("Lỗi khi load dữ liệu:", err);
+      let tenCQ: string | null = null;
+      if (role !== "admin") {
+        tenCQ = lookupRes.data.coQuan.find(
+          (cq: CoQuan) => String(cq.Id) === coQuanId
+        )?.TenCoQuan;
       }
-    };
 
-    fetchData(); // Gọi hàm async
+      const hopDongRes = await fetchHopDong(tenCQ ?? null);
+      setHopDongs(hopDongRes.data);
+    } catch (err) {
+      console.error("Lỗi khi load dữ liệu:", err);
+    }
+  };
+
+  useEffect(() => {
+    loadHopDongs();
   }, []);
 
   const handleRowClick = (filePath: string | null) => {
@@ -383,7 +373,12 @@ export default function HopDong() {
         </Dialog>
       </div>
 
-      <HopDongTable data={hopDongs} onRowClick={handleRowClick} />
+      <HopDongTable
+        data={hopDongs}
+        onRowClick={handleRowClick}
+        role={role}
+        onDelete={handleDeleteHopDong}
+      />
     </div>
   );
 }

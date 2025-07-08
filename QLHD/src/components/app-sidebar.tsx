@@ -1,4 +1,4 @@
-import * as React from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom"; // 👈 Thêm
 import {
   Sidebar,
@@ -14,13 +14,16 @@ import {
 } from "@/components/ui/sidebar";
 import { SearchForm } from "@/components/search-form";
 import { VersionSwitcher } from "@/components/version-switcher";
-import { sidebarData } from "@/components/sidebar-data";
+import { getSidebarData } from "@/components/sidebar-data";
 // Đây là dữ liệu sidebar
-const data = sidebarData;
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
-  const location = useLocation(); // 👈 Lấy đường dẫn hiện tại
-
+  const location = useLocation();
+  const [data, setData] = useState(getSidebarData(null));
+  useEffect(() => {
+    const storedRole = localStorage.getItem("role");
+    setData(getSidebarData(storedRole));
+  }, []);
   return (
     <Sidebar {...props}>
       <SidebarHeader>

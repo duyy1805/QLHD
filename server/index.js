@@ -20,11 +20,11 @@ app.use(cors());
 app.use('/auth', authRouter)
 app.use('/b2', b2Router)
 app.use('/QLHD', qlhdRouter)
-app.use('/uploads', (req, res, next) => {
-    const filePath = path.join('C:/HopDong/Upload', req.path);
-    res.setHeader('Content-Disposition', 'inline');
-    next();
-}, express.static('C:/HopDong/Upload'));
+app.use('/uploads', express.static('C:/HopDong/Upload', {
+    setHeaders: (res, filePath) => {
+        res.setHeader('Content-Disposition', 'inline');
+    }
+}));
 
 const privateKey = fs.readFileSync(path.join(__dirname, "privkey.pem"), "utf8");
 const certificate = fs.readFileSync(path.join(__dirname, "cert.pem"), "utf8");

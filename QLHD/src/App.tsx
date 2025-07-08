@@ -4,8 +4,10 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import AppLayout from "./layouts/AppLayout";
+import LookupManager from "./pages/LookupManager";
 import HopDong from "./pages/HopDong";
 import { Toaster } from "sonner";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
   return (
@@ -14,9 +16,12 @@ function App() {
         {/* Route không có layout */}
         <Route path="/" element={<Login />} />
         {/* Route dùng layout AppLayout */}
-        <Route element={<AppLayout />}>
-          <Route path="/hopdong" element={<HopDong />} />
-          <Route path="/dashboard" element={<Dashboard />} />
+        <Route element={<ProtectedRoute />}>
+          <Route element={<AppLayout />}>
+            <Route path="/hopdong" element={<HopDong />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/lookup" element={<LookupManager />} />
+          </Route>
         </Route>
       </Routes>
       <Toaster richColors position="top-center" />

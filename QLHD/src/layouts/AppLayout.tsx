@@ -14,9 +14,11 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { sidebarData } from "@/components/sidebar-data";
+import UserMenu from "@/components/UserMenu";
+import { getSidebarData } from "@/components/sidebar-data";
 
-const data = sidebarData;
+const role = localStorage.getItem("role");
+const data = getSidebarData(role);
 
 const getBreadcrumbFromNav = (pathname: string) => {
   for (const group of data.navMain) {
@@ -40,31 +42,38 @@ export default function AppLayout() {
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
-        <header className="flex h-16 items-center gap-2 border-b px-4">
-          <SidebarTrigger />
-          <Breadcrumb>
-            <BreadcrumbList>
-              {breadcrumbItems.map((item, index) => (
-                <Fragment key={item.title}>
-                  <BreadcrumbItem>
-                    {index === breadcrumbItems.length - 1 ? (
-                      <BreadcrumbPage>{item.title}</BreadcrumbPage>
-                    ) : item.href ? (
-                      <BreadcrumbLink href={item.href}>
-                        {item.title}
-                      </BreadcrumbLink>
-                    ) : (
-                      item.title
+        <header className="flex h-16 items-center justify-between border-b px-4">
+          {/* Left side: Sidebar trigger + breadcrumb */}
+          <div className="flex items-center gap-2">
+            <SidebarTrigger />
+            <Breadcrumb>
+              <BreadcrumbList>
+                {breadcrumbItems.map((item, index) => (
+                  <Fragment key={item.title}>
+                    <BreadcrumbItem>
+                      {index === breadcrumbItems.length - 1 ? (
+                        <BreadcrumbPage>{item.title}</BreadcrumbPage>
+                      ) : item.href ? (
+                        <BreadcrumbLink href={item.href}>
+                          {item.title}
+                        </BreadcrumbLink>
+                      ) : (
+                        item.title
+                      )}
+                    </BreadcrumbItem>
+                    {index !== breadcrumbItems.length - 1 && (
+                      <BreadcrumbSeparator />
                     )}
-                  </BreadcrumbItem>
-                  {index !== breadcrumbItems.length - 1 && (
-                    <BreadcrumbSeparator />
-                  )}
-                </Fragment>
-              ))}
-            </BreadcrumbList>
-          </Breadcrumb>
+                  </Fragment>
+                ))}
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
+
+          {/* Right side: Logout button */}
+          <UserMenu />
         </header>
+
         <div className="flex flex-1 flex-col gap-4 p-4">
           <Outlet />
         </div>

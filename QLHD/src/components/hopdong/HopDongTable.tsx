@@ -14,7 +14,17 @@ import {
 } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Funnel } from "lucide-react";
-
+import {
+  AlertDialog,
+  AlertDialogTrigger,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 export interface HopDong {
   Id: number;
   SoVanBanNoiBo: string;
@@ -35,9 +45,16 @@ export interface HopDong {
 interface HopDongTableProps {
   onRowClick?: (filePath: string | null) => void;
   data: HopDong[];
+  role?: string | null;
+  onDelete?: (id: number) => void;
 }
 
-const HopDongTable: React.FC<HopDongTableProps> = ({ onRowClick, data }) => {
+const HopDongTable: React.FC<HopDongTableProps> = ({
+  onRowClick,
+  data,
+  role,
+  onDelete,
+}) => {
   const [filterValue, setFilterValue] = useState("");
 
   const filteredData = useMemo(() => {
@@ -95,6 +112,7 @@ const HopDongTable: React.FC<HopDongTableProps> = ({ onRowClick, data }) => {
               <TableHead>Ghi chú</TableHead>
               <TableHead>Ngày tạo</TableHead>
               <TableHead>Ngày cập nhật</TableHead>
+              {role === "admin" && <TableHead>Thao tác</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -115,6 +133,34 @@ const HopDongTable: React.FC<HopDongTableProps> = ({ onRowClick, data }) => {
                 <TableCell>{row.GhiChu}</TableCell>
                 <TableCell>{formatDate(row.CreatedAt)}</TableCell>
                 <TableCell>{formatDate(row.UpdatedAt)}</TableCell>
+                {role === "admin" && (
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <button className="text-red-600 hover:underline">
+                          Xóa
+                        </button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            Bạn có chắc muốn xóa hợp đồng?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Thao tác này không thể hoàn tác. File PDF cũng sẽ bị
+                            xóa nếu có.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Hủy</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => onDelete?.(row.Id)}>
+                            Xóa
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>

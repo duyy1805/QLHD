@@ -81,7 +81,7 @@ export default function App() {
 
         // ✅ Điều hướng theo vai trò
         if (role === "admin") {
-          navigate("/admin");
+          navigate("/hopdong");
         } else {
           navigate("/hopdong"); // Hoặc trang phù hợp với vai trò khác
         }

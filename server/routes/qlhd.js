@@ -104,6 +104,37 @@ router.post('/them-hopdong', upload.single('file'), async (req, res) => {
     }
 });
 
+// DELETE /QLHD/xoa-hopdong/:id
+router.delete('/xoa-hopdong/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const pool = await poolPromise;
+
+        // 1. Lấy đường dẫn file để xóa (nếu có)
+        const result = await pool.request()
+            .input('Id', sql.Int, id)
+            .query(`SELECT FilePath FROM HD_HopDong WHERE Id = @Id`);
+
+        const filePath = result.recordset?.[0]?.FilePath;
+
+        // 2. Xóa bản ghi trong DB
+        await pool.request()
+            .input('Id', sql.Int, id)
+            .query(`DELETE FROM HD_HopDong WHERE Id = @Id`);
+
+        // 3. Xóa file nếu tồn tại
+        if (filePath && fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+
+        res.json({ success: true, message: 'Đã xóa hợp đồng và file (nếu có).' });
+    } catch (err) {
+        console.error('❌ Lỗi khi xóa hợp đồng:', err);
+        res.status(500).json({ success: false, message: 'Lỗi khi xóa hợp đồng.' });
+    }
+});
+
 // Lấy thông tin liên quan đến hợp đồng
 router.get('/lookup', async (req, res) => {
     try {
@@ -120,6 +151,102 @@ router.get('/lookup', async (req, res) => {
     } catch (err) {
         console.error('Lỗi khi lấy lookup:', err);
         res.status(500).json({ success: false, message: 'Lỗi khi lấy dữ liệu danh mục.' });
+    }
+});
+
+// Mapping loại lookup đến bảng & cột
+const tableMap = {
+    loaiVanBan: { table: "HD_LoaiVanBan", column: "TenLoai" },
+    coQuan: { table: "HD_CoQuan", column: "TenCoQuan" },
+    heThong: { table: "HD_HeThong", column: "TenHeThong" },
+    doiTac: { table: "HD_DoiTac", column: "TenDoiTac" },
+    tinhTrang: { table: "HD_TinhTrang", column: "TenTinhTrang" },
+};
+
+
+// ✅ Thêm mới
+router.post("/lookup/:type", async (req, res) => {
+    const { type } = req.params;
+    const { name } = req.body;
+
+    const config = tableMap[type];
+    if (!config) return res.status(400).json({ error: "Loại không hợp lệ" });
+
+    try {
+        const pool = await poolPromise;
+        const query = `
+        INSERT INTO ${config.table} (${config.column})
+        VALUES (@name)
+      `;
+
+        await pool.request().input("name", name).query(query);
+        res.json({ success: true, message: "Đã thêm thành công" });
+    } catch (err) {
+        console.error("Lỗi thêm:", err);
+        res.status(500).json({ error: "Lỗi khi thêm mới" });
+    }
+});
+
+//cập nhật
+router.put("/lookup/:type/:id", async (req, res) => {
+    const { type, id } = req.params;
+    const { name, shortName } = req.body;
+
+    const config = tableMap[type];
+    if (!config) {
+        return res.status(400).json({ error: "Loại không hợp lệ" });
+    }
+
+    try {
+        const pool = await poolPromise;
+
+        let query = "";
+        const request = pool.request().input("id", id);
+
+        if (type === "coQuan") {
+            // Riêng cơ quan cần cập nhật cả tên và viết tắt
+            query = `
+          UPDATE HD_CoQuan
+          SET TenCoQuan = @name, TenVietTat = @shortName
+          WHERE Id = @id
+        `;
+            request.input("name", name).input("shortName", shortName);
+        } else {
+            // Các loại còn lại chỉ cập nhật 1 trường
+            query = `
+          UPDATE ${config.table}
+          SET ${config.column} = @name
+          WHERE Id = @id
+        `;
+            request.input("name", name);
+        }
+
+        await request.query(query);
+
+        res.json({ success: true, message: "Đã cập nhật thành công" });
+    } catch (err) {
+        console.error("Lỗi cập nhật:", err);
+        res.status(500).json({ error: "Lỗi khi cập nhật" });
+    }
+});
+
+
+// ✅ Xóa
+router.delete("/lookup/:type/:id", async (req, res) => {
+    const { type, id } = req.params;
+
+    const config = tableMap[type];
+    if (!config) return res.status(400).json({ error: "Loại không hợp lệ" });
+
+    try {
+        const pool = await poolPromise;
+        const query = `DELETE FROM ${config.table} WHERE Id = @id`;
+
+        await pool.request().input("id", id).query(query);
+        res.json({ success: true, message: "Đã xóa thành công" });
+    } catch (err) {
+        console.error("Lỗi xóa:", err);
+        res.status(500).json({ error: "Lỗi khi xóa" });
     }
 });
 
