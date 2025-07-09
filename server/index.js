@@ -26,11 +26,6 @@ app.use('/uploads', express.static('C:/HopDong/Upload', {
     }
 }));
 
-const privateKey = fs.readFileSync(path.join(__dirname, "privkey.pem"), "utf8");
-const certificate = fs.readFileSync(path.join(__dirname, "cert.pem"), "utf8");
-
-const credentials = { key: privateKey, cert: certificate };
-
 // https.createServer(credentials, app).listen(5000, () => {
 //     console.log("HTTPS server is running on port 5000");
 // });
