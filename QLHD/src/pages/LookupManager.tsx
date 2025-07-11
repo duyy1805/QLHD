@@ -92,7 +92,9 @@ export default function LookupManager() {
   const fetchLookup = async () => {
     try {
       const res = await axios.get(`${apiConfig.API_BASE_URL}/QLHD/lookup`);
-      setData(res.data[selectedType] || []);
+      const items = res.data[selectedType] || [];
+      console.log("Dữ liệu cập nhật:", res.data);
+      setData([...items]); // ép tạo mảng mới
     } catch (err) {
       toast.error("Lỗi khi tải danh mục");
       console.error(err);
@@ -119,7 +121,7 @@ export default function LookupManager() {
         toast.success("Đã thêm mới");
       }
 
-      fetchLookup();
+      await fetchLookup();
       setOpenDialog(false);
       setName("");
       setShortName("");
@@ -156,7 +158,7 @@ export default function LookupManager() {
         `${apiConfig.API_BASE_URL}/QLHD/lookup/${selectedType}/${id}`
       );
       toast.success("Đã xóa");
-      fetchLookup();
+      await fetchLookup();
     } catch (err) {
       toast.error("Lỗi khi xóa");
       console.error(err);

@@ -134,6 +134,7 @@ router.post('/login', async (req, res) => {
 			success: true,
 			message: 'User logged in successfully',
 			accessToken,
+			userId: user.id,
 			coQuanId: user.CoQuanId, // Return the user's CoQuan as part of the response
 			role: user.role // Return the user's role as part of the response
 		});

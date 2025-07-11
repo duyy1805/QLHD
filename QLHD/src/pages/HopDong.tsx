@@ -5,6 +5,7 @@ import {
   fetchHopDong,
   deleteHopDong as apiDeleteHopDong,
   uploadHopDong,
+  updateHopDong,
 } from "../components/services/hopdongService";
 import {
   Dialog,
@@ -69,8 +70,10 @@ export default function HopDong() {
 
   const [file, setFile] = useState<File | null>(null);
   const [hopDongs, setHopDongs] = useState<HopDong[]>([]);
+  const [editingHopDong, setEditingHopDong] = useState<HopDong | null>(null);
   const coQuanId = localStorage.getItem("coQuanId");
   const role = localStorage.getItem("role");
+  const userId = localStorage.getItem("userId");
   const handleChange = (
     e: React.ChangeEvent<
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
@@ -79,14 +82,44 @@ export default function HopDong() {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
+  const handleEditHopDong = (hopDong: HopDong) => {
+    setForm({
+      LoaiVanBanId:
+        lookup.loaiVanBan
+          .find((x) => x.TenLoai === hopDong.LoaiVanBan)
+          ?.Id.toString() || "",
+      CoQuanId:
+        lookup.coQuan
+          .find((x) => x.TenCoQuan === hopDong.TenCoQuan)
+          ?.Id.toString() || "",
+      HeThongId:
+        lookup.heThong
+          .find((x) => x.TenHeThong === hopDong.TenHeThong)
+          ?.Id.toString() || "",
+      DoiTacId:
+        lookup.doiTac
+          .find((x) => x.TenDoiTac === hopDong.TenDoiTac)
+          ?.Id.toString() || "",
+      TinhTrangId:
+        lookup.tinhTrang
+          .find((x) => x.TenTinhTrang === hopDong.TinhTrang)
+          ?.Id.toString() || "",
+      GhiChu: hopDong.GhiChu,
+      TrichYeu: hopDong.TrichYeu,
+    });
+    setEditingHopDong(hopDong);
+    setOpen(true);
+  };
   const handleSubmit = async () => {
-    console.log(coQuanId);
     if (!coQuanId) {
       toast.error("Không xác định được cơ quan", {
         description: "Vui lòng đăng nhập lại để hệ thống nhận diện cơ quan.",
       });
       return;
     }
+
+    const isEdit = !!editingHopDong;
+
     if (
       !form.LoaiVanBanId ||
       !form.HeThongId ||
@@ -99,40 +132,59 @@ export default function HopDong() {
       });
       return;
     }
-    if (!file) {
+
+    if (!file && !isEdit) {
       toast.error("Thiếu tệp PDF", {
         description: "Vui lòng chọn tệp PDF hợp đồng trước khi lưu.",
-        duration: 2000, // (optional) thời gian hiển thị (ms)
       });
       return;
     }
+
     try {
       const formData = new FormData();
 
-      // Append các trường text
       for (const key in form) {
-        if (key !== "CoQuanId") {
+        if (key === "CoQuanId" && role !== "admin") {
+          formData.append("CoQuanId", coQuanId || "");
+        } else {
           formData.append(key, form[key as keyof typeof form]);
         }
       }
 
-      formData.append("CoQuanId", coQuanId);
-      // Append file nếu có
+      formData.append("CreatedBy", userId || "");
+      if (isEdit) {
+        formData.append("Id", editingHopDong.Id.toString());
+      }
+
       if (file) {
         formData.append("file", file);
       }
-      for (const [key, value] of formData.entries()) {
-        if (value instanceof File) {
-          console.log(`${key}: ${value.name} (${value.size} bytes)`);
-        } else {
-          console.log(`${key}: ${value}`);
-        }
+
+      if (isEdit) {
+        await updateHopDong(formData);
+        toast.success("Đã cập nhật hợp đồng");
+      } else {
+        await uploadHopDong(formData);
+        toast.success("Đã thêm hợp đồng mới");
       }
-      await uploadHopDong(formData);
+
       setOpen(false);
-      window.location.reload();
+      setEditingHopDong(null);
+      setFile(null);
+      setForm({
+        LoaiVanBanId: "",
+        CoQuanId: "",
+        HeThongId: "",
+        DoiTacId: "",
+        TrichYeu: "",
+        TinhTrangId: "",
+        GhiChu: "",
+      });
+
+      await loadHopDongs();
     } catch (err) {
-      console.error("Lỗi khi thêm hợp đồng:", err);
+      console.error("Lỗi khi lưu hợp đồng:", err);
+      toast.error("Lỗi khi lưu hợp đồng");
     }
   };
 
@@ -185,11 +237,29 @@ export default function HopDong() {
   };
 
   return (
-    <div className="min-h-screen p-6">
-      <div className="mb-4 flex justify-between items-center">
-        <h2 className="text-xl font-bold">Quản lý Hợp đồng</h2>
+    <div className="p-6">
+      <div className="mb-4 flex justify-between items-center bg-gray-100 border rounded p-4">
+        <h2 className="text-xl font-bold text-gray-800">Quản lý Hợp đồng</h2>
 
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog
+          open={open}
+          onOpenChange={(isOpen) => {
+            setOpen(isOpen);
+            if (!isOpen) {
+              setEditingHopDong(null); // reset sửa
+              setFile(null); // reset file
+              setForm({
+                LoaiVanBanId: "",
+                CoQuanId: "",
+                HeThongId: "",
+                DoiTacId: "",
+                TrichYeu: "",
+                TinhTrangId: "",
+                GhiChu: "",
+              });
+            }
+          }}
+        >
           <DialogTrigger asChild>
             <Button variant="default">+ Thêm hợp đồng</Button>
           </DialogTrigger>
@@ -224,11 +294,26 @@ export default function HopDong() {
                 <label className="block text-sm font-medium mb-1">
                   Cơ quan
                 </label>
-                <p className="text-sm text-gray-600 px-3 py-2 bg-gray-100 rounded-md">
-                  {lookup.coQuan.find(
-                    (cq) => String(cq.Id) === localStorage.getItem("coQuanId")
-                  )?.TenCoQuan ?? "Không rõ"}
-                </p>
+
+                {role === "admin" ? (
+                  // ✅ Admin được chọn
+                  <Combobox
+                    value={form.CoQuanId}
+                    onChange={(val) => handleCustomChange("CoQuanId", val)}
+                    options={lookup.coQuan.map((item) => ({
+                      label: item.TenCoQuan,
+                      value: item.Id.toString(),
+                    }))}
+                    placeholder="-- Chọn cơ quan --"
+                  />
+                ) : (
+                  // ❌ Người dùng thường chỉ xem
+                  <p className="text-sm text-gray-600 px-3 py-2 bg-gray-100 rounded-md">
+                    {lookup.coQuan.find(
+                      (cq) => String(cq.Id) === localStorage.getItem("coQuanId")
+                    )?.TenCoQuan ?? "Không rõ"}
+                  </p>
+                )}
               </div>
 
               {/* Hệ thống */}
@@ -378,6 +463,7 @@ export default function HopDong() {
         onRowClick={handleRowClick}
         role={role}
         onDelete={handleDeleteHopDong}
+        onEdit={handleEditHopDong} // 🔸 thêm dòng này
       />
     </div>
   );

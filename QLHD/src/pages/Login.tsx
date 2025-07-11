@@ -72,12 +72,13 @@ export default function App() {
       });
 
       if (res.data.success) {
-        const { accessToken, role, coQuanId } = res.data;
+        const { accessToken, role, coQuanId, userId } = res.data;
 
         // ✅ Lưu token vào localStorage (nếu cần dùng để xác thực)
         localStorage.setItem("accessToken", accessToken);
         localStorage.setItem("role", role);
         localStorage.setItem("coQuanId", coQuanId);
+        localStorage.setItem("userId", userId);
 
         // ✅ Điều hướng theo vai trò
         if (role === "admin") {

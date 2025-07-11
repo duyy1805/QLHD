@@ -11,7 +11,7 @@ export const getSidebarData = (role: string | null) => {
     navMain.push({
       title: "Admin",
       items: [
-        { title: "Dashboard", url: "/dashboard" },
+        // { title: "Dashboard", url: "/dashboard" },
         { title: "Quản lý danh mục", url: "/lookup" },
       ],
     });

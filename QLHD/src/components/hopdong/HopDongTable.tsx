@@ -47,6 +47,7 @@ interface HopDongTableProps {
   data: HopDong[];
   role?: string | null;
   onDelete?: (id: number) => void;
+  onEdit?: (hopDong: HopDong) => void; // 🔸 thêm dòng này
 }
 
 const HopDongTable: React.FC<HopDongTableProps> = ({
@@ -54,6 +55,7 @@ const HopDongTable: React.FC<HopDongTableProps> = ({
   data,
   role,
   onDelete,
+  onEdit,
 }) => {
   const [filterValue, setFilterValue] = useState("");
 
@@ -73,7 +75,7 @@ const HopDongTable: React.FC<HopDongTableProps> = ({
   return (
     <div className="p-4">
       <h2 className="text-xl font-bold mb-4">Danh sách Hợp đồng</h2>
-      <div className="border rounded-md overflow-x-auto">
+      <div className="border rounded-md overflow-auto max-h-[600px]">
         <Table>
           <TableHeader className="bg-gray-100">
             <TableRow>
@@ -112,14 +114,14 @@ const HopDongTable: React.FC<HopDongTableProps> = ({
               <TableHead>Ghi chú</TableHead>
               <TableHead>Ngày tạo</TableHead>
               <TableHead>Ngày cập nhật</TableHead>
-              {role === "admin" && <TableHead>Thao tác</TableHead>}
+              <TableHead>Thao tác</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredData.map((row) => (
               <TableRow
                 key={row.Id}
-                className="cursor-pointer hover:bg-gray-100"
+                className="cursor-pointer hover:bg-gray-100 h-12"
                 onClick={() => onRowClick?.(row.FilePath ?? null)}
               >
                 <TableCell>{row.SoVanBanNoiBo}</TableCell>
@@ -128,39 +130,56 @@ const HopDongTable: React.FC<HopDongTableProps> = ({
                 <TableCell>{row.TenCoQuan}</TableCell>
                 <TableCell>{row.TenHeThong}</TableCell>
                 <TableCell>{row.TenDoiTac}</TableCell>
-                <TableCell>{row.TrichYeu}</TableCell>
+                <TableCell title={row.TrichYeu}>
+                  {row.TrichYeu.length > 100
+                    ? row.TrichYeu.slice(0, 100) + "..."
+                    : row.TrichYeu}
+                </TableCell>
                 <TableCell>{row.TinhTrang}</TableCell>
                 <TableCell>{row.GhiChu}</TableCell>
                 <TableCell>{formatDate(row.CreatedAt)}</TableCell>
                 <TableCell>{formatDate(row.UpdatedAt)}</TableCell>
-                {role === "admin" && (
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <button className="text-red-600 hover:underline">
-                          Xóa
-                        </button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            Bạn có chắc muốn xóa hợp đồng?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Thao tác này không thể hoàn tác. File PDF cũng sẽ bị
-                            xóa nếu có.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Hủy</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => onDelete?.(row.Id)}>
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <div className="flex gap-2">
+                    {/* ✅ Tất cả role đều được sửa */}
+                    <button
+                      className="text-blue-600 hover:underline"
+                      onClick={() => onEdit?.(row)}
+                    >
+                      Sửa
+                    </button>
+
+                    {/* ❌ Chỉ admin mới được xóa */}
+                    {role === "admin" && (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <button className="text-red-600 hover:underline">
                             Xóa
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </TableCell>
-                )}
+                          </button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              Bạn có chắc muốn xóa hợp đồng?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Thao tác này không thể hoàn tác. File PDF cũng sẽ
+                              bị xóa nếu có.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Hủy</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => onDelete?.(row.Id)}
+                            >
+                              Xóa
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
+                  </div>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

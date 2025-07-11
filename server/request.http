@@ -1,6 +1,7 @@
 
 GET http://localhost:5000/auth/
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzUxMDc0ODAwLCJleHAiOjE3NTEwOTY0MDB9.t1ff0tzrAeIs7AUz_Li4KaoT7a27liSsOY9ZZPmqobM
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInJvbGUiOiJhZG1pbiIsImlhdCI6MTc1MjA1MDYxNiwiZXhwIjoxNzUyMDcyMjE2fQ.Jk9hBv0i6AYfAypUKhoVWWC7c_OjtfIPNMOJDmgkEEE
+
 ###
 
 GET https://nodeapi.z76.vn/auth/hd_users

@@ -50,7 +50,7 @@ router.post('/them-hopdong', upload.single('file'), async (req, res) => {
     try {
         const {
             LoaiVanBanId, CoQuanId, HeThongId,
-            DoiTacId, TrichYeu, TinhTrangId, GhiChu
+            DoiTacId, TrichYeu, TinhTrangId, GhiChu, CreatedBy
         } = req.body;
 
         const file = req.file;
@@ -64,6 +64,7 @@ router.post('/them-hopdong', upload.single('file'), async (req, res) => {
             .input('TrichYeu', sql.NVarChar(500), TrichYeu)
             .input('TinhTrangId', sql.Int, TinhTrangId)
             .input('GhiChu', sql.NVarChar(500), GhiChu)
+            .input('CreatedBy', sql.Int, CreatedBy)
             .output('SoVanBanNoiBo', sql.NVarChar(50))
             .execute('HD_HopDong_Add');
 
@@ -101,6 +102,97 @@ router.post('/them-hopdong', upload.single('file'), async (req, res) => {
     } catch (err) {
         console.error('❌ Lỗi khi thêm hợp đồng:', err);
         res.status(500).json({ success: false, message: 'Lỗi khi thêm hợp đồng.' });
+    }
+});
+
+// ✅ API sửa hợp đồng
+router.put('/sua-hopdong', upload.single('file'), async (req, res) => {
+    try {
+        const {
+            Id,
+            LoaiVanBanId,
+            CoQuanId,
+            HeThongId,
+            DoiTacId,
+            TrichYeu,
+            TinhTrangId,
+            GhiChu,
+            CreatedBy
+        } = req.body;
+
+        const file = req.file;
+        const pool = await poolPromise;
+
+        // 🔍 Lấy Số VB hiện tại và FilePath cũ
+        const oldData = await pool.request()
+            .input('Id', sql.Int, Id)
+            .query(`
+          SELECT SoVanBanNoiBo, FilePath
+          FROM HD_HopDong
+          WHERE Id = @Id
+        `);
+
+        if (!oldData.recordset.length) {
+            return res.status(404).json({ success: false, message: 'Không tìm thấy hợp đồng.' });
+        }
+
+        const { SoVanBanNoiBo, FilePath: oldFilePath } = oldData.recordset[0];
+
+        let finalPath = oldFilePath;
+
+        // 📂 Nếu có file mới: đổi tên theo SoVanBanNoiBo và ghi đè
+        if (file && SoVanBanNoiBo) {
+            const newFileName = SoVanBanNoiBo.replace(/\//g, '-') + '.pdf';
+            const finalDir = uploadDir;
+            const newFilePath = path.join(finalDir, newFileName);
+
+            // ❌ Xóa file cũ nếu tồn tại
+            if (oldFilePath && fs.existsSync(oldFilePath)) {
+                fs.unlinkSync(oldFilePath);
+            }
+
+            // 📥 Di chuyển và đổi tên file mới
+            fs.renameSync(file.path, newFilePath);
+            finalPath = newFilePath.replace(/\\/g, '/');
+        }
+
+        // ✅ Cập nhật CSDL
+        await pool.request()
+            .input('Id', sql.Int, Id)
+            .input('LoaiVanBanId', sql.Int, LoaiVanBanId)
+            .input('CoQuanId', sql.Int, CoQuanId)
+            .input('HeThongId', sql.Int, HeThongId)
+            .input('DoiTacId', sql.Int, DoiTacId)
+            .input('TrichYeu', sql.NVarChar(500), TrichYeu)
+            .input('TinhTrangId', sql.Int, TinhTrangId)
+            .input('GhiChu', sql.NVarChar(500), GhiChu)
+            .input('FilePath', sql.NVarChar(255), finalPath)
+            .input('UpdatedBy', sql.Int, CreatedBy)
+            .query(`
+          UPDATE HD_HopDong
+          SET
+            LoaiVanBanId = @LoaiVanBanId,
+            CoQuanId = @CoQuanId,
+            HeThongId = @HeThongId,
+            DoiTacId = @DoiTacId,
+            TrichYeu = @TrichYeu,
+            TinhTrangId = @TinhTrangId,
+            GhiChu = @GhiChu,
+            FilePath = @FilePath,
+            UpdatedAt = GETDATE(),
+            UpdatedBy = @UpdatedBy
+          WHERE Id = @Id
+        `);
+
+        res.json({
+            success: true,
+            message: 'Cập nhật hợp đồng thành công.',
+            filePath: finalPath,
+        });
+
+    } catch (err) {
+        console.error('❌ Lỗi khi sửa hợp đồng:', err);
+        res.status(500).json({ success: false, message: 'Lỗi khi sửa hợp đồng.' });
     }
 });
 
@@ -201,7 +293,7 @@ router.put("/lookup/:type/:id", async (req, res) => {
         const pool = await poolPromise;
 
         let query = "";
-        const request = pool.request().input("id", id);
+        const request = await pool.request().input("id", id);
 
         if (type === "coQuan") {
             // Riêng cơ quan cần cập nhật cả tên và viết tắt

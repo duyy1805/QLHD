@@ -17,3 +17,7 @@ export const uploadHopDong = (data: FormData) =>
     axios.post(`${apiConfig.API_BASE_URL}/QLHD/them-hopdong`, data, {
         headers: { "Content-Type": "multipart/form-data" },
     });
+export const updateHopDong = (data: FormData) =>
+    axios.put(`${apiConfig.API_BASE_URL}/QLHD/sua-hopdong`, data, {
+        headers: { "Content-Type": "multipart/form-data" },
+    });
