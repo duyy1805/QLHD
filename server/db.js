@@ -16,7 +16,7 @@ const config = {
 
 const poolPromise = sql.connect(config)
     .then(pool => {
-        console.log('SQL Server is connected');
+        console.log('SQL Server TBPC is connected');
         return pool;
     })
     .catch(err => {

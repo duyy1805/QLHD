@@ -46,3 +46,8 @@ Content-Type: application/json
 
 ###
 GET http://localhost:5000/QLHD/lookup
+
+
+###
+
+GET  http://localhost:5000/vanbandi/lookup-vanbandi
