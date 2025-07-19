@@ -212,4 +212,96 @@ router.put('/sua-vanbandi', upload.single('file'), async (req, res) => {
     }
 });
 
+// DELETE /QLHD/xoa-hopdong/:id
+router.delete('/xoa-vanbandi/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const pool = await poolPromise;
+
+        // 1. Lấy đường dẫn file để xóa (nếu có)
+        const result = await pool.request()
+            .input('Id', sql.Int, id)
+            .query(`SELECT FilePath FROM HD_VanBanDi WHERE Id = @Id`);
+
+        const filePath = result.recordset?.[0]?.FilePath;
+
+        // 2. Xóa bản ghi trong DB
+        await pool.request()
+            .input('Id', sql.Int, id)
+            .query(`DELETE FROM HD_VanBanDi WHERE Id = @Id`);
+
+        // 3. Xóa file nếu tồn tại
+        if (filePath && fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+
+        res.json({ success: true, message: 'Đã xóa văn bản đi và file (nếu có).' });
+    } catch (err) {
+        console.error('❌ Lỗi khi xóa văn bản:', err);
+        res.status(500).json({ success: false, message: 'Lỗi khi xóa văn bản.' });
+    }
+});
+
+const tableMap = {
+    loaiVanBan: { table: "HD_LoaiVanBanDi", columns: ["TenLoai"] },
+    coQuan: { table: "HD_CoQuan", columns: ["TenCoQuan", "TenVietTat"] },
+    nguoiKy: { table: "HD_NguoiKy", columns: ["HoTen", "ChucVu"] },
+};
+
+router.post("/lookup/:type", async (req, res) => {
+    const { type } = req.params;
+    const { name, shortName } = req.body;
+
+    const config = tableMap[type];
+    if (!config) return res.status(400).json({ error: "Loại không hợp lệ" });
+
+    const { table, columns } = config;
+
+    try {
+        const pool = await poolPromise;
+
+        // Tạo chuỗi column và biến @ cho SQL
+        const colNames = columns.join(", ");
+        const paramNames = columns.map((_, i) => `@param${i}`).join(", ");
+
+        // Tạo request và bind dữ liệu
+        const request = pool.request();
+        columns.forEach((col, i) => {
+            const paramValue = i === 0 ? name : shortName;
+            request.input(`param${i}`, paramValue);
+        });
+
+        const query = `
+      INSERT INTO ${table} (${colNames})
+      VALUES (${paramNames})
+    `;
+
+        await request.query(query);
+        res.json({ success: true, message: "Đã thêm thành công" });
+    } catch (err) {
+        console.error("Lỗi thêm:", err);
+        res.status(500).json({ error: "Lỗi khi thêm mới" });
+    }
+});
+
+
+// ✅ Xóa
+router.delete("/lookup/:type/:id", async (req, res) => {
+    const { type, id } = req.params;
+
+    const config = tableMap[type];
+    if (!config) return res.status(400).json({ error: "Loại không hợp lệ" });
+
+    try {
+        const pool = await poolPromise;
+        const query = `DELETE FROM ${config.table} WHERE Id = @id`;
+
+        await pool.request().input("id", id).query(query);
+        res.json({ success: true, message: "Đã xóa thành công" });
+    } catch (err) {
+        console.error("Lỗi xóa:", err);
+        res.status(500).json({ error: "Lỗi khi xóa" });
+    }
+});
 module.exports = router;

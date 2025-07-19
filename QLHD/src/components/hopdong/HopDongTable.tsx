@@ -70,7 +70,7 @@ const HopDongTable: React.FC<HopDongTableProps> = ({
     return iso.slice(0, 10).split("-").reverse().join("/");
   };
 
-  if (!data.length) return <div className="p-4">Đang tải...</div>;
+  if (!data.length) return <div className="p-4">Chưa có dữ liệu...</div>;
 
   return (
     <div className="p-4">

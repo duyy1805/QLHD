@@ -17,6 +17,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   Popover,
   PopoverTrigger,
   PopoverContent,
@@ -29,9 +40,7 @@ import apiConfig from "../../apiConfig.json";
 const lookupTypes = [
   { key: "loaiVanBan", label: "Loại văn bản" },
   { key: "coQuan", label: "Cơ quan" },
-  { key: "heThong", label: "Hệ thống" },
-  { key: "doiTac", label: "Đối tác" },
-  { key: "tinhTrang", label: "Tình trạng" },
+  { key: "nguoiKy", label: "Người ký" },
 ];
 
 interface LoaiVanBan {
@@ -45,29 +54,18 @@ interface CoQuan {
   TenVietTat: string;
 }
 
-interface HeThong {
+interface NguoiKy {
   Id: number;
-  TenHeThong: string;
+  HoTen: string;
+  ChucVu: string;
 }
 
-interface DoiTac {
-  Id: number;
-  TenDoiTac: string;
-}
-
-interface TinhTrang {
-  Id: number;
-  TenTinhTrang: string;
-}
-
-type LookupItem = LoaiVanBan | CoQuan | HeThong | DoiTac | TinhTrang;
+type LookupItem = LoaiVanBan | CoQuan | NguoiKy;
 const getItemName = (item: LookupItem): string => {
   return (
     (item as LoaiVanBan).TenLoai ||
     (item as CoQuan).TenCoQuan ||
-    (item as HeThong).TenHeThong ||
-    (item as DoiTac).TenDoiTac ||
-    (item as TinhTrang).TenTinhTrang ||
+    (item as NguoiKy).HoTen ||
     "Không rõ"
   );
 };
@@ -82,6 +80,7 @@ export default function LookupManager() {
   const [filterValue, setFilterValue] = useState("");
 
   const isCoQuan = selectedType === "coQuan";
+  const isNguoiKy = selectedType === "nguoiKy";
 
   const filteredData = useMemo(() => {
     return data.filter((item) =>
@@ -91,7 +90,9 @@ export default function LookupManager() {
 
   const fetchLookup = async () => {
     try {
-      const res = await axios.get(`${apiConfig.API_BASE_URL}/QLHD/lookup`);
+      const res = await axios.get(
+        `${apiConfig.API_BASE_URL}/vanbandi/lookup-vanbandi`
+      );
       const items = res.data[selectedType] || [];
       console.log("Dữ liệu cập nhật:", res.data);
       setData([...items]); // ép tạo mảng mới
@@ -110,8 +111,11 @@ export default function LookupManager() {
     if (isCoQuan && !shortName.trim()) return toast.error("Thiếu tên viết tắt");
 
     try {
-      const endpoint = `${apiConfig.API_BASE_URL}/QLHD/lookup/${selectedType}`;
-      const payload = isCoQuan ? { name, shortName } : { name };
+      const endpoint = `${apiConfig.API_BASE_URL}/vanbandi/lookup/${selectedType}`;
+      const payload: Record<string, string> = { name };
+      if (isCoQuan || isNguoiKy) {
+        payload.shortName = shortName;
+      }
 
       if (editId) {
         await axios.put(`${endpoint}/${editId}`, payload);
@@ -140,10 +144,10 @@ export default function LookupManager() {
     else if ("TenCoQuan" in item) {
       name = item.TenCoQuan;
       short = item.TenVietTat;
-    } else if ("TenHeThong" in item) name = item.TenHeThong;
-    else if ("TenDoiTac" in item) name = item.TenDoiTac;
-    else if ("TenTinhTrang" in item) name = item.TenTinhTrang;
-
+    } else if ("HoTen" in item) {
+      name = item.HoTen;
+      short = item.ChucVu;
+    }
     setName(name);
     setShortName(short);
     setEditId(item.Id);
@@ -151,11 +155,9 @@ export default function LookupManager() {
   };
 
   const handleDelete = async (id: number) => {
-    const ok = confirm("Bạn có chắc muốn xóa mục này?");
-    if (!ok) return;
     try {
       await axios.delete(
-        `${apiConfig.API_BASE_URL}/QLHD/lookup/${selectedType}/${id}`
+        `${apiConfig.API_BASE_URL}/vanbandi/lookup/${selectedType}/${id}`
       );
       toast.success("Đã xóa");
       await fetchLookup();
@@ -166,7 +168,9 @@ export default function LookupManager() {
   };
 
   const getItemShort = (item: LookupItem): string | null => {
-    return "TenVietTat" in item ? item.TenVietTat : null;
+    if ("TenVietTat" in item) return item.TenVietTat;
+    if ("ChucVu" in item) return item.ChucVu;
+    return null;
   };
 
   return (
@@ -221,7 +225,13 @@ export default function LookupManager() {
                 placeholder="Nhập tên viết tắt..."
               />
             )}
-
+            {isNguoiKy && (
+              <Input
+                value={shortName}
+                onChange={(e) => setShortName(e.target.value)}
+                placeholder="Nhập chức vụ..."
+              />
+            )}
             <DialogFooter>
               <Button onClick={handleSave}>
                 {editId ? "Lưu thay đổi" : "Thêm mới"}
@@ -261,7 +271,9 @@ export default function LookupManager() {
                   </Popover>
                 </div>
               </th>
-              {isCoQuan && <th className="p-2">Viết tắt</th>}
+              {(isCoQuan || isNguoiKy) && (
+                <th className="p-2">{isCoQuan ? "Viết tắt" : "Chức vụ"}</th>
+              )}
               <th className="p-2 text-right">Thao tác</th>
             </tr>
           </thead>
@@ -273,7 +285,7 @@ export default function LookupManager() {
                 <tr key={item.Id} className="border-t">
                   <td className="p-2">{idx + 1}</td>
                   <td className="p-2">{name}</td>
-                  {isCoQuan && <td className="p-2">{short}</td>}
+                  {(isCoQuan || isNguoiKy) && <td className="p-2">{short}</td>}
                   <td className="p-2 text-right space-x-2">
                     <Button
                       size="sm"
@@ -282,13 +294,32 @@ export default function LookupManager() {
                     >
                       Sửa
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => handleDelete(item.Id)}
-                    >
-                      Xóa
-                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="sm" variant="destructive">
+                          Xóa
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            Bạn có chắc muốn xóa mục này?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Thao tác này không thể hoàn tác. Dữ liệu sẽ bị xóa
+                            vĩnh viễn.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Hủy</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => handleDelete(item.Id)}
+                          >
+                            Xóa
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </td>
                 </tr>
               );

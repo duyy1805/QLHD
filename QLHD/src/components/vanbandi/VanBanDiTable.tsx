@@ -70,7 +70,7 @@ const VanBanDiTable: React.FC<VanBanDiTableProps> = ({
     return iso.slice(0, 10).split("-").reverse().join("/");
   };
 
-  if (!data.length) return <div className="p-4">Đang tải...</div>;
+  if (!data.length) return <div className="p-4">Chưa có dữ liệu...</div>;
 
   return (
     <div className="p-4">
@@ -108,7 +108,7 @@ const VanBanDiTable: React.FC<VanBanDiTableProps> = ({
               <TableHead>Loại văn bản</TableHead>
               <TableHead>Ngày VB</TableHead>
               <TableHead>Người ký</TableHead>
-              <TableHead>Nơi nhận</TableHead>
+              {/* <TableHead>Nơi nhận</TableHead> */}
               <TableHead>Số bản</TableHead>
               <TableHead>Ngày chuyển</TableHead>
               <TableHead>Ghi chú</TableHead>
@@ -129,7 +129,7 @@ const VanBanDiTable: React.FC<VanBanDiTableProps> = ({
                 <TableCell>{row.LoaiVanBan}</TableCell>
                 <TableCell>{formatDate(row.NgayVanBan)}</TableCell>
                 <TableCell>{row.NguoiKy}</TableCell>
-                <TableCell>{row.NoiNhan}</TableCell>
+                {/* <TableCell>{row.NoiNhan}</TableCell> */}
                 <TableCell>{row.SoLuongBan}</TableCell>
                 <TableCell>{formatDate(row.NgayChuyen)}</TableCell>
                 <TableCell>{row.GhiChu}</TableCell>

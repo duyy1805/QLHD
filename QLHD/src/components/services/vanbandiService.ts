@@ -5,10 +5,10 @@ import apiConfig from "../../../apiConfig.json";
 export const fetchLookupVanBanDi = () =>
     axios.get(`${apiConfig.API_BASE_URL}/vanbandi/lookup-vanbandi`);
 
-export const fetchVanBanDi = (TenCoQuan: string | null, SoVanBan: string | null) =>
+export const fetchVanBanDi = (TenCoQuan: string | null) =>
     axios.post(`${apiConfig.API_BASE_URL}/vanbandi/vanbandi`, {
         TenCoQuan,
-        SoVanBan,
+        SoVanBan: null,
     });
 
 export const deleteVanBanDi = (id: number) =>

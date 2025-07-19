@@ -14,11 +14,11 @@ export const getSidebarData = (role: string | null) => {
 
   if (role === "admin") {
     navMain.push({
-      title: "Admin",
+      title: "Quản lý danh mục",
       icon: Settings,
       items: [
-        // { title: "Dashboard", url: "/dashboard" },
-        { title: "Quản lý danh mục", url: "/lookup", icon: Settings },
+        { title: "Hợp đồng", url: "/lookup/hopdong", icon: FileText },
+        { title: "Văn bản đi", url: "/lookup/vanbandi", icon: FileText },
       ],
     });
   }

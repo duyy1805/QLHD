@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import apiConfig from "../../apiConfig.json";
 import { toast } from "sonner";
 import { Combobox } from "@/components/hopdong/ComboBox";
+
 export interface HopDong {
   Id: number;
   SoVanBanNoiBo: string;
@@ -37,10 +38,12 @@ export interface HopDong {
   CreatedAt: string;
   UpdatedAt: string;
 }
+
 interface CoQuan {
   Id: number;
   TenCoQuan: string;
 }
+
 export default function HopDong() {
   const [open, setOpen] = useState(false);
   const [pdfDialogOpen, setPdfDialogOpen] = useState(false);

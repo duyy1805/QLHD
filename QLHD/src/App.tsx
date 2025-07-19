@@ -4,7 +4,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import AppLayout from "./layouts/AppLayout";
-import LookupManager from "./pages/LookupManager";
+import LookupHDManager from "./pages/Lookup_HD_Manager";
+import LookupVBDManager from "./pages/Lookup_VBD_Manager";
 import HopDong from "./pages/HopDong";
 import VanBanDi from "./pages/VanBanDi";
 import { Toaster } from "sonner";
@@ -22,7 +23,8 @@ function App() {
             <Route path="/hopdong" element={<HopDong />} />
             <Route path="/vanbandi" element={<VanBanDi />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/lookup" element={<LookupManager />} />
+            <Route path="/lookup/hopdong" element={<LookupHDManager />} />
+            <Route path="/lookup/vanbandi" element={<LookupVBDManager />} />
           </Route>
         </Route>
       </Routes>

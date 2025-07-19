@@ -249,7 +249,7 @@ router.get('/lookup', async (req, res) => {
 // Mapping loại lookup đến bảng & cột
 const tableMap = {
     loaiVanBan: { table: "HD_LoaiVanBan", column: "TenLoai" },
-    coQuan: { table: "HD_CoQuan", column: "TenCoQuan" },
+    coQuan: { table: "HD_CoQuan", columns: ["TenCoQuan", "TenVietTat"] },
     heThong: { table: "HD_HeThong", column: "TenHeThong" },
     doiTac: { table: "HD_DoiTac", column: "TenDoiTac" },
     tinhTrang: { table: "HD_TinhTrang", column: "TenTinhTrang" },
@@ -259,25 +259,40 @@ const tableMap = {
 // ✅ Thêm mới
 router.post("/lookup/:type", async (req, res) => {
     const { type } = req.params;
-    const { name } = req.body;
+    const { name, shortName } = req.body;
 
     const config = tableMap[type];
     if (!config) return res.status(400).json({ error: "Loại không hợp lệ" });
 
+    const { table, columns } = config;
+
     try {
         const pool = await poolPromise;
-        const query = `
-        INSERT INTO ${config.table} (${config.column})
-        VALUES (@name)
-      `;
 
-        await pool.request().input("name", name).query(query);
+        // Tạo chuỗi column và biến @ cho SQL
+        const colNames = columns.join(", ");
+        const paramNames = columns.map((_, i) => `@param${i}`).join(", ");
+
+        // Tạo request và bind dữ liệu
+        const request = pool.request();
+        columns.forEach((col, i) => {
+            const paramValue = i === 0 ? name : shortName;
+            request.input(`param${i}`, paramValue);
+        });
+
+        const query = `
+      INSERT INTO ${table} (${colNames})
+      VALUES (${paramNames})
+    `;
+
+        await request.query(query);
         res.json({ success: true, message: "Đã thêm thành công" });
     } catch (err) {
         console.error("Lỗi thêm:", err);
         res.status(500).json({ error: "Lỗi khi thêm mới" });
     }
 });
+
 
 //cập nhật
 router.put("/lookup/:type/:id", async (req, res) => {

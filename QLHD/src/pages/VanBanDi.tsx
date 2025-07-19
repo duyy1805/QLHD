@@ -90,7 +90,6 @@ export default function VanBanDi() {
     const coQuan =
       lookup.coQuan.find((cq) => cq.TenCoQuan === vb.NoiNhan)?.Id.toString() ||
       "";
-    console.log(vb.NgayVanBan);
     const nguoiKy =
       lookup.nguoiKy.find((cq) => cq.HoTen === vb.NguoiKy)?.Id.toString() || "";
     setForm({
@@ -198,8 +197,7 @@ export default function VanBanDi() {
           (cq: CoQuan) => String(cq.Id) === coQuanId
         )?.TenCoQuan;
       }
-
-      const vanBanRes = await fetchVanBanDi(null, tenCQ);
+      const vanBanRes = await fetchVanBanDi(tenCQ);
       setVanBans(vanBanRes.data);
     } catch (err) {
       console.error(err);
