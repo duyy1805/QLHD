@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useMemo } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { AppSidebar } from "@/components/app-sidebar";
 import {
@@ -17,33 +17,36 @@ import {
 import UserMenu from "@/components/UserMenu";
 import { getSidebarData } from "@/components/sidebar-data";
 
-const role = localStorage.getItem("role");
-const data = getSidebarData(role);
-
-const getBreadcrumbFromNav = (pathname: string) => {
-  for (const group of data.navMain) {
-    for (const item of group.items) {
-      if (item.url === pathname) {
-        return [
-          { title: group.title, href: null }, // không có link cho group
-          { title: item.title, href: item.url },
-        ];
-      }
-    }
-  }
-  return []; // fallback nếu không tìm thấy
-};
-
 export default function AppLayout() {
   const location = useLocation();
-  const breadcrumbItems = getBreadcrumbFromNav(location.pathname);
+
+  // ✅ Lấy role từ localStorage
+  const role = useMemo(() => localStorage.getItem("role") ?? "user", []);
+
+  // ✅ Gọi getSidebarData dựa trên role
+  const data = getSidebarData();
+
+  // ✅ Tạo breadcrumb dựa trên pathname hiện tại
+  const breadcrumbItems = useMemo(() => {
+    for (const group of data.navMain) {
+      for (const item of group.items) {
+        if (location.pathname === item.url) {
+          return [
+            { title: group.title, href: null },
+            { title: item.title, href: item.url },
+          ];
+        }
+      }
+    }
+    return [];
+  }, [location.pathname, data]);
 
   return (
     <SidebarProvider>
-      <AppSidebar />
+      {/* ✅ Truyền role vào AppSidebar */}
+      <AppSidebar role={role} />
       <SidebarInset>
         <header className="flex h-16 items-center justify-between border-b px-4">
-          {/* Left side: Sidebar trigger + breadcrumb */}
           <div className="flex items-center gap-2">
             <SidebarTrigger />
             <Breadcrumb>
@@ -70,7 +73,6 @@ export default function AppLayout() {
             </Breadcrumb>
           </div>
 
-          {/* Right side: Logout button */}
           <UserMenu />
         </header>
 

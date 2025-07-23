@@ -26,7 +26,7 @@ router.post('/hopdong', async (req, res) => {
 });
 
 // 📁 Cấu hình thư mục lưu file
-const uploadDir = 'C:/HopDong/Upload';
+const uploadDir = 'C:/DocumentsUpload/HopDong/Upload';
 
 // 🛠️ Tạo thư mục nếu chưa tồn tại
 if (!fs.existsSync(uploadDir)) {
@@ -74,7 +74,7 @@ router.post('/them-hopdong', upload.single('file'), async (req, res) => {
 
         if (file && soVB) {
             const newFileName = soVB.replace(/\//g, '-') + '.pdf'; // ✅ Ví dụ: 001-Z176-TC-HD.pdf
-            const finalDir = 'C:/HopDong/Upload';
+            const finalDir = 'C:/DocumentsUpload/HopDong/Upload';
             fs.mkdirSync(finalDir, { recursive: true });
 
             const newFilePath = path.join(finalDir, newFileName);

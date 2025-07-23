@@ -12,6 +12,7 @@ import { toast } from "sonner";
 export default function UserMenu() {
   const handleLogout = () => {
     localStorage.removeItem("accessToken");
+    localStorage.removeItem("sidebarOpenItems1");
     window.location.href = "/";
   };
 

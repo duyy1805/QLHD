@@ -178,7 +178,7 @@ export default function VanBanDi() {
   const handleRowClick = (filePath: string | null) => {
     if (filePath) {
       const relativePath = filePath.replace(
-        "C:/VanBanDi/Upload",
+        "C:/DocumentsUpload/VanBanDi/Upload",
         "/uploads_vbd"
       );
       const publicUrl = `${apiConfig.API_BASE_URL}${relativePath}`;
@@ -224,87 +224,124 @@ export default function VanBanDi() {
                 {editingVanBan ? "Sửa" : "Thêm"} văn bản đi
               </DialogTitle>
             </DialogHeader>
-
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
-              <Combobox
-                value={form.LoaiVanBanId}
-                onChange={(val) => handleCustomChange("LoaiVanBanId", val)}
-                placeholder="-- Chọn loại văn bản --"
-                options={lookup.loaiVanBan.map((x) => ({
-                  label: x.TenLoai,
-                  value: x.Id.toString(),
-                }))}
-              />
-
-              {role === "admin" ? (
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Loại văn bản
+                </label>
                 <Combobox
-                  value={form.CoQuanId}
-                  onChange={(val) => handleCustomChange("CoQuanId", val)}
-                  placeholder="-- Chọn cơ quan --"
-                  options={lookup.coQuan.map((x) => ({
-                    label: x.TenCoQuan,
+                  value={form.LoaiVanBanId}
+                  onChange={(val) => handleCustomChange("LoaiVanBanId", val)}
+                  placeholder="-- Chọn loại văn bản --"
+                  options={lookup.loaiVanBan.map((x) => ({
+                    label: x.TenLoai,
                     value: x.Id.toString(),
                   }))}
                 />
-              ) : (
-                <p className="text-sm text-gray-600 px-3 py-2 bg-gray-100 rounded-md">
-                  {lookup.coQuan.find((cq) => String(cq.Id) === coQuanId)
-                    ?.TenCoQuan ?? "Không rõ"}
-                </p>
-              )}
-
-              <Input
-                placeholder="Tên văn bản"
-                name="TenVanBan"
-                value={form.TenVanBan}
-                onChange={handleChange}
-              />
-              <Input
-                type="date"
-                placeholder="Ngày văn bản"
-                name="NgayVanBan"
-                value={form.NgayVanBan}
-                onChange={handleChange}
-              />
-              <Combobox
-                value={form.NguoiKyId}
-                onChange={(val) => handleCustomChange("NguoiKyId", val)}
-                placeholder="-- Chọn người ký --"
-                options={lookup.nguoiKy.map((x) => ({
-                  label: x.HoTen + " - " + x.ChucVu,
-                  value: x.Id.toString(),
-                }))}
-              />
-              {role === "admin" ? (
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Loại văn bản
+                </label>
+                {role === "admin" ? (
+                  <Combobox
+                    value={form.CoQuanId}
+                    onChange={(val) => handleCustomChange("CoQuanId", val)}
+                    placeholder="-- Chọn cơ quan --"
+                    options={lookup.coQuan.map((x) => ({
+                      label: x.TenCoQuan,
+                      value: x.Id.toString(),
+                    }))}
+                  />
+                ) : (
+                  <p className="text-sm text-gray-600 px-3 py-2 bg-gray-100 rounded-md">
+                    {lookup.coQuan.find((cq) => String(cq.Id) === coQuanId)
+                      ?.TenCoQuan ?? "Không rõ"}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Tên văn bản
+                </label>
+                <Input
+                  placeholder="Tên văn bản"
+                  name="TenVanBan"
+                  value={form.TenVanBan}
+                  onChange={handleChange}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Ngày văn bản
+                </label>
+                <Input
+                  type="date"
+                  placeholder="Ngày văn bản"
+                  name="NgayVanBan"
+                  value={form.NgayVanBan}
+                  onChange={handleChange}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Người ký
+                </label>
                 <Combobox
-                  value={form.NoiNhanId}
-                  onChange={(val) => handleCustomChange("NoiNhanId", val)}
-                  placeholder="-- Chọn nơi nhận --"
-                  options={lookup.coQuan.map((x) => ({
-                    label: x.TenCoQuan,
+                  value={form.NguoiKyId}
+                  onChange={(val) => handleCustomChange("NguoiKyId", val)}
+                  placeholder="-- Chọn người ký --"
+                  options={lookup.nguoiKy.map((x) => ({
+                    label: x.HoTen + " - " + x.ChucVu,
                     value: x.Id.toString(),
                   }))}
                 />
-              ) : (
-                <p className="text-sm text-gray-600 px-3 py-2 bg-gray-100 rounded-md">
-                  {lookup.coQuan.find((cq) => String(cq.Id) === coQuanId)
-                    ?.TenCoQuan ?? "Không rõ"}
-                </p>
-              )}
-              <Input
-                type="number"
-                placeholder="Số lượng bản"
-                name="SoLuongBan"
-                value={form.SoLuongBan}
-                onChange={handleChange}
-              />
-              <Input
-                type="date"
-                placeholder="Ngày chuyển"
-                name="NgayChuyen"
-                value={form.NgayChuyen}
-                onChange={handleChange}
-              />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Nơi nhận
+                </label>
+                {role === "admin" ? (
+                  <Combobox
+                    value={form.NoiNhanId}
+                    onChange={(val) => handleCustomChange("NoiNhanId", val)}
+                    placeholder="-- Chọn nơi nhận --"
+                    options={lookup.coQuan.map((x) => ({
+                      label: x.TenCoQuan,
+                      value: x.Id.toString(),
+                    }))}
+                  />
+                ) : (
+                  <p className="text-sm text-gray-600 px-3 py-2 bg-gray-100 rounded-md">
+                    {lookup.coQuan.find((cq) => String(cq.Id) === coQuanId)
+                      ?.TenCoQuan ?? "Không rõ"}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Số lượng
+                </label>
+                <Input
+                  type="number"
+                  placeholder="Số lượng bản"
+                  name="SoLuongBan"
+                  value={form.SoLuongBan}
+                  onChange={handleChange}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Ngày chuyển
+                </label>
+                <Input
+                  type="date"
+                  placeholder="Ngày chuyển"
+                  name="NgayChuyen"
+                  value={form.NgayChuyen}
+                  onChange={handleChange}
+                />
+              </div>
               <Textarea
                 placeholder="Ghi chú"
                 name="GhiChu"
@@ -312,20 +349,23 @@ export default function VanBanDi() {
                 onChange={handleChange}
                 className="md:col-span-2"
               />
-
-              <Input
-                type="file"
-                accept="application/pdf"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-                className="md:col-span-2"
-              />
-              {file && (
-                <p className="text-sm text-green-600 mt-1">
-                  Đã chọn: {file.name}
-                </p>
-              )}
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Chọn file
+                </label>
+                <Input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                  className="md:col-span-2"
+                />
+                {file && (
+                  <p className="text-sm text-green-600 mt-1">
+                    Đã chọn: {file.name}
+                  </p>
+                )}
+              </div>
             </div>
-
             <DialogFooter>
               <Button onClick={handleSubmit}>Lưu</Button>
             </DialogFooter>

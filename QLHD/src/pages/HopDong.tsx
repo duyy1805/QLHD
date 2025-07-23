@@ -229,7 +229,10 @@ export default function HopDong() {
   const handleRowClick = (filePath: string | null) => {
     if (filePath) {
       // C:/HopDong/Upload/2025/... -> /uploads/2025/...
-      const relativePath = filePath.replace("C:/HopDong/Upload", "/uploads");
+      const relativePath = filePath.replace(
+        "C:/DocumentsUpload/HopDong/Upload",
+        "/uploads"
+      );
       const publicUrl = `${apiConfig.API_BASE_URL}${relativePath}`;
       setPdfUrl(publicUrl);
       setPdfDialogOpen(true);

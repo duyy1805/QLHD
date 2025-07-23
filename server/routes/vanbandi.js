@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 
 // 📁 Cấu hình thư mục lưu file
-const uploadDir = 'C:/VanBanDi/Upload';
+const uploadDir = 'C:/DocumentsUpload/VanBanDi/Upload';
 // 🛠️ Tạo thư mục nếu chưa tồn tại
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });

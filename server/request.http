@@ -51,3 +51,17 @@ GET http://localhost:5000/QLHD/lookup
 ###
 
 GET  http://localhost:5000/vanbandi/lookup-vanbandi
+
+###
+
+GET http://localhost:5000/hstt/lookup
+# Content-Type: application/json
+
+###
+
+POST http://localhost:5000/hstt/hosothanhtoan/hosovanban
+Content-Type: application/json
+
+{
+  "BoPhanId": 1
+}

@@ -1,30 +1,82 @@
-// sidebarData.ts
-import { FileText, Settings } from "lucide-react";
-export const getSidebarData = (role: string | null) => {
+import {
+  AudioWaveform,
+  Command,
+  Frame,
+  GalleryVerticalEnd,
+  Map,
+  PieChart,
+  SquareTerminal,
+  BookOpen,
+} from "lucide-react";
+
+export const getSidebarData = () => {
   const navMain = [
     {
-      title: "Quản lý hợp đồng",
-      icon: FileText,
+      title: "Văn bản, tài liệu",
+      url: "#",
+      icon: SquareTerminal,
       items: [
-        { title: "Hợp đồng", url: "/hopdong", icon: FileText },
-        { title: "Văn bản đi", url: "/vanbandi", icon: FileText },
+        { title: "Hợp đồng", url: "/document/hopdong" },
+        { title: "Văn bản đi", url: "/document/vanbandi" },
+        { title: "Hồ sơ thanh toán", url: "/document/hosothanhtoan" },
       ],
     },
   ];
 
-  if (role === "admin") {
-    navMain.push({
-      title: "Quản lý danh mục",
-      icon: Settings,
+  const navAdmin = [
+    {
+      title: "Danh mục",
+      url: "#",
+      icon: BookOpen,
       items: [
-        { title: "Hợp đồng", url: "/lookup/hopdong", icon: FileText },
-        { title: "Văn bản đi", url: "/lookup/vanbandi", icon: FileText },
+        { title: "Hợp đồng", url: "/lookup/hopdong" },
+        { title: "Văn bản đi", url: "/lookup/vanbandi" },
+        { title: "Hồ sơ thanh toán", url: "/lookup/hosothanhtoan" },
       ],
-    });
-  }
+    },
+  ];
 
   return {
-    versions: ["1.0.1", "1.1.0-alpha", "2.0.0-beta1"],
+    user: {
+      name: "shadcn",
+      email: "m@example.com",
+      avatar: "/avatars/shadcn.jpg",
+    },
+    teams: [
+      {
+        name: "Acme Inc",
+        logo: GalleryVerticalEnd,
+        plan: "Enterprise",
+      },
+      {
+        name: "Acme Corp.",
+        logo: AudioWaveform,
+        plan: "Startup",
+      },
+      {
+        name: "Evil Corp.",
+        logo: Command,
+        plan: "Free",
+      },
+    ],
     navMain,
+    navAdmin,
+    projects: [
+      {
+        name: "Design Engineering",
+        url: "#",
+        icon: Frame,
+      },
+      {
+        name: "Sales & Marketing",
+        url: "#",
+        icon: PieChart,
+      },
+      {
+        name: "Travel",
+        url: "#",
+        icon: Map,
+      },
+    ],
   };
 };

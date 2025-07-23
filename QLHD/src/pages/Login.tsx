@@ -82,9 +82,9 @@ export default function App() {
 
         // ✅ Điều hướng theo vai trò
         if (role === "admin") {
-          navigate("/hopdong");
+          navigate("/document/hopdong");
         } else {
-          navigate("/hopdong"); // Hoặc trang phù hợp với vai trò khác
+          navigate("/document/hopdong"); // Hoặc trang phù hợp với vai trò khác
         }
       } else {
         alert("Đăng nhập không thành công!");
