@@ -29,12 +29,12 @@ const upload = multer({ storage });
 
 router.post('/vanbandi', async (req, res) => {
     try {
-        const { SoVanBan, TenCoQuan } = req.body;
+        const { SoVanBan, CoQuanId } = req.body;
 
         const pool = await poolPromise;
         const result = await pool.request()
             .input('SoVanBan', sql.NVarChar(50), SoVanBan || null)
-            .input('TenCoQuan', sql.NVarChar(255), TenCoQuan || null)
+            .input('CoQuanId', sql.Int, CoQuanId || null)
             .execute('HD_VanBanDi_Get');
 
         res.json(result.recordset);
@@ -65,7 +65,7 @@ router.post('/them-vanbandi', upload.single('file'), async (req, res) => {
     try {
         const {
             TenVanBan, NgayVanBan, NguoiKyId,
-            NoiNhanId, LoaiVanBanId,
+            CoQuanBanHanhId, CoQuanNhanIds, LoaiVanBanId,
             SoLuongBan, NgayChuyen, GhiChu, CreatedBy
         } = req.body;
 
@@ -76,7 +76,8 @@ router.post('/them-vanbandi', upload.single('file'), async (req, res) => {
             .input('TenVanBan', sql.NVarChar(255), TenVanBan)
             .input('NgayVanBan', sql.Date, NgayVanBan)
             .input('NguoiKyId', sql.Int, NguoiKyId)
-            .input('NoiNhanId', sql.Int, NoiNhanId)
+            .input('CoQuanBanHanhId', sql.Int, CoQuanBanHanhId)
+            .input('CoQuanNhanIds', sql.NVarChar(255), CoQuanNhanIds)
             .input('LoaiVanBanDiId', sql.Int, LoaiVanBanId)
             .input('SoLuongBan', sql.Int, SoLuongBan)
             .input('NgayChuyen', sql.Date, NgayChuyen)
@@ -128,7 +129,8 @@ router.put('/sua-vanbandi', upload.single('file'), async (req, res) => {
             TenVanBan,
             NgayVanBan,
             NguoiKyId,
-            NoiNhanId,
+            CoQuanBanHanhId,
+            CoQuanNhanIds,
             LoaiVanBanId,
             SoLuongBan,
             NgayChuyen,
@@ -176,7 +178,8 @@ router.put('/sua-vanbandi', upload.single('file'), async (req, res) => {
             .input('TenVanBan', sql.NVarChar(255), TenVanBan)
             .input('NgayVanBan', sql.Date, NgayVanBan)
             .input('NguoiKyId', sql.Int, NguoiKyId)
-            .input('NoiNhanId', sql.Int, NoiNhanId)
+            .input('CoQuanBanHanhId', sql.Int, CoQuanBanHanhId)
+            .input('CoQuanNhanIds', sql.NVarChar(255), CoQuanNhanIds)
             .input('LoaiVanBanDiId', sql.Int, LoaiVanBanId)
             .input('SoLuongBan', sql.Int, SoLuongBan)
             .input('NgayChuyen', sql.Date, NgayChuyen)
@@ -189,7 +192,8 @@ router.put('/sua-vanbandi', upload.single('file'), async (req, res) => {
                     TenVanBan = @TenVanBan,
                     NgayVanBan = @NgayVanBan,
                     NguoiKyId = @NguoiKyId,
-                    NoiNhanId = @NoiNhanId,
+                    CoQuanBanHanhId = @CoQuanBanHanhId,
+                    NoiNhanId = @CoQuanNhanIds,
                     LoaiVanBanDiId = @LoaiVanBanDiId,
                     SoLuongBan = @SoLuongBan,
                     NgayChuyen = @NgayChuyen,
@@ -200,6 +204,22 @@ router.put('/sua-vanbandi', upload.single('file'), async (req, res) => {
                 WHERE Id = @Id
             `);
 
+        // 🔄 Cập nhật bảng HD_VanBanDi_CoQuanNhan
+        await pool.request()
+            .input('VanBanDiId', sql.Int, Id)
+            .query('DELETE FROM HD_VanBanDi_CoQuanNhan WHERE VanBanDiId = @VanBanDiId');
+
+        // ⚙️ Chèn lại các cơ quan nhận mới
+        const coQuanIds = CoQuanNhanIds?.split(',').map(id => id.trim()).filter(id => id !== '');
+        for (const coQuanId of coQuanIds) {
+            await pool.request()
+                .input('VanBanDiId', sql.Int, Id)
+                .input('CoQuanId', sql.Int, coQuanId)
+                .query(`
+            INSERT INTO HD_VanBanDi_CoQuanNhan (VanBanDiId, CoQuanId)
+            VALUES (@VanBanDiId, @CoQuanId)
+        `);
+        }
         res.json({
             success: true,
             message: 'Cập nhật văn bản đi thành công.',
@@ -212,7 +232,7 @@ router.put('/sua-vanbandi', upload.single('file'), async (req, res) => {
     }
 });
 
-// DELETE /QLHD/xoa-hopdong/:id
+
 router.delete('/xoa-vanbandi/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -227,6 +247,10 @@ router.delete('/xoa-vanbandi/:id', async (req, res) => {
         const filePath = result.recordset?.[0]?.FilePath;
 
         // 2. Xóa bản ghi trong DB
+        await pool.request()
+            .input('Id', sql.Int, id)
+            .query(`DELETE FROM HD_VanBanDi_CoQuanNhan WHERE VanBanDiId = @Id`);
+
         await pool.request()
             .input('Id', sql.Int, id)
             .query(`DELETE FROM HD_VanBanDi WHERE Id = @Id`);
@@ -284,6 +308,48 @@ router.post("/lookup/:type", async (req, res) => {
         res.status(500).json({ error: "Lỗi khi thêm mới" });
     }
 });
+
+router.put("/lookup/:type/:id", async (req, res) => {
+    const { type, id } = req.params;
+    const { name, shortName } = req.body;
+
+    const config = tableMap[type];
+    if (!config || !Array.isArray(config.columns) || config.columns.length === 0) {
+        return res.status(400).json({ error: "Loại không hợp lệ hoặc thiếu cấu hình columns" });
+    }
+
+    const { table, columns } = config;
+
+    try {
+        const pool = await poolPromise;
+        const request = pool.request();
+
+        // Gắn giá trị cho từng field
+        columns.forEach((col, i) => {
+            const value = i === 0 ? name : shortName;
+            request.input(`param${i}`, value);
+        });
+
+        // ID để xác định dòng cần cập nhật
+        request.input("id", id);
+
+        // Tạo câu truy vấn cập nhật
+        const setClause = columns.map((col, i) => `${col} = @param${i}`).join(", ");
+
+        const query = `
+            UPDATE ${table}
+            SET ${setClause}
+            WHERE Id = @id
+        `;
+
+        await request.query(query);
+        res.json({ success: true, message: "Cập nhật thành công" });
+    } catch (err) {
+        console.error("❌ Lỗi cập nhật:", err);
+        res.status(500).json({ error: "Lỗi khi cập nhật" });
+    }
+});
+
 
 
 // ✅ Xóa

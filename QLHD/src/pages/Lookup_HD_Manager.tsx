@@ -104,7 +104,6 @@ export default function LookupManager() {
     try {
       const res = await axios.get(`${apiConfig.API_BASE_URL}/QLHD/lookup`);
       const items = res.data[selectedType] || [];
-      console.log("Dữ liệu cập nhật:", res.data);
       setData([...items]); // ép tạo mảng mới
     } catch (err) {
       toast.error("Lỗi khi tải danh mục");

@@ -21,11 +21,12 @@ import { Textarea } from "@/components/ui/textarea";
 import apiConfig from "../../apiConfig.json";
 import { toast } from "sonner";
 import { Combobox } from "@/components/hopdong/ComboBox";
+import { MultiSelectCombobox } from "@/components/vanbandi/MultiSelectCombobox";
 
-interface CoQuan {
-  Id: number;
-  TenCoQuan: string;
-}
+// interface CoQuan {
+//   Id: number;
+//   TenCoQuan: string;
+// }
 
 export interface VanBanDi {
   Id: number;
@@ -33,7 +34,9 @@ export interface VanBanDi {
   TenVanBan: string;
   NgayVanBan: string;
   NguoiKy: string;
-  NoiNhan: string;
+  CoQuanBanHanh: string;
+  CoQuanNhanIds: string;
+  NoiNhanId: string;
   SoLuongBan: number;
   NgayChuyen: string;
   GhiChu: string;
@@ -58,7 +61,8 @@ export default function VanBanDi() {
 
   const [form, setForm] = useState({
     LoaiVanBanId: "",
-    CoQuanId: "",
+    CoQuanBanHanhId: "",
+    CoQuanNhanIds: "",
     TenVanBan: "",
     NgayVanBan: "",
     NguoiKyId: "",
@@ -80,6 +84,7 @@ export default function VanBanDi() {
 
   const handleCustomChange = (name: string, value: string) => {
     setForm({ ...form, [name]: value });
+    console.log(value);
   };
 
   const handleEdit = (vb: VanBanDi) => {
@@ -88,13 +93,15 @@ export default function VanBanDi() {
         .find((l) => l.TenLoai === vb.LoaiVanBan)
         ?.Id.toString() || "";
     const coQuan =
-      lookup.coQuan.find((cq) => cq.TenCoQuan === vb.NoiNhan)?.Id.toString() ||
-      "";
+      lookup.coQuan
+        .find((cq) => cq.TenCoQuan === vb.CoQuanBanHanh)
+        ?.Id.toString() || "";
     const nguoiKy =
       lookup.nguoiKy.find((cq) => cq.HoTen === vb.NguoiKy)?.Id.toString() || "";
     setForm({
       LoaiVanBanId: loai,
-      CoQuanId: coQuan,
+      CoQuanBanHanhId: coQuan,
+      CoQuanNhanIds: vb.CoQuanNhanIds,
       TenVanBan: vb.TenVanBan,
       NgayVanBan: vb.NgayVanBan ? vb.NgayVanBan.slice(0, 10) : "",
       NguoiKyId: nguoiKy,
@@ -108,7 +115,7 @@ export default function VanBanDi() {
   };
 
   const handleSubmit = async () => {
-    if (!form.LoaiVanBanId || (!form.CoQuanId && role === "admin")) {
+    if (!form.LoaiVanBanId || (!form.CoQuanBanHanhId && role === "admin")) {
       toast.error("Vui lòng chọn loại văn bản và cơ quan.");
       return;
     }
@@ -151,7 +158,8 @@ export default function VanBanDi() {
   const resetForm = () => {
     setForm({
       LoaiVanBanId: "",
-      CoQuanId: "",
+      CoQuanBanHanhId: "",
+      CoQuanNhanIds: "",
       TenVanBan: "",
       NgayVanBan: "",
       NguoiKyId: "",
@@ -191,13 +199,13 @@ export default function VanBanDi() {
     try {
       const res = await fetchLookupVanBanDi();
       setLookup(res.data);
-      let tenCQ: string | null = null;
+
+      let idCQ: string | null = null;
       if (role !== "admin") {
-        tenCQ = res.data.coQuan.find(
-          (cq: CoQuan) => String(cq.Id) === coQuanId
-        )?.TenCoQuan;
+        idCQ = coQuanId || null;
       }
-      const vanBanRes = await fetchVanBanDi(tenCQ);
+      const vanBanRes = await fetchVanBanDi(idCQ);
+      console.log(vanBanRes);
       setVanBans(vanBanRes.data);
     } catch (err) {
       console.error(err);
@@ -241,12 +249,14 @@ export default function VanBanDi() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  Loại văn bản
+                  Cơ quan ban hành
                 </label>
                 {role === "admin" ? (
                   <Combobox
-                    value={form.CoQuanId}
-                    onChange={(val) => handleCustomChange("CoQuanId", val)}
+                    value={form.CoQuanBanHanhId}
+                    onChange={(val) =>
+                      handleCustomChange("CoQuanBanHanhId", val)
+                    }
                     placeholder="-- Chọn cơ quan --"
                     options={lookup.coQuan.map((x) => ({
                       label: x.TenCoQuan,
@@ -302,9 +312,15 @@ export default function VanBanDi() {
                   Nơi nhận
                 </label>
                 {role === "admin" ? (
-                  <Combobox
-                    value={form.NoiNhanId}
-                    onChange={(val) => handleCustomChange("NoiNhanId", val)}
+                  <MultiSelectCombobox
+                    value={form.CoQuanNhanIds?.split(",") || []}
+                    onChange={(vals) => {
+                      const filtered = vals
+                        .map((v) => v.trim())
+                        .filter((v) => v !== "");
+                      const formatted = filtered.join(",");
+                      handleCustomChange("CoQuanNhanIds", formatted);
+                    }}
                     placeholder="-- Chọn nơi nhận --"
                     options={lookup.coQuan.map((x) => ({
                       label: x.TenCoQuan,

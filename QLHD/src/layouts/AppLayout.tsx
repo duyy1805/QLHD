@@ -26,9 +26,10 @@ export default function AppLayout() {
   // ✅ Gọi getSidebarData dựa trên role
   const data = getSidebarData();
 
-  // ✅ Tạo breadcrumb dựa trên pathname hiện tại
   const breadcrumbItems = useMemo(() => {
-    for (const group of data.navMain) {
+    const allNavGroups = [...data.navMain, ...data.navAdmin]; // 👈 gộp cả 2
+
+    for (const group of allNavGroups) {
       for (const item of group.items) {
         if (location.pathname === item.url) {
           return [
@@ -38,6 +39,7 @@ export default function AppLayout() {
         }
       }
     }
+
     return [];
   }, [location.pathname, data]);
 

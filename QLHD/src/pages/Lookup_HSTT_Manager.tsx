@@ -40,13 +40,7 @@ import apiConfig from "../../apiConfig.json";
 const lookupTypes = [
   { key: "loaiVanBan", label: "Loại văn bản" },
   { key: "coQuan", label: "Cơ quan" },
-  { key: "nguoiKy", label: "Người ký" },
 ];
-
-interface LoaiVanBan {
-  Id: number;
-  TenLoai: string;
-}
 
 interface CoQuan {
   Id: number;
@@ -54,18 +48,17 @@ interface CoQuan {
   TenVietTat: string;
 }
 
-interface NguoiKy {
+interface LoaiVanBan {
   Id: number;
-  HoTen: string;
-  ChucVu: string;
+  TenLoaiVanBan: string;
+  MaLoai: string;
 }
 
-type LookupItem = LoaiVanBan | CoQuan | NguoiKy;
+type LookupItem = CoQuan | LoaiVanBan;
 const getItemName = (item: LookupItem): string => {
   return (
-    (item as LoaiVanBan).TenLoai ||
     (item as CoQuan).TenCoQuan ||
-    (item as NguoiKy).HoTen ||
+    (item as LoaiVanBan).TenLoaiVanBan ||
     "Không rõ"
   );
 };
@@ -80,7 +73,7 @@ export default function LookupManager() {
   const [filterValue, setFilterValue] = useState("");
 
   const isCoQuan = selectedType === "coQuan";
-  const isNguoiKy = selectedType === "nguoiKy";
+  const isLoaiVanBan = selectedType === "loaiVanBan";
 
   const filteredData = useMemo(() => {
     return data.filter((item) =>
@@ -90,9 +83,7 @@ export default function LookupManager() {
 
   const fetchLookup = async () => {
     try {
-      const res = await axios.get(
-        `${apiConfig.API_BASE_URL}/vanbandi/lookup-vanbandi`
-      );
+      const res = await axios.get(`${apiConfig.API_BASE_URL}/HSTT/lookup`);
       const items = res.data[selectedType] || [];
       setData([...items]); // ép tạo mảng mới
     } catch (err) {
@@ -110,9 +101,9 @@ export default function LookupManager() {
     if (isCoQuan && !shortName.trim()) return toast.error("Thiếu tên viết tắt");
 
     try {
-      const endpoint = `${apiConfig.API_BASE_URL}/vanbandi/lookup/${selectedType}`;
+      const endpoint = `${apiConfig.API_BASE_URL}/HSTT/lookup/${selectedType}`;
       const payload: Record<string, string> = { name };
-      if (isCoQuan || isNguoiKy) {
+      if (isCoQuan || isLoaiVanBan) {
         payload.shortName = shortName;
       }
 
@@ -139,13 +130,12 @@ export default function LookupManager() {
     let name = "";
     let short = "";
 
-    if ("TenLoai" in item) name = item.TenLoai;
-    else if ("TenCoQuan" in item) {
+    if ("TenCoQuan" in item) {
       name = item.TenCoQuan;
       short = item.TenVietTat;
-    } else if ("HoTen" in item) {
-      name = item.HoTen;
-      short = item.ChucVu;
+    } else if ("TenLoaiVanBan" in item) {
+      name = item.TenLoaiVanBan;
+      short = item.MaLoai;
     }
     setName(name);
     setShortName(short);
@@ -156,7 +146,7 @@ export default function LookupManager() {
   const handleDelete = async (id: number) => {
     try {
       await axios.delete(
-        `${apiConfig.API_BASE_URL}/vanbandi/lookup/${selectedType}/${id}`
+        `${apiConfig.API_BASE_URL}/HSTT/lookup/${selectedType}/${id}`
       );
       toast.success("Đã xóa");
       await fetchLookup();
@@ -168,7 +158,7 @@ export default function LookupManager() {
 
   const getItemShort = (item: LookupItem): string | null => {
     if ("TenVietTat" in item) return item.TenVietTat;
-    if ("ChucVu" in item) return item.ChucVu;
+    if ("MaLoai" in item) return item.MaLoai;
     return null;
   };
 
@@ -224,11 +214,11 @@ export default function LookupManager() {
                 placeholder="Nhập tên viết tắt..."
               />
             )}
-            {isNguoiKy && (
+            {isLoaiVanBan && (
               <Input
                 value={shortName}
                 onChange={(e) => setShortName(e.target.value)}
-                placeholder="Nhập chức vụ..."
+                placeholder="Nhập mã loại văn bản..."
               />
             )}
             <DialogFooter>
@@ -270,7 +260,7 @@ export default function LookupManager() {
                   </Popover>
                 </div>
               </th>
-              {(isCoQuan || isNguoiKy) && (
+              {(isCoQuan || isLoaiVanBan) && (
                 <th className="p-2">{isCoQuan ? "Viết tắt" : "Chức vụ"}</th>
               )}
               <th className="p-2 text-right">Thao tác</th>
@@ -284,7 +274,9 @@ export default function LookupManager() {
                 <tr key={item.Id} className="border-t">
                   <td className="p-2">{idx + 1}</td>
                   <td className="p-2">{name}</td>
-                  {(isCoQuan || isNguoiKy) && <td className="p-2">{short}</td>}
+                  {(isCoQuan || isLoaiVanBan) && (
+                    <td className="p-2">{short}</td>
+                  )}
                   <td className="p-2 text-right space-x-2">
                     <Button
                       size="sm"

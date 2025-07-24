@@ -32,7 +32,9 @@ export interface VanBanDi {
   TenVanBan: string;
   NgayVanBan: string;
   NguoiKy: string;
-  NoiNhan: string;
+  CoQuanBanHanh: string;
+  CoQuanNhanIds: string;
+  NoiNhanId: string;
   SoLuongBan: number;
   NgayChuyen: string;
   GhiChu: string;
@@ -108,11 +110,11 @@ const VanBanDiTable: React.FC<VanBanDiTableProps> = ({
               <TableHead>Loại văn bản</TableHead>
               <TableHead>Ngày VB</TableHead>
               <TableHead>Người ký</TableHead>
-              {/* <TableHead>Nơi nhận</TableHead> */}
+              <TableHead>Cơ quan ban hành</TableHead>
               <TableHead>Số bản</TableHead>
               <TableHead>Ngày chuyển</TableHead>
               <TableHead>Ghi chú</TableHead>
-              <TableHead>Cơ quan</TableHead>
+              {/* <TableHead>Cơ quan</TableHead> */}
               <TableHead>Ngày tạo</TableHead>
               <TableHead>Thao tác</TableHead>
             </TableRow>
@@ -129,11 +131,11 @@ const VanBanDiTable: React.FC<VanBanDiTableProps> = ({
                 <TableCell>{row.LoaiVanBan}</TableCell>
                 <TableCell>{formatDate(row.NgayVanBan)}</TableCell>
                 <TableCell>{row.NguoiKy}</TableCell>
-                {/* <TableCell>{row.NoiNhan}</TableCell> */}
+                <TableCell>{row.CoQuanBanHanh}</TableCell>
                 <TableCell>{row.SoLuongBan}</TableCell>
                 <TableCell>{formatDate(row.NgayChuyen)}</TableCell>
                 <TableCell>{row.GhiChu}</TableCell>
-                <TableCell>{row.NoiNhan}</TableCell>
+                {/* <TableCell>{row.NoiNhan}</TableCell> */}
                 <TableCell>{formatDate(row.CreatedAt)}</TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <div className="flex gap-2">

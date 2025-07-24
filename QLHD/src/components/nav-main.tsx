@@ -39,7 +39,6 @@ export function NavMain({ items }: { items: NavItem[] }) {
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
-          console.log("🚀 Stored open items:", parsed);
           if (Array.isArray(parsed)) {
             setOpenItems(parsed);
           }

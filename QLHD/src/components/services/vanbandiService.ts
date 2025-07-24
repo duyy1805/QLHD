@@ -5,9 +5,9 @@ import apiConfig from "../../../apiConfig.json";
 export const fetchLookupVanBanDi = () =>
     axios.get(`${apiConfig.API_BASE_URL}/vanbandi/lookup-vanbandi`);
 
-export const fetchVanBanDi = (TenCoQuan: string | null) =>
+export const fetchVanBanDi = (idCQ: string | null) =>
     axios.post(`${apiConfig.API_BASE_URL}/vanbandi/vanbandi`, {
-        TenCoQuan,
+        CoQuanId: idCQ,
         SoVanBan: null,
     });
 

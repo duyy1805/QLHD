@@ -38,3 +38,6 @@ export const updateVanBan = (data: FormData) =>
     axios.put(`${apiConfig.API_BASE_URL}/HSTT/sua-vanban`, data, {
         headers: { "Content-Type": "multipart/form-data" },
     });
+
+export const deleteVanBan = (id: number) =>
+    axios.delete(`${apiConfig.API_BASE_URL}/HSTT/xoa-vanban/${id}`);

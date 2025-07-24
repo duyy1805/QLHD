@@ -14,7 +14,7 @@ export const getSidebarData = () => {
     {
       title: "Văn bản, tài liệu",
       url: "#",
-      icon: SquareTerminal,
+      icon: BookOpen,
       items: [
         { title: "Hợp đồng", url: "/document/hopdong" },
         { title: "Văn bản đi", url: "/document/vanbandi" },
@@ -27,7 +27,7 @@ export const getSidebarData = () => {
     {
       title: "Danh mục",
       url: "#",
-      icon: BookOpen,
+      icon: SquareTerminal,
       items: [
         { title: "Hợp đồng", url: "/lookup/hopdong" },
         { title: "Văn bản đi", url: "/lookup/vanbandi" },

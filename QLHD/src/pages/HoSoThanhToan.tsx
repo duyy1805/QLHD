@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Table,
   TableBody,
@@ -26,6 +26,12 @@ import {
   DialogFooter,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Funnel } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -40,6 +46,7 @@ import {
   uploadVanBan,
   deleteHoSoThanhToan,
   updateVanBan,
+  deleteVanBan,
 } from "@/components/services/hosothanhtoanService";
 import apiConfig from "../../apiConfig.json";
 
@@ -67,6 +74,7 @@ interface VanBan {
   TenLoaiVanBan: string;
   CreatedAt: string;
   CreatedBy: string;
+  GhiChu: string;
 }
 
 export default function HoSoThanhToan() {
@@ -81,6 +89,7 @@ export default function HoSoThanhToan() {
     TieuDe: "",
     LoaiVanBanId: "",
     File: null as File | null,
+    GhiChu: "",
   });
 
   const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
@@ -100,9 +109,28 @@ export default function HoSoThanhToan() {
   const [editingHoSo, setEditingHoSo] = useState<HoSoThanhToan | null>(null);
   const [editingVanBan, setEditingVanBan] = useState<VanBan | null>(null);
   const [hoSoThanhToans, setHoSoThanhToans] = useState<HoSoThanhToan[]>([]);
+  const [filters, setFilters] = useState({
+    soHoSo: "",
+    tenHoSo: "",
+    coQuanId: "",
+  });
+
   const role = localStorage.getItem("role");
   const coQuanId = localStorage.getItem("coQuanId");
   const userId = localStorage.getItem("userId");
+
+  const matches = (text: string, keyword: string) =>
+    text?.toLowerCase().includes(keyword.toLowerCase());
+
+  const filteredData = useMemo(() => {
+    return hoSoThanhToans.filter(
+      (row) =>
+        matches(row.SoHoSo, filters.soHoSo) &&
+        matches(row.TenHoSo, filters.tenHoSo) &&
+        (filters.coQuanId === "" ||
+          row.CoQuanId?.toString() === filters.coQuanId)
+    );
+  }, [hoSoThanhToans, filters]);
 
   const resetForm = () => {
     setForm({
@@ -179,7 +207,6 @@ export default function HoSoThanhToan() {
           ?.Id.toString() || "",
       GhiChu: row.GhiChu,
     });
-    console.log("Editing row:", row);
     setEditingHoSo(row);
     setOpen(true);
   };
@@ -192,8 +219,8 @@ export default function HoSoThanhToan() {
           .find((x) => x.TenLoaiVanBan === row.TenLoaiVanBan)
           ?.Id.toString() || "",
       File: null,
+      GhiChu: row.GhiChu || "",
     });
-    console.log("Editing row:", row);
     setEditingVanBan(row);
     setOpenAddVanBanDialog(true);
   };
@@ -232,6 +259,7 @@ export default function HoSoThanhToan() {
     formData.append("TieuDe", vanBanForm.TieuDe);
     formData.append("LoaiVanBanId", vanBanForm.LoaiVanBanId);
     formData.append("file", vanBanForm.File || "");
+    formData.append("GhiChu", vanBanForm.GhiChu || "");
 
     if (editingVanBan) {
       try {
@@ -260,7 +288,7 @@ export default function HoSoThanhToan() {
       }
     }
     setOpenAddVanBanDialog(false);
-    setVanBanForm({ TieuDe: "", LoaiVanBanId: "", File: null });
+    setVanBanForm({ TieuDe: "", LoaiVanBanId: "", File: null, GhiChu: "" });
     setEditingVanBan(null);
   };
 
@@ -268,10 +296,20 @@ export default function HoSoThanhToan() {
     try {
       await deleteHoSoThanhToan(id);
       toast.success("Đã xóa hồ sơ thanh toán");
-      // Cập nhật lại danh sách hồ sơ thanh toán bằng cách lọc bỏ id
       setHoSoThanhToans((prev) => prev.filter((hs) => hs.Id !== id));
     } catch (err) {
       toast.error("Lỗi khi xóa hồ sơ thanh toán");
+      console.error(err);
+    }
+  };
+
+  const handleDeleteVanBan = async (id: number) => {
+    try {
+      await deleteVanBan(id);
+      toast.success("Đã xóa văn bản");
+      setVanBans((prev) => prev.filter((vb) => vb.VanBanId !== id));
+    } catch (err) {
+      toast.error("Lỗi khi xóa văn bản");
       console.error(err);
     }
   };
@@ -407,17 +445,101 @@ export default function HoSoThanhToan() {
             <TableHeader className="bg-gray-100">
               <TableRow>
                 <TableHead>
-                  <div className="flex items-center gap-1">Số hồ sơ</div>
+                  <div className="flex items-center gap-1">
+                    Số hồ sơ
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          className="p-1 hover:bg-gray-200 rounded"
+                          title="Lọc Số VB"
+                        >
+                          <Funnel className="w-3 h-3 text-gray-500" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-48">
+                        <Input
+                          placeholder="Nhập Số văn bản..."
+                          value={filters.soHoSo}
+                          onChange={(e) =>
+                            setFilters({ ...filters, soHoSo: e.target.value })
+                          }
+                        />
+                        <div className="mt-2 text-sm text-gray-500">
+                          Lọc theo Số văn bản nội bộ
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                 </TableHead>
-                <TableHead>Tên hồ sơ</TableHead>
-                <TableHead>Cơ quan</TableHead>
+                <TableHead>
+                  <div className="flex items-center gap-1">
+                    Tên hồ sơ
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          className="p-1 hover:bg-gray-200 rounded"
+                          title="Lọc Tên hồ sơ"
+                        >
+                          <Funnel className="w-3 h-3 text-gray-500" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-48">
+                        <Input
+                          placeholder="Nhập Tên hồ sơ..."
+                          value={filters.tenHoSo}
+                          onChange={(e) =>
+                            setFilters({ ...filters, tenHoSo: e.target.value })
+                          }
+                        />
+                        <div className="mt-2 text-sm text-gray-500">
+                          Lọc theo Tên hồ sơ
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </TableHead>
+                <TableHead>
+                  <div className="flex items-center gap-1">
+                    Cơ quan
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          className="p-1 hover:bg-gray-200 rounded"
+                          title="Lọc cơ quan"
+                        >
+                          <Funnel className="w-3 h-3 text-gray-500" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-56">
+                        <Combobox
+                          value={filters.coQuanId}
+                          onChange={(val) =>
+                            setFilters((prev) => ({ ...prev, coQuanId: val }))
+                          }
+                          options={[
+                            { label: "-- Tất cả --", value: "" },
+                            ...lookup.coQuan.map((cq) => ({
+                              label: cq.TenCoQuan,
+                              value: cq.Id.toString(),
+                            })),
+                          ]}
+                          placeholder="Chọn cơ quan"
+                        />
+                        <div className="mt-2 text-sm text-gray-500">
+                          Lọc theo cơ quan chủ trì
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </TableHead>
+
                 <TableHead>Ngày tạo</TableHead>
                 <TableHead>Ghi chú</TableHead>
                 <TableHead>Thao tác</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {hoSoThanhToans.map((row) => (
+              {filteredData.map((row) => (
                 <TableRow
                   key={row.Id}
                   className="cursor-pointer hover:bg-gray-100 h-12"
@@ -491,7 +613,7 @@ export default function HoSoThanhToan() {
                       <TableHead>Tiêu đề</TableHead>
                       <TableHead>Loại văn bản</TableHead>
                       <TableHead>Ngày tạo</TableHead>
-                      <TableHead>File</TableHead>
+                      <TableHead>Ghi chú</TableHead>
                       <TableHead>Thao tác</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -519,7 +641,7 @@ export default function HoSoThanhToan() {
                           <TableCell>
                             {new Date(vb.CreatedAt).toLocaleDateString()}
                           </TableCell>
-                          <TableCell>{vb.FilePath}</TableCell>
+                          <TableCell>{vb.GhiChu}</TableCell>
                           <TableCell onClick={(e) => e.stopPropagation()}>
                             <div className="flex gap-2">
                               {/* ✅ Tất cả role đều được sửa */}
@@ -541,7 +663,7 @@ export default function HoSoThanhToan() {
                                   <AlertDialogContent>
                                     <AlertDialogHeader>
                                       <AlertDialogTitle>
-                                        Bạn có chắc muốn xóa hợp đồng?
+                                        Bạn có chắc muốn xóa văn bản này?
                                       </AlertDialogTitle>
                                       <AlertDialogDescription>
                                         Thao tác này không thể hoàn tác. File
@@ -552,7 +674,7 @@ export default function HoSoThanhToan() {
                                       <AlertDialogCancel>Hủy</AlertDialogCancel>
                                       <AlertDialogAction
                                         onClick={() =>
-                                          handleDeleteHoSoThanhToan(vb.Id)
+                                          handleDeleteVanBan(vb.VanBanId)
                                         }
                                       >
                                         Xóa
@@ -624,6 +746,21 @@ export default function HoSoThanhToan() {
                   </select>
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Ghi chú
+                  </label>
+                  <Textarea
+                    id="GhiChu"
+                    name="GhiChu"
+                    value={vanBanForm.GhiChu}
+                    onChange={(e) =>
+                      setVanBanForm({ ...vanBanForm, GhiChu: e.target.value })
+                    }
+                    className="w-full"
+                    rows={2}
+                  />
+                </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">File</label>
                   <Input

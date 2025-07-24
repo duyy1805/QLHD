@@ -6,6 +6,7 @@ import Login from "./pages/Login";
 import AppLayout from "./layouts/AppLayout";
 import LookupHDManager from "./pages/Lookup_HD_Manager";
 import LookupVBDManager from "./pages/Lookup_VBD_Manager";
+import LookupHSTTManager from "./pages/Lookup_HSTT_Manager";
 import HopDong from "./pages/HopDong";
 import VanBanDi from "./pages/VanBanDi";
 import HoSoThanhToan from "./pages/HoSoThanhToan";
@@ -29,6 +30,10 @@ function App() {
             <Route path="/hosothanhtoan" element={<HoSoThanhToan />} />
             <Route path="/lookup/hopdong" element={<LookupHDManager />} />
             <Route path="/lookup/vanbandi" element={<LookupVBDManager />} />
+            <Route
+              path="/lookup/hosothanhtoan"
+              element={<LookupHSTTManager />}
+            />
           </Route>
         </Route>
       </Routes>

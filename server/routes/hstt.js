@@ -186,7 +186,7 @@ router.get('/vanban', async (req, res) => {
 router.post('/them-vanban', upload.single('file'), async (req, res) => {
     try {
         const {
-            HoSoId, LoaiVanBanId, TieuDe, CreatedBy
+            HoSoId, LoaiVanBanId, TieuDe, CreatedBy, GhiChu
         } = req.body;
         console.log('Received data for adding document:', {
             HoSoId, LoaiVanBanId, TieuDe, CreatedBy
@@ -199,6 +199,7 @@ router.post('/them-vanban', upload.single('file'), async (req, res) => {
             .input('LoaiVanBanId', sql.Int, LoaiVanBanId)
             .input('TieuDe', sql.NVarChar(255), TieuDe)
             .input('CreatedBy', sql.Int, CreatedBy)
+            .input('GhiChu', sql.NVarChar(sql.MAX), GhiChu || null)
             .output("Id", sql.Int)
             .execute('HSTT_HoSoVanBan_Add');
 
@@ -239,7 +240,7 @@ router.post('/them-vanban', upload.single('file'), async (req, res) => {
 
 router.put('/sua-vanban', upload.single('file'), async (req, res) => {
     try {
-        const { Id, TieuDe, LoaiVanBanId } = req.body;
+        const { Id, TieuDe, LoaiVanBanId, GhiChu } = req.body;
         const file = req.file;
         const pool = await poolPromise;
 
@@ -264,7 +265,7 @@ router.put('/sua-vanban', upload.single('file'), async (req, res) => {
 
             const newFilePath = path.join(finalDir, newFileName);
 
-            // ❌ Xoá file cũ nếu tồn tại
+            // ❌ Xoá file cũ nếu tồn tại  
             if (oldFilePath && fs.existsSync(oldFilePath)) {
                 fs.unlinkSync(oldFilePath);
             }
@@ -279,6 +280,7 @@ router.put('/sua-vanban', upload.single('file'), async (req, res) => {
             .input('Id', sql.Int, Id)
             .input('TieuDe', sql.NVarChar(255), TieuDe)
             .input('LoaiVanBanId', sql.Int, LoaiVanBanId)
+            .input('GhiChu', sql.NVarChar(sql.MAX), GhiChu || null)
             .input('FilePath', sql.NVarChar(255), finalPath)
             .execute('HSTT_HoSoVanBan_Update');
 
@@ -294,8 +296,41 @@ router.put('/sua-vanban', upload.single('file'), async (req, res) => {
     }
 });
 
+router.delete('/xoa-vanban/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const pool = await poolPromise;
 
-// Lấy thông tin liên quan đến hợp đồng
+        // 1. Lấy tất cả file path từ HSTT_HoSoVanBan theo HoSoId
+        const vanBanResult = await pool.request()
+            .input('Id', sql.Int, id)
+            .query(`SELECT FilePath FROM HSTT_HoSoVanBan WHERE Id = @Id`);
+
+        const filePaths = vanBanResult.recordset.map(row => row.FilePath);
+
+        // 2. Xoá các file trong hệ thống nếu tồn tại
+        filePaths.forEach(filePath => {
+            if (filePath && fs.existsSync(filePath)) {
+                try {
+                    fs.unlinkSync(filePath);
+                } catch (err) {
+                    console.error(`⚠️ Không thể xóa file: ${filePath}`, err);
+                }
+            }
+        });
+
+        // 3. Gọi stored procedure để xóa dữ liệu liên quan trong DB
+        await pool.request()
+            .input('Id', sql.Int, id)
+            .execute('HSTT_DeleteVanBan');
+
+        res.json({ success: true, message: 'Đã xóa hồ sơ thanh toán và các file liên quan (nếu có).' });
+    } catch (err) {
+        console.error('❌ Lỗi khi xóa hồ sơ thanh toán:', err);
+        res.status(500).json({ success: false, message: 'Lỗi khi xóa hồ sơ thanh toán.' });
+    }
+});
+
 router.get('/lookup', async (req, res) => {
     try {
         const pool = await poolPromise;
@@ -313,11 +348,8 @@ router.get('/lookup', async (req, res) => {
 
 // Mapping loại lookup đến bảng & cột
 const tableMap = {
-    loaiVanBan: { table: "HD_LoaiVanBan", column: "TenLoai" },
+    loaiVanBan: { table: "HSTT_DM_LoaiVanBan", columns: ["TenLoaiVanBan", "MaLoai"] },
     coQuan: { table: "HD_CoQuan", columns: ["TenCoQuan", "TenVietTat"] },
-    heThong: { table: "HD_HeThong", column: "TenHeThong" },
-    doiTac: { table: "HD_DoiTac", column: "TenDoiTac" },
-    tinhTrang: { table: "HD_TinhTrang", column: "TenTinhTrang" },
 };
 
 
@@ -359,48 +391,48 @@ router.post("/lookup/:type", async (req, res) => {
 });
 
 
-//cập nhật
 router.put("/lookup/:type/:id", async (req, res) => {
     const { type, id } = req.params;
     const { name, shortName } = req.body;
 
     const config = tableMap[type];
-    if (!config) {
-        return res.status(400).json({ error: "Loại không hợp lệ" });
+    if (!config || !Array.isArray(config.columns) || config.columns.length === 0) {
+        return res.status(400).json({ error: "Loại không hợp lệ hoặc thiếu cấu hình columns" });
     }
+
+    const { table, columns } = config;
 
     try {
         const pool = await poolPromise;
+        const request = pool.request();
 
-        let query = "";
-        const request = await pool.request().input("id", id);
+        // Gắn giá trị cho từng field
+        columns.forEach((col, i) => {
+            const value = i === 0 ? name : shortName;
+            request.input(`param${i}`, value);
+        });
 
-        if (type === "coQuan") {
-            // Riêng cơ quan cần cập nhật cả tên và viết tắt
-            query = `
-          UPDATE HD_CoQuan
-          SET TenCoQuan = @name, TenVietTat = @shortName
-          WHERE Id = @id
+        // ID để xác định dòng cần cập nhật
+        request.input("id", id);
+
+        // Tạo câu truy vấn cập nhật
+        const setClause = columns.map((col, i) => `${col} = @param${i}`).join(", ");
+
+        const query = `
+            UPDATE ${table}
+            SET ${setClause}
+            WHERE Id = @id
         `;
-            request.input("name", name).input("shortName", shortName);
-        } else {
-            // Các loại còn lại chỉ cập nhật 1 trường
-            query = `
-          UPDATE ${config.table}
-          SET ${config.column} = @name
-          WHERE Id = @id
-        `;
-            request.input("name", name);
-        }
 
         await request.query(query);
-
-        res.json({ success: true, message: "Đã cập nhật thành công" });
+        res.json({ success: true, message: "Cập nhật thành công" });
     } catch (err) {
-        console.error("Lỗi cập nhật:", err);
+        console.error("❌ Lỗi cập nhật:", err);
         res.status(500).json({ error: "Lỗi khi cập nhật" });
     }
 });
+
+
 
 
 // ✅ Xóa
