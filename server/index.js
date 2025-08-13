@@ -11,6 +11,7 @@ const hrRouter = require('./routes/hr')
 const qlhdRouter = require('./routes/qlhd')
 const vanbandiRouter = require('./routes/vanbandi');
 const hsttRouter = require('./routes/hstt');
+const dautuanRouter = require('./routes/dautuan');
 
 const app = express();
 app.use(express.json());
@@ -23,6 +24,7 @@ app.use('/hr', hrRouter)
 app.use('/QLHD', qlhdRouter)
 app.use('/vanbandi', vanbandiRouter);
 app.use('/hstt', hsttRouter)
+app.use('/dautuan', dautuanRouter);
 
 app.use('/uploads', express.static(path.join('C:/DocumentsUpload/HopDong/Upload'), {
     setHeaders: (res, filePath) => {

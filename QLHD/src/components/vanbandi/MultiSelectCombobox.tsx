@@ -40,12 +40,17 @@ export function MultiSelectCombobox({
     .map((opt) => opt.label);
 
   const handleToggle = (val: string) => {
-    if (value.includes(val)) {
-      onChange(value.filter((v) => v !== val)); // Bỏ chọn
-    } else {
-      onChange([...value, val]); // Chọn thêm
-    }
+    if (value.includes(val)) onChange(value.filter((v) => v !== val));
+    else onChange([...value, val]);
   };
+
+  const displayText = React.useMemo(() => {
+    if (selectedLabels.length === 0) return placeholder || "Chọn";
+    // Hiển thị tối đa 2 nhãn, phần còn lại gộp thành +N
+    const head = selectedLabels.slice(0, 2).join(", ");
+    const rest = selectedLabels.length - 2;
+    return rest > 0 ? `${head} +${rest}` : head;
+  }, [selectedLabels, placeholder]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -54,12 +59,15 @@ export function MultiSelectCombobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-between"
+          className="w-full justify-between gap-2"
+          // title hiển thị full danh sách khi hover
+          title={selectedLabels.join(", ")}
         >
-          {selectedLabels.length > 0
-            ? selectedLabels.join(", ")
-            : placeholder || "Chọn"}
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          <span className="flex-1 min-w-0 text-left">
+            {/* tránh tràn chữ */}
+            <span className="block truncate">{displayText}</span>
+          </span>
+          <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-full p-0 max-h-60 overflow-y-auto">

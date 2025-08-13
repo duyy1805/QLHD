@@ -1,4 +1,5 @@
 {
   "API_BASE_URL": "https://nodeapi.z76.vn",
-  "API_LOCAL": "http://localhost:5000"
+  "API_LOCAL": "http://localhost:5000",
+  "API_LOCAL1": "https://nodeapi.z76.vn"
 }

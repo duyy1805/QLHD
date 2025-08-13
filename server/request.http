@@ -65,3 +65,7 @@ Content-Type: application/json
 {
   "BoPhanId": 1
 }
+
+###
+
+GET http://localhost:5000/dautuan/giao-dich

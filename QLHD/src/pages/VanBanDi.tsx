@@ -221,7 +221,17 @@ export default function VanBanDi() {
       <div className="mb-4 flex justify-between items-center bg-gray-100 border rounded p-4">
         <h2 className="text-xl font-bold">Quản lý Văn bản đi</h2>
 
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog
+          open={open}
+          onOpenChange={(isOpen) => {
+            setOpen(isOpen);
+            if (!isOpen) {
+              setEditingVanBan(null); // reset sửa
+              setFile(null); // reset file
+              resetForm();
+            }
+          }}
+        >
           <DialogTrigger asChild>
             <Button>+ Thêm văn bản</Button>
           </DialogTrigger>
@@ -311,28 +321,21 @@ export default function VanBanDi() {
                 <label className="block text-sm font-medium mb-1">
                   Nơi nhận
                 </label>
-                {role === "admin" ? (
-                  <MultiSelectCombobox
-                    value={form.CoQuanNhanIds?.split(",") || []}
-                    onChange={(vals) => {
-                      const filtered = vals
-                        .map((v) => v.trim())
-                        .filter((v) => v !== "");
-                      const formatted = filtered.join(",");
-                      handleCustomChange("CoQuanNhanIds", formatted);
-                    }}
-                    placeholder="-- Chọn nơi nhận --"
-                    options={lookup.coQuan.map((x) => ({
-                      label: x.TenCoQuan,
-                      value: x.Id.toString(),
-                    }))}
-                  />
-                ) : (
-                  <p className="text-sm text-gray-600 px-3 py-2 bg-gray-100 rounded-md">
-                    {lookup.coQuan.find((cq) => String(cq.Id) === coQuanId)
-                      ?.TenCoQuan ?? "Không rõ"}
-                  </p>
-                )}
+                <MultiSelectCombobox
+                  value={form.CoQuanNhanIds?.split(",") || []}
+                  onChange={(vals) => {
+                    const filtered = vals
+                      .map((v) => v.trim())
+                      .filter((v) => v !== "");
+                    const formatted = filtered.join(",");
+                    handleCustomChange("CoQuanNhanIds", formatted);
+                  }}
+                  placeholder="-- Chọn nơi nhận --"
+                  options={lookup.coQuan.map((x) => ({
+                    label: x.TenCoQuan,
+                    value: x.Id.toString(),
+                  }))}
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">
