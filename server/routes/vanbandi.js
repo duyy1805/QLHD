@@ -268,7 +268,7 @@ router.delete('/xoa-vanbandi/:id', async (req, res) => {
 });
 
 const tableMap = {
-    loaiVanBan: { table: "HD_LoaiVanBanDi", columns: ["TenLoai"] },
+    loaiVanBan: { table: "HD_LoaiVanBanDi", columns: ["TenLoai", "KyHieu"] },
     coQuan: { table: "HD_CoQuan", columns: ["TenCoQuan", "TenVietTat"] },
     nguoiKy: { table: "HD_NguoiKy", columns: ["HoTen", "ChucVu"] },
 };

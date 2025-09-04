@@ -46,6 +46,7 @@ const lookupTypes = [
 interface LoaiVanBan {
   Id: number;
   TenLoai: string;
+  KyHieu: string;
 }
 
 interface CoQuan {
@@ -81,6 +82,7 @@ export default function LookupManager() {
 
   const isCoQuan = selectedType === "coQuan";
   const isNguoiKy = selectedType === "nguoiKy";
+  const isLoaiVanBan = selectedType === "loaiVanBan";
 
   const filteredData = useMemo(() => {
     return data.filter((item) =>
@@ -95,6 +97,7 @@ export default function LookupManager() {
       );
       const items = res.data[selectedType] || [];
       setData([...items]); // ép tạo mảng mới
+      console.log("Danh mục đã tải:", items);
     } catch (err) {
       toast.error("Lỗi khi tải danh mục");
       console.error(err);
@@ -112,7 +115,7 @@ export default function LookupManager() {
     try {
       const endpoint = `${apiConfig.API_BASE_URL}/vanbandi/lookup/${selectedType}`;
       const payload: Record<string, string> = { name };
-      if (isCoQuan || isNguoiKy) {
+      if (isCoQuan || isNguoiKy || isLoaiVanBan) {
         payload.shortName = shortName;
       }
 
@@ -139,8 +142,10 @@ export default function LookupManager() {
     let name = "";
     let short = "";
 
-    if ("TenLoai" in item) name = item.TenLoai;
-    else if ("TenCoQuan" in item) {
+    if ("TenLoai" in item) {
+      name = item.TenLoai;
+      short = item.KyHieu;
+    } else if ("TenCoQuan" in item) {
       name = item.TenCoQuan;
       short = item.TenVietTat;
     } else if ("HoTen" in item) {
@@ -169,6 +174,7 @@ export default function LookupManager() {
   const getItemShort = (item: LookupItem): string | null => {
     if ("TenVietTat" in item) return item.TenVietTat;
     if ("ChucVu" in item) return item.ChucVu;
+    if ("KyHieu" in item) return item.KyHieu;
     return null;
   };
 
@@ -231,6 +237,13 @@ export default function LookupManager() {
                 placeholder="Nhập chức vụ..."
               />
             )}
+            {isLoaiVanBan && (
+              <Input
+                value={shortName}
+                onChange={(e) => setShortName(e.target.value)}
+                placeholder="Nhập ký hiệu..."
+              />
+            )}
             <DialogFooter>
               <Button onClick={handleSave}>
                 {editId ? "Lưu thay đổi" : "Thêm mới"}
@@ -270,8 +283,10 @@ export default function LookupManager() {
                   </Popover>
                 </div>
               </th>
-              {(isCoQuan || isNguoiKy) && (
-                <th className="p-2">{isCoQuan ? "Viết tắt" : "Chức vụ"}</th>
+              {(isCoQuan || isNguoiKy || isLoaiVanBan) && (
+                <th className="p-2">
+                  {isCoQuan ? "Viết tắt" : isNguoiKy ? "Chức vụ" : "Ký hiệu"}
+                </th>
               )}
               <th className="p-2 text-right">Thao tác</th>
             </tr>
@@ -284,7 +299,9 @@ export default function LookupManager() {
                 <tr key={item.Id} className="border-t">
                   <td className="p-2">{idx + 1}</td>
                   <td className="p-2">{name}</td>
-                  {(isCoQuan || isNguoiKy) && <td className="p-2">{short}</td>}
+                  {(isCoQuan || isNguoiKy || isLoaiVanBan) && (
+                    <td className="p-2">{short}</td>
+                  )}
                   <td className="p-2 text-right space-x-2">
                     <Button
                       size="sm"

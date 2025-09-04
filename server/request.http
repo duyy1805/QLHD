@@ -68,4 +68,29 @@ Content-Type: application/json
 
 ###
 
-GET http://localhost:5000/dautuan/giao-dich
+POST  http://localhost:5000/khotm/find-by-qr
+Content-Type: application/json
+
+{
+  "qrcode": "BP0000219845"
+}
+
+
+###
+
+POST  http://localhost:5000/khotm/insert-pick
+Content-Type: application/json
+
+{
+  "idPhieuXuat": 252978,
+  "qrcode": "BP0000214211"
+}
+
+###
+POST  http://localhost:5000/erp/dinhmucvattu
+Content-Type: application/json
+x-api-key: 7d91bfa5a2e349c4b4f7a1d7e6d4a3f6c9e2b8f17d44a92b5c63a4d5e8f1b2c3
+
+{
+  "ItemCode": "5356933"
+}

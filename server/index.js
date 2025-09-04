@@ -12,7 +12,8 @@ const qlhdRouter = require('./routes/qlhd')
 const vanbandiRouter = require('./routes/vanbandi');
 const hsttRouter = require('./routes/hstt');
 const dautuanRouter = require('./routes/dautuan');
-
+const khotm = require('./routes/khotm');
+const erp = require('./routes/ERP/erp');
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -25,7 +26,8 @@ app.use('/QLHD', qlhdRouter)
 app.use('/vanbandi', vanbandiRouter);
 app.use('/hstt', hsttRouter)
 app.use('/dautuan', dautuanRouter);
-
+app.use('/khotm', khotm);
+app.use('/erp', erp);
 app.use('/uploads', express.static(path.join('C:/DocumentsUpload/HopDong/Upload'), {
     setHeaders: (res, filePath) => {
         res.setHeader('Content-Disposition', 'inline');

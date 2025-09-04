@@ -248,11 +248,11 @@ router.get('/lookup', async (req, res) => {
 
 // Mapping loại lookup đến bảng & cột
 const tableMap = {
-    loaiVanBan: { table: "HD_LoaiVanBan", column: "TenLoai" },
+    loaiVanBan: { table: "HD_LoaiVanBan", columns: ["TenLoai"] },
     coQuan: { table: "HD_CoQuan", columns: ["TenCoQuan", "TenVietTat"] },
-    heThong: { table: "HD_HeThong", column: "TenHeThong" },
-    doiTac: { table: "HD_DoiTac", column: "TenDoiTac" },
-    tinhTrang: { table: "HD_TinhTrang", column: "TenTinhTrang" },
+    heThong: { table: "HD_HeThong", columns: ["TenHeThong"] },
+    doiTac: { table: "HD_DoiTac", columns: ["TenDoiTac"] },
+    tinhTrang: { table: "HD_TinhTrang", columns: ["TenTinhTrang"] },
 };
 
 
