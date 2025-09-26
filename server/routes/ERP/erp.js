@@ -44,7 +44,6 @@ router.post('/dinhmucvattu', checkApiKey, async (req, res) => {
         const result = await pool.request()
             .input('ItemCode', sql.NVarChar(50), ItemCode)   // đúng độ dài như stored
             .input('ID_DonHang', sql.Int, ID_DonHang)
-            // nếu proc nằm trong schema dbo: nên chỉ rõ 'dbo.sp_Laydinhmucvattu_idDonHang'
             .execute('dbo.sp_Laydinhmucvattu_idDonHang');
 
         const dinhmucvattu = result.recordset || []; // recordset đầu tiên

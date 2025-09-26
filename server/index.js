@@ -14,6 +14,7 @@ const hsttRouter = require('./routes/hstt');
 const dautuanRouter = require('./routes/dautuan');
 const khotm = require('./routes/khotm');
 const erp = require('./routes/ERP/erp');
+const hoitruongRouter = require('./routes/hoitruong');
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -24,6 +25,8 @@ app.use('/auth', authRouter)
 app.use('/hr', hrRouter)
 app.use('/QLHD', qlhdRouter)
 app.use('/vanbandi', vanbandiRouter);
+app.use('/hoitruong', hoitruongRouter);
+
 app.use('/hstt', hsttRouter)
 app.use('/dautuan', dautuanRouter);
 app.use('/khotm', khotm);

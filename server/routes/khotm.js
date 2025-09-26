@@ -7,6 +7,30 @@ const { testpoolPromise } = require('../dbtest');
 const sql = require('mssql');
 
 
+
+router.post('/getthongtinkien', async (req, res) => {
+    try {
+        const { QRCode } = req.body || {};
+        if (!QRCode || typeof QRCode !== 'string' || !QRCode.trim()) {
+            return res.status(400).json({ ok: false, message: 'Thiếu hoặc sai QRCode' });
+        }
+
+        const pool = await testpoolPromise;
+        const result = await pool
+            .request()
+            .input('QRCode', sql.NVarChar(100), QRCode.trim())
+            .execute('sp_GetThongTinTheoQRCode');
+        const recordset = result.recordset || [];
+        if (recordset.length === 0) {
+            return res.status(404).json({ ok: false, message: 'Không tìm thấy thông tin kiện' });
+        }
+        return res.json({ ok: true, data: recordset });
+    } catch (err) {
+        console.error('getthongtinkien SP error:', err);
+        return res.status(500).json({ ok: false, message: 'Lỗi máy chủ', detail: err?.message });
+    }
+});
+
 router.post('/find-by-qr', /* verifyToken, */ async (req, res) => {
     try {
         const { qrcode, startDate, endDate } = req.body || {};
@@ -87,7 +111,7 @@ router.post('/phieu-detail', async (req, res) => {
             return res.status(400).json({ ok: false, message: 'Thiếu ID_PhieuXuatBTP' });
         }
 
-        const pool = await tagpoolPromise;
+        const pool = await testpoolPromise;
         const result = await pool
             .request()
             .input('ID_PhieuXuatBTP', sql.Int, idPhieuXuat)
@@ -112,7 +136,7 @@ router.post('/insert-pick', async (req, res) => {
             return res.status(400).json({ ok: false, message: 'Thiếu tham số idPhieuXuat hoặc qrcode' });
         }
 
-        const pool = await tagpoolPromise;
+        const pool = await testpoolPromise;
 
         const result = await pool
             .request()
@@ -148,7 +172,7 @@ router.post('/phieu-line-remaining', async (req, res) => {
             return res.status(400).json({ ok: false, message: 'Thiếu tham số' });
         }
 
-        const pool = await tagpoolPromise;
+        const pool = await testpoolPromise;
         const result = await pool.request()
             .input('ID_PhieuXuatBTP', sql.Int, idPhieuXuat)
             .query(`
@@ -179,4 +203,234 @@ router.post('/phieu-line-remaining', async (req, res) => {
         res.status(500).json({ ok: false, message: 'Lỗi máy chủ', detail: err?.message });
     }
 });
+
+router.post('/merge-kien', async (req, res) => {
+    try {
+        const { targetPackageId, detailIds } = req.body || {};
+
+        // Validate input
+        if (!targetPackageId || !Array.isArray(detailIds) || detailIds.length === 0) {
+            return res.status(400).json({
+                ok: false,
+                message: 'Thiếu targetPackageId hoặc detailIds'
+            });
+        }
+
+        // Chuẩn hoá mảng id (toàn số nguyên dương)
+        const ids = detailIds
+            .map(x => parseInt(x, 10))
+            .filter(x => Number.isInteger(x) && x > 0);
+
+        if (ids.length === 0) {
+            return res.status(400).json({ ok: false, message: 'detailIds không hợp lệ' });
+        }
+
+        const idsIn = ids.join(','); // ví dụ: "1,2,3"
+        const pool = await testpoolPromise;
+
+        const result = await pool.request()
+            .input('TargetId', sql.Int, parseInt(targetPackageId, 10))
+            .query(`
+        SET NOCOUNT ON;
+        SET XACT_ABORT ON;
+
+        BEGIN TRY
+            BEGIN TRAN;
+
+            DECLARE @updated INT = 0;
+            DECLARE @deactivated INT = 0;
+
+            -- 1) Ghi lại các kiện nguồn (khác Target) chứa các chi tiết sẽ chuyển
+            DECLARE @Src TABLE (Id INT PRIMARY KEY);
+            INSERT INTO @Src (Id)
+            SELECT DISTINCT d.ID_TheKhoKienBTP
+            FROM TheKhoKienBTP_ChiTiet AS d
+            WHERE d.ID_TheKhoKienBTP_ChiTiet IN (${idsIn})
+              AND d.ID_TheKhoKienBTP <> @TargetId;
+
+            -- 2) Merge: chuyển các chi tiết sang kiện đích
+            UPDATE d
+            SET d.ID_TheKhoKienBTP = @TargetId
+            FROM TheKhoKienBTP_ChiTiet AS d
+            WHERE d.ID_TheKhoKienBTP_ChiTiet IN (${idsIn})
+              AND d.ID_TheKhoKienBTP <> @TargetId;
+
+            SET @updated = @@ROWCOUNT;
+
+            -- 3) Đánh dấu TonTai = 0 cho các kiện nguồn đã rỗng (soft delete)
+            ;WITH EmptySrc AS (
+              SELECT p.ID_TheKhoKienBTP
+              FROM TheKhoKienBTP p
+              WHERE p.ID_TheKhoKienBTP IN (SELECT Id FROM @Src)
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM TheKhoKienBTP_ChiTiet c
+                    WHERE c.ID_TheKhoKienBTP = p.ID_TheKhoKienBTP
+                )
+            )
+            UPDATE p
+            SET p.TonTai = 0, p.QRCode = null
+            FROM TheKhoKienBTP p
+            JOIN EmptySrc e ON e.ID_TheKhoKienBTP = p.ID_TheKhoKienBTP
+            WHERE ISNULL(p.TonTai, 1) <> 0;  -- chỉ cập nhật khi khác 0
+
+            SET @deactivated = @@ROWCOUNT;
+
+            COMMIT;
+
+            -- Giữ 'deletedPackages' làm alias để tương thích nếu client có dùng
+            SELECT
+              @updated     AS updated,
+              @deactivated AS deactivatedPackages,
+              @deactivated AS deletedPackages;
+        END TRY
+        BEGIN CATCH
+            IF XACT_STATE() <> 0 ROLLBACK;
+            THROW;
+        END CATCH
+      `);
+
+        const row = result.recordset?.[0] || {};
+        return res.json({
+            ok: true,
+            updated: row.updated ?? 0,
+            deactivatedPackages: row.deactivatedPackages ?? 0,
+            deletedPackages: row.deletedPackages ?? 0,
+        });
+    } catch (err) {
+        console.error('merge-kien error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message
+        });
+    }
+});
+
+
+
+router.post('/split-kien', async (req, res) => {
+    try {
+        const { sourcePackageId, phieuNhapId, qrCode, viTriKhoId, tonTai, chiTiet } = req.body || {};
+
+        if (!sourcePackageId || !qrCode || !viTriKhoId || !Array.isArray(chiTiet) || chiTiet.length === 0) {
+            return res.status(400).json({ ok: false, message: 'Thiếu dữ liệu tạo kiện' });
+        }
+
+        const pool = await testpoolPromise;
+        const tx = new sql.Transaction(pool);
+        await tx.begin();
+
+        try {
+            // A) CHECK QR CODE TỒN TẠI (chỉ tính bản ghi còn hiệu lực)
+            const dup = await new sql.Request(tx)
+                .input('QRCode', sql.NVarChar(100), qrCode)
+                .query(`
+          SELECT TOP 1 ID_TheKhoKienBTP
+          FROM TheKhoKienBTP WITH (UPDLOCK, HOLDLOCK)
+          WHERE QRCode = @QRCode
+        `);
+
+            if (dup.recordset.length > 0) {
+                await tx.rollback();
+                return res.status(409).json({ ok: false, message: 'QRCode đã tồn tại, không thể tạo mới' });
+            }
+
+            // 1) Tạo kiện mới
+            const rNew = await new sql.Request(tx)
+                .input('PhieuNhapId', sql.Int, phieuNhapId || null)
+                .input('QRCode', sql.NVarChar(100), qrCode)
+                .input('ViTriKhoId', sql.Int, viTriKhoId)
+                .input('TonTai', sql.Bit, tonTai ?? 1)
+                .query(`
+          INSERT INTO TheKhoKienBTP (ID_PhieuNhapBTP, QRCode, ID_ViTriKho, TonTai, ID_TheKhoKienBTP_Xuat, ID_PhieuXuatBTP, SoKien)
+          VALUES (@PhieuNhapId, @QRCode, @ViTriKhoId, @TonTai, NULL, NULL, NULL);
+          SELECT CAST(SCOPE_IDENTITY() AS INT) AS NewKienId;
+        `);
+
+            const newKienId = rNew.recordset?.[0]?.NewKienId;
+
+            // 2) Với từng chi tiết: insert vào kiện mới + giảm đúng dòng ở kiện gốc
+            for (const ct of chiTiet) {
+                const soLuongTach = Number(ct.SoLuong || 0);
+                if (!soLuongTach || soLuongTach <= 0) continue;
+
+                // 2a) Insert chi tiết kiện mới
+                await new sql.Request(tx)
+                    .input('NewKienId', sql.Int, newKienId)
+                    .input('DonHangSanPhamId', sql.Int, ct.ID_DonHang_SanPham || null)
+                    .input('SoLuong', sql.Int, soLuongTach)
+                    .input('ItemCode', sql.NVarChar(50), ct.ItemCode || null)
+                    .input('TenSanPham', sql.NVarChar(200), ct.Ten_SanPham || null)
+                    .input('TonTai', sql.Bit, 1)
+                    .input('ID_DonHang', sql.Int, ct.ID_DonHang || null)
+                    .input('ID_QuyTrinhSanXuat', sql.Int, ct.ID_QuyTrinhSanXuat || null)
+                    .input('Ten_QuyTrinhSanXuat', sql.NVarChar(200), ct.Ten_QuyTrinhSanXuat || null)
+                    .input('ID_DonHang_LoSanXuat', sql.Int, ct.ID_DonHang_LoSanXuat || 0)
+                    .input('ID_KeHoachSanXuat', sql.Int, ct.ID_KeHoachSanXuat || 0)
+                    .input('ID_PhieuNhapBTP', sql.Int, phieuNhapId || null)
+                    .query(`
+            INSERT INTO TheKhoKienBTP_ChiTiet
+              (ID_TheKhoKienBTP, ID_DonHang_SanPham, SoLuong, ItemCode, Ten_SanPham, TonTai, ID_DonHang, ID_QuyTrinhSanXuat, Ten_QuyTrinhSanXuat, ID_KeHoachSanXuat, ID_PhieuNhapBTP, ID_DonHang_LoSanXuat)
+            VALUES
+              (@NewKienId, @DonHangSanPhamId, @SoLuong, @ItemCode, @TenSanPham, @TonTai, @ID_DonHang, @ID_QuyTrinhSanXuat, @Ten_QuyTrinhSanXuat, @ID_KeHoachSanXuat, @ID_PhieuNhapBTP, @ID_DonHang_LoSanXuat);
+          `);
+
+                // 2b) Trừ đúng dòng chi tiết ở kiện gốc
+                const reqUpdate = new sql.Request(tx)
+                    .input('SourceId', sql.Int, sourcePackageId)
+                    .input('SoLuong', sql.Int, soLuongTach);
+
+                let updateSql, rUpd;
+                if (ct.ID_TheKhoKienBTP_ChiTiet) {
+                    // ưu tiên theo ID chi tiết
+                    rUpd = await reqUpdate
+                        .input('DetailId', sql.Int, ct.ID_TheKhoKienBTP_ChiTiet)
+                        .query(`
+              UPDATE TheKhoKienBTP_ChiTiet WITH (ROWLOCK, UPDLOCK)
+              SET SoLuong = SoLuong - @SoLuong
+              WHERE ID_TheKhoKienBTP = @SourceId
+                AND ID_TheKhoKienBTP_ChiTiet = @DetailId
+                AND SoLuong >= @SoLuong;
+              SELECT @@ROWCOUNT AS affected;
+            `);
+                } else {
+                    // fallback (kém an toàn): theo ID_DonHang_SanPham, trừ 1 dòng gần nhất
+                    rUpd = await reqUpdate
+                        .input('DonHangSanPhamId', sql.Int, ct.ID_DonHang_SanPham)
+                        .query(`
+              ;WITH cte AS (
+                SELECT TOP (1) *
+                FROM TheKhoKienBTP_ChiTiet WITH (ROWLOCK, UPDLOCK)
+                WHERE ID_TheKhoKienBTP = @SourceId
+                  AND ID_DonHang_SanPham = @DonHangSanPhamId
+                  AND SoLuong >= @SoLuong
+                ORDER BY ID_TheKhoKienBTP_ChiTiet DESC
+              )
+              UPDATE cte SET SoLuong = SoLuong - @SoLuong;
+              SELECT @@ROWCOUNT AS affected;
+            `);
+                }
+
+                const affected = rUpd.recordset?.[0]?.affected || 0;
+                if (affected === 0) {
+                    throw new Error(`Không thể trừ số lượng (thiếu dòng/không đủ tồn) cho ID_DonHang_SanPham=${ct.ID_DonHang_SanPham}`);
+                }
+            }
+
+            await tx.commit();
+            return res.json({ ok: true, newKienId, inserted: chiTiet.length });
+        } catch (e) {
+            await tx.rollback();
+            console.error('split-kien error:', e);
+            return res.status(500).json({ ok: false, message: 'Lỗi máy chủ', detail: e.message });
+        }
+    } catch (err) {
+        console.error('split-kien error OUTER:', err);
+        return res.status(500).json({ ok: false, message: 'Lỗi máy chủ', detail: err?.message });
+    }
+});
+
+
+
 module.exports = router
