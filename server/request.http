@@ -54,7 +54,7 @@ GET  http://localhost:5000/vanbandi/lookup-vanbandi
 
 ###
 
-GET http://localhost:5000/hstt/lookup
+GET http://localhost:5000/sosec/phieu
 # Content-Type: application/json
 
 ###
@@ -72,7 +72,7 @@ POST  https://nodeapi.z76.vn/khotm/find-by-qr
 Content-Type: application/json
 
 {
-  "qrcode": "VT0000001352",
+  "qrcode": "hà xinh gái",
   "startDate": "2025-09-04",
   "endDate": "2025-09-07"
 }
@@ -105,6 +105,13 @@ x-api-key: 7d91bfa5a2e349c4b4f7a1d7e6d4a3f6c9e2b8f17d44a92b5c63a4d5e8f1b2c3
   "ID_DonHang": null
 }
 
+###
+POST  https://nodeapi.z76.vn/khotmtest/getthongtinkien
+Content-Type: application/json
+
+{
+  "QRCode": "VT0000001352"
+}
 
 ###
 
@@ -120,3 +127,20 @@ POST http://125.212.207.52:5000/login/userInfo
 Content-Type: application/json
 
 "YzZlODQ5ZTgtYmViOS00N2VkLWI3OWQtYTc0ODIzNWY2ZGMz"
+
+
+###
+POST http://localhost:5000/sosec/phieu/5/approve
+Content-Type: application/json
+
+{
+  "nguoiDuyetId": 1012,
+  "tenNguoiDuyet": "Nguyễn Văn A",
+  "chapThuan": true,
+  "ghiChu": "Duyệt phiếu thành công"
+}
+
+###
+GET https://nodeapi.z76.vn/sosec/donvi
+Content-Type: application/json
+

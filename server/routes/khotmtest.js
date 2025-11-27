@@ -3,8 +3,7 @@ const router = express.Router()
 const argon2 = require('argon2')
 const jwt = require('jsonwebtoken')
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
-const { tagpoolPromise } = require('../db2');
-// const { testpoolPromise } = require('../dbtest');
+const { testpoolPromise } = require('../dbtest');
 const sql = require('mssql');
 
 
@@ -16,7 +15,7 @@ router.post('/getthongtinkien', async (req, res) => {
             return res.status(400).json({ ok: false, message: 'Thiếu hoặc sai QRCode' });
         }
 
-        const pool = await tagpoolPromise;
+        const pool = await testpoolPromise;
         const result = await pool
             .request()
             .input('QRCode', sql.NVarChar(100), QRCode.trim())
@@ -39,7 +38,7 @@ router.post('/find-by-qr', /* verifyToken, */ async (req, res) => {
             return res.status(400).json({ ok: false, message: 'Thiếu hoặc sai QRCode' });
         }
 
-        const pool = await tagpoolPromise;
+        const pool = await testpoolPromise;
 
         // GỌI STORED PROCEDURE
         const result = await pool
@@ -112,7 +111,7 @@ router.post('/phieu-detail', async (req, res) => {
             return res.status(400).json({ ok: false, message: 'Thiếu ID_PhieuXuatBTP' });
         }
 
-        const pool = await tagpoolPromise;
+        const pool = await testpoolPromise;
         const result = await pool
             .request()
             .input('ID_PhieuXuatBTP', sql.Int, idPhieuXuat)
@@ -137,7 +136,7 @@ router.post('/insert-pick', async (req, res) => {
             return res.status(400).json({ ok: false, message: 'Thiếu tham số idPhieuXuat hoặc qrcode' });
         }
 
-        const pool = await tagpoolPromise;
+        const pool = await testpoolPromise;
 
         const result = await pool
             .request()
@@ -173,7 +172,7 @@ router.post('/phieu-line-remaining', async (req, res) => {
             return res.status(400).json({ ok: false, message: 'Thiếu tham số' });
         }
 
-        const pool = await tagpoolPromise;
+        const pool = await testpoolPromise;
         const result = await pool.request()
             .input('ID_PhieuXuatBTP', sql.Int, idPhieuXuat)
             .query(`
@@ -227,7 +226,7 @@ router.post('/merge-kien', async (req, res) => {
         }
 
         const idsIn = ids.join(','); // ví dụ: "1,2,3"
-        const pool = await tagpoolPromise;
+        const pool = await testpoolPromise;
 
         const result = await pool.request()
             .input('TargetId', sql.Int, parseInt(targetPackageId, 10))
@@ -318,7 +317,7 @@ router.post('/split-kien', async (req, res) => {
             return res.status(400).json({ ok: false, message: 'Thiếu dữ liệu tạo kiện' });
         }
 
-        const pool = await tagpoolPromise;
+        const pool = await testpoolPromise;
         const tx = new sql.Transaction(pool);
         await tx.begin();
 
@@ -432,50 +431,6 @@ router.post('/split-kien', async (req, res) => {
     }
 });
 
-//kho nguyên liệu
-
-router.post('/khonl/getcuontheovitri', async (req, res) => {
-    try {
-        const { QRCode } = req.body || {};
-
-        // Kiểm tra input
-        if (!QRCode || typeof QRCode !== 'string' || !QRCode.trim()) {
-            return res.status(400).json({ ok: false, message: 'Thiếu hoặc sai QRCode/ID_ViTriKho' });
-        }
-
-        // Ở kho NL, QRCode chính là ID_ViTriKho
-        const idViTri = parseInt(QRCode.trim(), 10);
-
-        if (Number.isNaN(idViTri) || idViTri <= 0) {
-            return res.status(400).json({ ok: false, message: 'ID_ViTriKho không hợp lệ' });
-        }
-
-        const pool = await tagpoolPromise;
-        const result = await pool
-            .request()
-            .input('ID_ViTriKho', sql.Int, idViTri)
-            .execute('sp_NL_GetCuonTheoViTri');
-
-        const recordset = result.recordset || [];
-
-        if (recordset.length === 0) {
-            return res
-                .status(404)
-                .json({ ok: false, message: 'Không tìm thấy cuộn nào trong vị trí này' });
-        }
-
-        // Trả về danh sách cuộn
-        return res.json({
-            ok: true,
-            data: recordset,
-        });
-    } catch (err) {
-        console.error('khonl/getcuontheovitri SP error:', err);
-        return res
-            .status(500)
-            .json({ ok: false, message: 'Lỗi máy chủ', detail: err?.message });
-    }
-});
 
 
 module.exports = router
