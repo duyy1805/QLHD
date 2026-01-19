@@ -18,7 +18,7 @@ const erp = require('./routes/ERP/erp');
 const hoitruongRouter = require('./routes/hoitruong');
 const sosecRouter = require('./routes/sosec');
 const invoiceRouter = require('./routes/invoice');
-const tgsxRouter = require('./routes/ERP/TGSX');
+const tgsxRouter = require('./routes/ERP/tgsx');
 const erp_plp = require('./routes/ERP/erp_plp');
 const app = express();
 app.use(express.json());
