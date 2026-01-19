@@ -32,19 +32,17 @@ pipeline {
                     file(credentialsId: 'qlhd-env-file', variable: 'ENV_FILE')
                 ]) {
                     sh '''
-                    echo "=== Copy .env to WORKSPACE ==="
-                    cp "$ENV_FILE" "$WORKSPACE/.env"
+                    echo "=== Copy .env to /tmp ==="
+                    cp "$ENV_FILE" /tmp/qlhd.env
 
-                    echo "=== Stop old container if exists ==="
-                    docker rm -f ${CONTAINER_NAME} || true
+                    docker rm -f qlhd-server || true
 
-                    echo "=== Run new container ==="
                     docker run -d \
-                      --name ${CONTAINER_NAME} \
-                      --env-file "$WORKSPACE/.env" \
-                      -p ${APP_PORT}:${APP_PORT} \
-                      --restart always \
-                      ${IMAGE_NAME}
+                    --name qlhd-server \
+                    --env-file /tmp/qlhd.env \
+                    -p 3000:3000 \
+                    --restart always \
+                    qlhd-server:latest
                     '''
                 }
             }
