@@ -7,7 +7,7 @@ pipeline {
         APP_PORT = "3000"
 
         // ĐƯỜNG DẪN FILE .env TRÊN HOST UBUNTU
-        ENV_FILE = "/home/luna/Desktop/.env"
+        ENV_FILE = "/opt/qlhd/env/server.env"
     }
 
     stages {
