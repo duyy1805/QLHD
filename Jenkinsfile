@@ -25,7 +25,8 @@ pipeline {
 
         stage('Run container with env file') {
             steps {
-                withCredentials([file(credentialsId: 'git', variable: 'ENV_FILE')]) {
+                withCredentials([file(credentialsId: 'qlhd-env-file', variable: 'ENV_FILE')])
+ {
                     sh '''
                     echo "=== Copy env file to workspace ==="
                     cp $ENV_FILE .env
