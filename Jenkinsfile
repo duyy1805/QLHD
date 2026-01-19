@@ -8,27 +8,22 @@ pipeline {
             }
         }
 
-        stage('Install dependencies (server)') {
+        stage('Build server Docker') {
             steps {
                 dir('server') {
-                    sh 'npm install'
+                    sh '''
+                    docker build -t qlhd-server .
+                    '''
                 }
             }
         }
 
-        stage('Build server') {
+        stage('Run server') {
             steps {
-                dir('server') {
-                    sh 'npm run build || echo "No build script"'
-                }
-            }
-        }
-
-        stage('Test server') {
-            steps {
-                dir('server') {
-                    sh 'npm test || echo "No test script"'
-                }
+                sh '''
+                docker rm -f qlhd-server || true
+                docker run -d -p 3000:3000 --name qlhd-server qlhd-server
+                '''
             }
         }
     }
