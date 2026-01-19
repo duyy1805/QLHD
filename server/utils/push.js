@@ -1,9 +1,7 @@
-// utils/push.js
 const { poolPromise } = require('../db');
 const sql = require('mssql');
-const axios = require('axios');
+const { sendFCM } = require('./pushV1');
 
-// TRẢ VỀ KẾT QUẢ => bên API approve sẽ log ra được
 async function sendPushToUsers(userIds = [], title, body, data = {}) {
     if (!userIds.length) return { success: false, message: 'No userIds provided' };
 
@@ -20,35 +18,19 @@ async function sendPushToUsers(userIds = [], title, body, data = {}) {
 
         const tokens = rs.recordset.map(r => r.PushToken).filter(Boolean);
         if (!tokens.length) {
-            console.log('⚠ Không có token active cho userIds:', userIds);
             return { success: false, tokens: [], message: 'No active tokens' };
         }
 
-        const payload = {
-            to: tokens,
-            title,
-            body,
-            data,
-        };
+        console.log("📌 Gửi FCM tới:", tokens);
 
-        // 📌 LUU Ý: Expo API push phải gửi **1 token / request**
-        // Nên dùng Promise.all để gửi từng cái
-        const responses = await Promise.all(
-            tokens.map(token => axios.post('https://exp.host/--/api/v2/push/send', {
-                to: token,
-                title,
-                body,
-                data,
-            }))
+        const results = await Promise.all(
+            tokens.map(t => sendFCM(t, title, body, data))
         );
 
-        console.log('✔ Đã gửi push tới:', tokens);
-        console.log('📬 Kết quả từ Expo:', responses.map(r => r.data));
-
-        return { success: true, tokens, responses: responses.map(r => r.data) };
+        return { success: true, tokens, results };
     } catch (err) {
-        console.error('❌ Lỗi sendPushToUsers:', err);
-        return { success: false, error: err?.message || err };
+        console.error("❌ FCM SEND ERROR:", err);
+        return { success: false, error: err };
     }
 }
 

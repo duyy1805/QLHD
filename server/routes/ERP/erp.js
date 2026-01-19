@@ -54,4 +54,49 @@ router.post('/dinhmucvattu', checkApiKey, async (req, res) => {
     }
 });
 
+router.post('/invoice/packing-list', checkApiKey, async (req, res) => {
+    try {
+        let { TuanGiao, Lan } = req.body || {};
+
+        // ===== Validate & chuẩn hoá input =====
+        const tg = Number(TuanGiao);
+        const lan = Number(Lan);
+
+        if (!Number.isInteger(tg) || tg <= 0) {
+            return res.status(400).json({
+                ok: false,
+                message: 'TuanGiao không hợp lệ (phải là số nguyên > 0)'
+            });
+        }
+
+        if (!Number.isInteger(lan) || lan <= 0) {
+            return res.status(400).json({
+                ok: false,
+                message: 'Lan không hợp lệ (phải là số nguyên > 0)'
+            });
+        }
+
+        const pool = await tagpoolPromise;
+
+        const result = await pool.request()
+            .input('TuanGiao', sql.Int, tg)
+            .input('Lan', sql.Int, lan)
+            .execute('dbo.pr_Invoice_PackingList');
+
+        const data = result.recordset || [];
+
+        return res.json({
+            ok: true,
+            count: data.length,
+            data
+        });
+
+    } catch (error) {
+        console.error('[POST /invoice/packing-list] error:', error);
+        return res.status(500).json({
+            ok: false,
+            message: error.message || 'Lỗi không xác định'
+        });
+    }
+});
 module.exports = router

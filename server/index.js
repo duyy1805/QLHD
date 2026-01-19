@@ -17,23 +17,29 @@ const khotmtest = require('./routes/khotmtest');
 const erp = require('./routes/ERP/erp');
 const hoitruongRouter = require('./routes/hoitruong');
 const sosecRouter = require('./routes/sosec');
+const invoiceRouter = require('./routes/invoice');
+const tgsxRouter = require('./routes/ERP/TGSX');
+const erp_plp = require('./routes/ERP/erp_plp');
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 // Định nghĩa route
 
-app.use('/auth', authRouter)
-app.use('/hr', hrRouter)
-app.use('/QLHD', qlhdRouter)
+app.use('/auth', authRouter);
+app.use('/hr', hrRouter);
+app.use('/QLHD', qlhdRouter);
 app.use('/vanbandi', vanbandiRouter);
 app.use('/hoitruong', hoitruongRouter);
 app.use('/sosec', sosecRouter);
+app.use('/invoice', invoiceRouter);
 app.use('/hstt', hsttRouter);
 app.use('/dautuan', dautuanRouter);
 app.use('/khotm', khotm);
 app.use('/khotmtest', khotmtest);
 app.use('/erp', erp);
+app.use('/erp/tgsx', tgsxRouter);
+app.use('/erp_plp', erp_plp)
 
 app.use('/uploads', express.static(path.join('C:/DocumentsUpload/HopDong/Upload'), {
     setHeaders: (res, filePath) => {

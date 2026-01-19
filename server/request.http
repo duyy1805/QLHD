@@ -144,3 +144,13 @@ Content-Type: application/json
 GET https://nodeapi.z76.vn/sosec/donvi
 Content-Type: application/json
 
+###
+GET  http://localhost:5000/erp/tgsx/sanpham/1
+Content-Type: application/json
+
+###
+GET https://nodeapi.z76.vn/erp/tgsx/sanpham/1
+Content-Type: application/json
+
+###
+GET http://localhost:5000/erp_plp/baocao/ton-layout-btp?TenNha=Kho%20TP&ID_Kho=5&MaVung=B

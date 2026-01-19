@@ -322,6 +322,19 @@ router.post('/split-kien', async (req, res) => {
         await tx.begin();
 
         try {
+            const src = await new sql.Request(tx)
+                .input('SourceId', sql.Int, sourcePackageId)
+                .query(`
+                    SELECT DauTuan
+                    FROM TheKhoKienBTP WITH (UPDLOCK, HOLDLOCK)
+                    WHERE ID_TheKhoKienBTP = @SourceId
+                `);
+
+            if (src.recordset.length === 0) {
+                throw new Error('Không tìm thấy kiện gốc');
+            }
+
+            const dauTuanFromSource = src.recordset[0].DauTuan;   // 0 / 1 / NULL
             // A) CHECK QR CODE TỒN TẠI (chỉ tính bản ghi còn hiệu lực)
             const dup = await new sql.Request(tx)
                 .input('QRCode', sql.NVarChar(100), qrCode)
@@ -341,10 +354,11 @@ router.post('/split-kien', async (req, res) => {
                 .input('PhieuNhapId', sql.Int, phieuNhapId || null)
                 .input('QRCode', sql.NVarChar(100), qrCode)
                 .input('ViTriKhoId', sql.Int, viTriKhoId)
+                .input('DauTuan', sql.Int, dauTuanFromSource)
                 .input('TonTai', sql.Bit, tonTai ?? 1)
                 .query(`
-          INSERT INTO TheKhoKienBTP (ID_PhieuNhapBTP, QRCode, ID_ViTriKho, TonTai, ID_TheKhoKienBTP_Xuat, ID_PhieuXuatBTP, SoKien)
-          VALUES (@PhieuNhapId, @QRCode, @ViTriKhoId, @TonTai, NULL, NULL, NULL);
+          INSERT INTO TheKhoKienBTP (ID_PhieuNhapBTP, QRCode, ID_ViTriKho, TonTai, ID_TheKhoKienBTP_Xuat, ID_PhieuXuatBTP, SoKien, DauTuan)
+          VALUES (@PhieuNhapId, @QRCode, @ViTriKhoId, @TonTai, NULL, NULL, NULL, @DauTuan);
           SELECT CAST(SCOPE_IDENTITY() AS INT) AS NewKienId;
         `);
 
