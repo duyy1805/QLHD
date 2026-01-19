@@ -41,23 +41,23 @@ app.use('/erp', erp);
 app.use('/erp/tgsx', tgsxRouter);
 app.use('/erp_plp', erp_plp)
 
-// app.use('/uploads', express.static(path.join('C:/DocumentsUpload/HopDong/Upload'), {
-//     setHeaders: (res, filePath) => {
-//         res.setHeader('Content-Disposition', 'inline');
-//     }
-// }));
+app.use('/uploads', express.static(path.join('C:/DocumentsUpload/HopDong/Upload'), {
+    setHeaders: (res, filePath) => {
+        res.setHeader('Content-Disposition', 'inline');
+    }
+}));
 
-// app.use('/uploads_vbd', express.static(path.join('C:/DocumentsUpload/VanBanDi/Upload'), {
-//     setHeaders: (res, filePath) => {
-//         res.setHeader('Content-Disposition', 'inline');
-//     }
-// }));
+app.use('/uploads_vbd', express.static(path.join('C:/DocumentsUpload/VanBanDi/Upload'), {
+    setHeaders: (res, filePath) => {
+        res.setHeader('Content-Disposition', 'inline');
+    }
+}));
 
-// app.use('/uploads_hstt', express.static(path.join('C:/DocumentsUpload/HoSoThanhToan/Upload'), {
-//     setHeaders: (res, filePath) => {
-//         res.setHeader('Content-Disposition', 'inline');
-//     }
-// }));
+app.use('/uploads_hstt', express.static(path.join('C:/DocumentsUpload/HoSoThanhToan/Upload'), {
+    setHeaders: (res, filePath) => {
+        res.setHeader('Content-Disposition', 'inline');
+    }
+}));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
