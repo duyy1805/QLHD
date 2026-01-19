@@ -5,9 +5,6 @@ pipeline {
         IMAGE_NAME = "qlhd-server:latest"
         CONTAINER_NAME = "qlhd-server"
         APP_PORT = "3000"
-
-        // ĐƯỜNG DẪN FILE .env TRÊN HOST UBUNTU
-        ENV_FILE = "/opt/qlhd/env/server.env"
     }
 
     stages {
@@ -18,44 +15,41 @@ pipeline {
             }
         }
 
-        stage('Build Docker image (server)') {
+        stage('Build Docker image') {
             steps {
                 dir('server') {
-                    sh '''
-                    echo "=== Build Docker image ==="
-                    docker build -t ${IMAGE_NAME} .
-                    '''
+                    sh 'docker build -t ${IMAGE_NAME} .'
                 }
             }
         }
 
-        stage('Stop old container') {
+        stage('Run container with env file') {
             steps {
-                sh '''
-                echo "=== Stop old container if exists ==="
-                docker rm -f ${CONTAINER_NAME} || true
-                '''
-            }
-        }
+                withCredentials([file(credentialsId: 'qlhd-env-file', variable: 'ENV_FILE')]) {
+                    sh '''
+                    echo "=== Copy env file to workspace ==="
+                    cp $ENV_FILE .env
 
-        stage('Run new container') {
-            steps {
-                sh '''
-                echo "=== Run new container ==="
-                docker run -d \
-                  --name ${CONTAINER_NAME} \
-                  --env-file ${ENV_FILE} \
-                  -p ${APP_PORT}:${APP_PORT} \
-                  --restart always \
-                  ${IMAGE_NAME}
-                '''
+                    docker rm -f ${CONTAINER_NAME} || true
+
+                    docker run -d \
+                      --name ${CONTAINER_NAME} \
+                      --env-file .env \
+                      -p ${APP_PORT}:${APP_PORT} \
+                      --restart always \
+                      ${IMAGE_NAME}
+                    '''
+                }
             }
         }
     }
 
     post {
+        always {
+            sh 'rm -f .env || true'
+        }
         success {
-            echo "✅ DEPLOY SUCCESS: qlhd-server is running on port ${APP_PORT}"
+            echo "✅ DEPLOY SUCCESS"
         }
         failure {
             echo "❌ DEPLOY FAILED"
