@@ -248,4 +248,174 @@ router.delete("/invoice/items/:chiTietId", async (req, res) => {
     }
 });
 
+
+/* =========================================================
+   DUYỆT / TỪ CHỐI HÓA ĐƠN
+   POST /api/invoice/:hoaDonId/approve
+========================================================= */
+router.post("/invoice/:hoaDonId/approve", async (req, res) => {
+    try {
+        const hoaDonId = Number(req.params.hoaDonId);
+        const {
+            nguoiDuyetId,
+            tenNguoiDuyet,
+            chapThuan,
+            ghiChu,
+            requesterUserId,
+            requesterRoleCode,
+            requesterIdDonVi
+        } = req.body;
+
+        if (!hoaDonId || !nguoiDuyetId) {
+            return res.status(400).json({ message: "Thiếu tham số bắt buộc" });
+        }
+
+        const pool = await poolPromise;
+
+        /* =====================================================
+           1. GỌI PROC DUYỆT HÓA ĐƠN
+        ===================================================== */
+        await pool.request()
+            .input("HoaDonId", sql.Int, hoaDonId)
+            .input("NguoiDuyetId", sql.Int, nguoiDuyetId)
+            .input("TenNguoiDuyet", sql.NVarChar(200), tenNguoiDuyet || null)
+            .input("ChapThuan", sql.Bit, !!chapThuan)
+            .input("GhiChu", sql.NVarChar(500), ghiChu || null)
+            .execute("INV_sp_HoaDon_Duyet");
+
+        /* =====================================================
+           2. LẤY LẠI HÓA ĐƠN SAU KHI DUYỆT
+           (dùng proc danh sách – giống Sổ Séc)
+        ===================================================== */
+        const rs = await pool.request()
+            .input("TuKhoa", sql.NVarChar(200), null)
+            .input("TrangThaiMa", sql.NVarChar(50), null)
+            .input("DateFrom", sql.Date, null)
+            .input("DateTo", sql.Date, null)
+            .input("RequesterUserId", sql.Int, requesterUserId || nguoiDuyetId)
+            .input("RequesterRoleCode", sql.NVarChar(30), requesterRoleCode || null)
+            .input("RequesterIdDonVi", sql.Int, requesterIdDonVi || null)
+            .execute("INV_sp_HoaDon_DanhSach");
+
+        const r = rs.recordset.find(x => x.HoaDonId === hoaDonId);
+        if (!r) {
+            return res.status(404).json({
+                message: "Không tìm thấy hóa đơn sau khi duyệt"
+            });
+        }
+
+        /* =====================================================
+           3. MAP VỀ FORMAT CLIENT (GIỐNG api_invoice.js)
+        ===================================================== */
+        const mapped = {
+            hoaDonId: r.HoaDonId,
+            maHoaDon: r.MaHoaDon,
+            ngayDangKy: r.NgayDangKy,
+
+            congTyId: r.CongTyId,
+            tenCongTy: r.TenCongTy,
+
+            soTienTruocThue: Number(r.SoTienTruocThue),
+            tongVAT: Number(r.TongVAT),
+            tongThanhTien: Number(r.TongThanhTien),
+
+            nguoiDangKyId: r.NguoiDangKyId,
+            donViNguoiDangKyId: r.DonViNguoiDangKyId,
+            tenNguoiTao: r.TenNguoiTao || null,
+            tenDonViNguoiTao: r.TenDonViNguoiTao || null,
+
+            maTrangThai: r.MaTrangThai,
+            tenTrangThai: r.TenTrangThai,
+
+            tbpTime: r.TBP_Time,
+            kttTime: r.KTT_Time,
+            gdTime: r.GD_Time,
+
+            tbpUserId: r.TBPUserId,
+            kttUserId: r.KTTUserId,
+            gdUserId: r.GDUserId,
+
+            ghiChu: r.GhiChu
+        };
+
+        /* =====================================================
+           4. (OPTION) PUSH NOTIFICATION – làm sau cũng được
+        ===================================================== */
+        // TODO: sendPushToUsers(...)
+
+        return res.json(mapped);
+
+    } catch (err) {
+        console.error(err);
+
+        const code = err?.number || err?.code;
+        const msg =
+            err?.originalError?.info?.message ||
+            err.message ||
+            "Lỗi duyệt hóa đơn";
+
+        const httpStatus = String(code || "").startsWith("72") ? 400 : 500;
+
+        return res.status(httpStatus).json({
+            message: msg,
+            code
+        });
+    }
+});
+
+router.get("/invoice/company", async (req, res) => {
+    const { tuKhoa = null, tonTai = 1 } = req.query;
+    const pool = await poolPromise;
+    const rs = await pool.request()
+        .input("TuKhoa", sql.NVarChar(200), tuKhoa)
+        .input("TonTai", sql.Bit, tonTai)
+        .execute("INV_sp_CongTy_DanhSach");
+
+    res.json(rs.recordset);
+});
+
+router.post("/invoice/company", async (req, res) => {
+    try {
+        const { name, maSoThue, diaChi } = req.body;
+
+        if (!name || !name.trim()) {
+            return res.status(400).json({
+                message: "Tên công ty không được để trống",
+            });
+        }
+
+        const pool = await poolPromise;
+
+        const rs = await pool.request()
+            .input("TenCongTy", sql.NVarChar(200), name.trim())
+            .input("MaSoThue", sql.NVarChar(50), maSoThue || null)
+            .input("DiaChi", sql.NVarChar(300), diaChi || null)
+            .output("NewId", sql.Int)
+            .execute("INV_sp_CongTy_Tao");
+
+        const newId = rs.output.NewId;
+
+        return res.status(201).json({
+            id: newId,
+            name: name.trim(),
+            maSoThue: maSoThue || null,
+            diaChi: diaChi || null,
+            TonTai: 1,
+        });
+    } catch (err) {
+        console.error("❌ Lỗi thêm công ty:", err);
+
+        const code = err?.number || err?.code;
+        const msg =
+            err?.originalError?.info?.message ||
+            err.message ||
+            "Lỗi thêm công ty";
+
+        // lỗi nghiệp vụ THROW 72xxx
+        const httpStatus = String(code || "").startsWith("72") ? 400 : 500;
+
+        return res.status(httpStatus).json({ message: msg, code });
+    }
+});
+
 module.exports = router;
