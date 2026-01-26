@@ -2,15 +2,13 @@ name: Deploy QLHD Server
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main, master ]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Deploy to server
+      - name: Deploy to Ubuntu
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
