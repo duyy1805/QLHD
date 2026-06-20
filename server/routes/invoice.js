@@ -167,6 +167,7 @@ router.get("/invoice/:hoaDonId/items", async (req, res) => {
 
         const data = rs.recordset.map(r => ({
             hoaDonChiTietId: r.HoaDonChiTietId,
+            itemCode: r.MaHangHoa,
             hoaDonId: r.HoaDonId,
             tenHangHoa: r.TenHangHoa,
             donViTinh: r.DonViTinh,
@@ -188,16 +189,21 @@ router.get("/invoice/:hoaDonId/items", async (req, res) => {
 router.post("/invoice/:hoaDonId/items", async (req, res) => {
     try {
         const hoaDonId = Number(req.params.hoaDonId);
-        const { tenHangHoa, donViTinh, soLuong, donGia, vat } = req.body;
+        const { hangHoaId, soLuong, donGia, vat } = req.body;
+
+        if (!hoaDonId || !hangHoaId) {
+            return res.status(400).json({
+                message: "Thiếu hóa đơn hoặc hàng hóa"
+            });
+        }
 
         const pool = await poolPromise;
         await pool.request()
             .input("HoaDonId", sql.Int, hoaDonId)
-            .input("TenHangHoa", sql.NVarChar(255), tenHangHoa)
-            .input("DonViTinh", sql.NVarChar(50), donViTinh)
+            .input("HangHoaId", sql.Int, hangHoaId)
             .input("SoLuong", sql.Decimal(18, 3), soLuong)
-            .input("DonGia", sql.Decimal(18, 2), donGia)
-            .input("VAT", sql.Decimal(5, 2), vat)
+            .input("DonGia", sql.Decimal(18, 3), donGia)
+            .input("VAT", sql.Int, vat)
             .execute("INV_sp_HoaDonChiTiet_Them");
 
         res.status(201).json({ success: true });
@@ -212,16 +218,14 @@ router.post("/invoice/:hoaDonId/items", async (req, res) => {
 router.put("/invoice/items/:chiTietId", async (req, res) => {
     try {
         const chiTietId = Number(req.params.chiTietId);
-        const { tenHangHoa, donViTinh, soLuong, donGia, vat } = req.body;
+        const { soLuong, donGia, vat } = req.body;
 
         const pool = await poolPromise;
         await pool.request()
             .input("HoaDonChiTietId", sql.Int, chiTietId)
-            .input("TenHangHoa", sql.NVarChar(255), tenHangHoa)
-            .input("DonViTinh", sql.NVarChar(50), donViTinh)
             .input("SoLuong", sql.Decimal(18, 3), soLuong)
-            .input("DonGia", sql.Decimal(18, 2), donGia)
-            .input("VAT", sql.Decimal(5, 2), vat)
+            .input("DonGia", sql.Decimal(18, 3), donGia)
+            .input("VAT", sql.Int, vat)
             .execute("INV_sp_HoaDonChiTiet_Sua");
 
         res.json({ success: true });
@@ -415,6 +419,51 @@ router.post("/invoice/company", async (req, res) => {
         const httpStatus = String(code || "").startsWith("72") ? 400 : 500;
 
         return res.status(httpStatus).json({ message: msg, code });
+    }
+});
+
+router.get("/invoice/product", async (req, res) => {
+    try {
+        const { tuKhoa = null } = req.query;
+
+        const pool = await poolPromise;
+        const rs = await pool.request()
+            .input("TuKhoa", sql.NVarChar(200), tuKhoa)
+            .execute("INV_sp_HangHoa_DanhSach");
+
+        res.json(rs.recordset);
+    } catch (err) {
+        httpError(res, err, "Lỗi lấy danh sách hàng hóa");
+    }
+});
+
+router.post("/invoice/product", async (req, res) => {
+    try {
+        const { maHangHoa, tenHangHoa, donViTinh } = req.body;
+
+        if (!tenHangHoa || !donViTinh) {
+            return res.status(400).json({
+                message: "Thiếu tên hàng hoặc đơn vị tính",
+            });
+        }
+
+        const pool = await poolPromise;
+        const rs = await pool.request()
+            .input("MaHangHoa", sql.NVarChar(50), maHangHoa || null)
+            .input("TenHangHoa", sql.NVarChar(255), tenHangHoa)
+            .input("DonViTinh", sql.NVarChar(50), donViTinh)
+            .output("NewId", sql.Int)
+            .execute("INV_sp_HangHoa_Tao");
+
+        res.status(201).json({
+            id: rs.output.NewId,
+            itemCode: maHangHoa,
+            tenHangHoa,
+            donViTinh,
+            tonTai: 1
+        });
+    } catch (err) {
+        httpError(res, err, "Lỗi thêm hàng hóa");
     }
 });
 

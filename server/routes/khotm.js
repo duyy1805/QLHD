@@ -32,6 +32,56 @@ router.post('/getthongtinkien', async (req, res) => {
     }
 });
 
+router.post('/updateqrcodekien', async (req, res) => {
+    try {
+        const { ID_TheKhoKienBTP, QRCode } = req.body || {};
+
+        if (!ID_TheKhoKienBTP || !QRCode || typeof QRCode !== 'string') {
+            return res.status(400).json({
+                ok: false,
+                message: 'Thiếu hoặc sai dữ liệu'
+            });
+        }
+
+        const pool = await tagpoolPromise;
+
+        const result = await pool
+            .request()
+            .input('ID_TheKhoKienBTP', sql.Int, ID_TheKhoKienBTP)
+            .input('QRCode', sql.NVarChar(100), QRCode.trim())
+            .execute('sp_UpdateQRCodeKien');
+
+        const response = result.recordset?.[0];
+
+        if (!response) {
+            return res.status(500).json({
+                ok: false,
+                message: 'Không nhận được phản hồi từ database'
+            });
+        }
+
+        if (response.StatusCode !== 1) {
+            return res.status(400).json({
+                ok: false,
+                message: response.Message
+            });
+        }
+
+        return res.json({
+            ok: true,
+            message: response.Message
+        });
+
+    } catch (err) {
+        console.error('updateqrcodekien error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message
+        });
+    }
+});
+
 router.post('/find-by-qr', /* verifyToken, */ async (req, res) => {
     try {
         const { qrcode, startDate, endDate } = req.body || {};
@@ -491,5 +541,292 @@ router.post('/khonl/getcuontheovitri', async (req, res) => {
     }
 });
 
+router.post('/khopl/getthongtinkien', async (req, res) => {
+    try {
+        const { QRCode } = req.body || {};
+
+        // Kiểm tra input
+        if (!QRCode || typeof QRCode !== 'string' || !QRCode.trim()) {
+            return res.status(400).json({ ok: false, message: 'Thiếu hoặc sai QRCode/ID_ViTriKho' });
+        }
+
+
+        const pool = await tagpoolPromise;
+        const result = await pool
+            .request()
+            .input('QRCode', sql.NVarChar, QRCode.trim())
+            .execute('App_Kho_PhuLieu_GetChiTietTheKhoKien');
+
+        const recordset = result.recordsets || [];
+
+        if (recordset.length === 0) {
+            return res
+                .status(404)
+                .json({ ok: false, message: 'Không tìm thấy thông tin' });
+        }
+
+        // Trả về danh sách cuộn
+        return res.json({
+            ok: true,
+            data: recordset,
+        });
+    } catch (err) {
+        console.error('khopl/getthongtinkien SP error:', err);
+        return res
+            .status(500)
+            .json({ ok: false, message: 'Lỗi máy chủ', detail: err?.message });
+    }
+});
+
+router.post('/khopl/updateqrcodekien', async (req, res) => {
+    try {
+        const { ID_Kien, QRCode } = req.body || {};
+
+        if (!ID_Kien || !QRCode) {
+            return res.status(400).json({
+                ok: false,
+                message: 'Thiếu dữ liệu'
+            });
+        }
+
+        const pool = await tagpoolPromise;
+
+        const result = await pool
+            .request()
+            .input('ID_Kien', sql.Int, ID_Kien)
+            .input('QRCode', sql.NVarChar(100), QRCode.trim())
+            .execute('sp_UpdateQRCodeKienPL');
+
+        const response = result.recordset?.[0];
+
+        if (!response || response.StatusCode !== 1) {
+            return res.status(400).json({
+                ok: false,
+                message: response?.Message || 'Cập nhật thất bại'
+            });
+        }
+
+        return res.json({
+            ok: true,
+            message: response.Message
+        });
+
+    } catch (err) {
+        console.error('updateqrcodekien PL error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message
+        });
+    }
+});
+
+router.post('/khopl/updatevitrikien', async (req, res) => {
+    try {
+        const { ID_Kien, ID_ViTriKho } = req.body || {};
+
+        if (!ID_Kien || !ID_ViTriKho) {
+            return res.status(400).json({
+                ok: false,
+                message: 'Thiếu dữ liệu'
+            });
+        }
+
+        const pool = await tagpoolPromise;
+
+        const result = await pool
+            .request()
+            .input('ID_Kien', sql.Int, ID_Kien)
+            .input('ID_ViTriKho', sql.Int, ID_ViTriKho)
+            .execute('sp_UpdateViTriKienPL');
+
+        const response = result.recordset?.[0];
+
+        if (!response || response.StatusCode !== 1) {
+            return res.status(400).json({
+                ok: false,
+                message: response?.Message || 'Cập nhật thất bại'
+            });
+        }
+
+        return res.json({
+            ok: true,
+            message: response.Message
+        });
+
+    } catch (err) {
+        console.error('updatevitrikien PL error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message
+        });
+    }
+});
+
+
+function getQrCodesFromBody(req) {
+    const { qrCodes, QRCodes, QRCode } = req.body || {};
+
+    if (Array.isArray(qrCodes)) return qrCodes;
+    if (Array.isArray(QRCodes)) return QRCodes;
+    if (typeof QRCode === 'string') return [QRCode];
+
+    return [];
+}
+
+function normalizeQrCodes(qrCodes = []) {
+    return [...new Set(
+        qrCodes
+            .map((item) => String(item || '').trim())
+            .filter(Boolean)
+    )];
+}
+
+function buildQrCodeTable(qrCodes = []) {
+    const table = new sql.Table('QrCodeListType');
+    table.columns.add('QRCode', sql.NVarChar(100), { nullable: false });
+
+    normalizeQrCodes(qrCodes).forEach((qrCode) => {
+        table.rows.add(qrCode);
+    });
+
+    return table;
+}
+
+function validateQrCodes(req, res) {
+    const qrCodes = normalizeQrCodes(getQrCodesFromBody(req));
+
+    if (!qrCodes.length) {
+        res.status(400).json({
+            ok: false,
+            message: 'Thiếu danh sách qrCodes',
+        });
+        return null;
+    }
+
+    return qrCodes;
+}
+
+router.post('/phieuxuat/phu-lieu/kien/scan-batch', async (req, res) => {
+    try {
+        const qrCodes = validateQrCodes(req, res);
+        if (!qrCodes) return;
+
+        const pool = await testpoolPromise;
+        const qrTable = buildQrCodeTable(qrCodes);
+
+        const result = await pool
+            .request()
+            .input('QrCodes', qrTable)
+            .execute('App_PhieuXuatVT_ScanBatchKien');
+
+        return res.json({
+            ok: true,
+            data: result.recordset || [],
+        });
+    } catch (err) {
+        console.error('App_PhieuXuatVT_ScanBatchKien error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message,
+        });
+    }
+});
+
+router.post('/phieuxuat/phu-lieu/tim-phieu-theo-kien', async (req, res) => {
+    try {
+        const qrCodes = validateQrCodes(req, res);
+        if (!qrCodes) return;
+
+        const pool = await testpoolPromise;
+        const qrTable = buildQrCodeTable(qrCodes);
+
+        const result = await pool
+            .request()
+            .input('QrCodes', qrTable)
+            .execute('App_TimKiem_PhieuXuatVT_ByBatchKien');
+
+        return res.json({
+            ok: true,
+            data: result.recordset || [],
+        });
+    } catch (err) {
+        console.error('App_TimKiem_PhieuXuatVT_ByBatchKien error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message,
+        });
+    }
+});
+
+router.post('/phieuxuat/phu-lieu/:idPhieuXuat/kien/batch-chitiet', async (req, res) => {
+    try {
+        const idPhieuXuat = Number(req.params.idPhieuXuat);
+        const qrCodes = validateQrCodes(req, res);
+        if (!qrCodes) return;
+        if (!Number.isInteger(idPhieuXuat) || idPhieuXuat <= 0) {
+            return res.status(400).json({
+                ok: false,
+                message: 'Sai idPhieuXuat',
+            });
+        }
+
+        const pool = await testpoolPromise;
+        const qrTable = buildQrCodeTable(qrCodes);
+
+        const result = await pool
+            .request()
+            .input('ID_PhieuXuatVT', sql.Int, idPhieuXuat)
+            .input('QrCodes', qrTable)
+            .execute('App_ChiTiet_PhieuXuatVT_ByBatchKien');
+
+        return res.json({
+            ok: true,
+            data: result.recordset || [],
+        });
+    } catch (err) {
+        console.error('App_ChiTiet_PhieuXuatVT_ByBatchKien error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message,
+        });
+    }
+});
+
+router.post('/giamdinhvt-detail', async (req, res) => {
+    try {
+        const rawId = req.body?.id ?? req.body?.ID_GiamDinhVT ?? req.query?.id ?? req.query?.ID_GiamDinhVT;
+        const id = Number.parseInt(rawId, 10);
+
+        if (!Number.isInteger(id) || id <= 0) {
+            return res.status(400).json({
+                ok: false,
+                message: 'Thiếu hoặc sai ID_GiamDinhVT'
+            });
+        }
+
+        const pool = await tagpoolPromise;
+        const result = await pool
+            .request()
+            .input('Id', sql.Int, id)
+            .query('select * from fn_GetChiTietGiamDinhVT(@Id)');
+
+        return res.json({
+            ok: true,
+            data: result.recordset || []
+        });
+    } catch (err) {
+        console.error('giamdinhvt-detail error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message
+        });
+    }
+});
 
 module.exports = router

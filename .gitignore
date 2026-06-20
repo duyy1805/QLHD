@@ -5,3 +5,6 @@ server/.env
 # Build output
 dist/
 build/
+
+*.xls
+*.txt

@@ -370,4 +370,83 @@ router.delete("/lookup/:type/:id", async (req, res) => {
         res.status(500).json({ error: "Lỗi khi xóa" });
     }
 });
+
+router.get("/truy-nguyen/Kiem_Select_Bo", async (req, res) => {
+    try {
+        const { ID_LXVT_BC } = req.query;
+        const pool = await poolPromise;
+        const result = await pool.request()
+            .input("ID_LXVT_BC", ID_LXVT_BC)
+            .execute("TAG_Giang.dbo.DA_TruyNguyen_KiemTongHop_Select_Bo");
+        res.json(result.recordset);
+    } catch (err) {
+        console.error("Lỗi khi truy vấn:", err);
+        res.status(500).json({ error: "Lỗi khi truy vấn" });
+    }
+});
+
+router.get("/truy-nguyen/dm-loi", async (req, res) => {
+    try {
+        const pool = await poolPromise;
+        const result = await pool.request()
+            .query("SELECT * FROM TAG_Giang.dbo.DA_TruyNguyen_Loi");
+        res.json(result.recordset);
+    } catch (err) {
+        console.error("Lỗi khi truy vấn:", err);
+        res.status(500).json({ error: "Lỗi khi truy vấn" });
+    }
+});
+
+router.get("/truy-nguyen/dm-loi-chitiet", async (req, res) => {
+    try {
+        const pool = await poolPromise;
+        const result = await pool.request()
+            .query("SELECT * FROM TAG_Giang.dbo.DA_TruyNguyen_Loi_chitiet");
+        res.json(result.recordset);
+    } catch (err) {
+        console.error("Lỗi khi truy vấn:", err);
+        res.status(500).json({ error: "Lỗi khi truy vấn" });
+    }
+});
+
+router.post("/truy-nguyen/kiem-save-list", async (req, res) => {
+    try {
+        const { ID_TaiKhoan, ISDat, ID_LXVT_BC, data } = req.body;
+
+        const pool = await poolPromise;
+
+        let ID_Kiem = null;
+
+        for (const item of data) {
+            const result = await pool.request()
+                .input("ID_TaiKhoan", ID_TaiKhoan)
+                .input("ISDat", ISDat)
+                .input("ID_LXVT_BC", ID_LXVT_BC)
+                .input("ID_LoiPhoi", item.ID_LoiPhoi)
+                .input("SoLuong_Bo", item.SoLuong_Bo)
+                .input("SoLuong_BTP", item.SoLuong_BTP)
+                .input("SoLuong_BoKiem", item.SoLuong_BoKiem)
+                .input("SoLuong_BTPKiem", item.SoLuong_BTPKiem)
+                .input("SoLoi", item.SoLoi)
+                .input("MucDoiLoi", item.MucDoiLoi)
+                .input("LoaiLoi", item.LoaiLoi)
+                .execute("TAG_Giang.dbo.DA_TruyNguyen_Kiem_Save_Bo");
+
+            // lấy ID_Kiem từ lần đầu
+            if (!ID_Kiem) {
+                ID_Kiem = result.recordset[0]?.ID_Kiem;
+            }
+        }
+
+        res.json({
+            success: true,
+            ID_Kiem
+        });
+
+    } catch (err) {
+        console.error("Lỗi khi lưu danh sách kiểm:", err);
+        res.status(500).json({ error: "Lỗi khi lưu danh sách kiểm" });
+    }
+});
+
 module.exports = router;

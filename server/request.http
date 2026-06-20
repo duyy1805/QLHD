@@ -87,12 +87,11 @@ Content-Type: application/json
 }
 ###
 
-POST  http://localhost:5000/khotm/insert-pick
+POST  https://nodeapi.z76.vn/khotm/khopl/getthongtinkien
 Content-Type: application/json
 
 {
-  "idPhieuXuat": 252978,
-  "qrcode": "BP0000214211"
+  "QRCode": "PL0000659534"
 }
 
 ###
@@ -101,8 +100,7 @@ Content-Type: application/json
 x-api-key: 7d91bfa5a2e349c4b4f7a1d7e6d4a3f6c9e2b8f17d44a92b5c63a4d5e8f1b2c3
 
 {
-  "ItemCode": null,
-  "ID_DonHang": null
+  "ID_DonHang": 17208
 }
 
 ###
@@ -145,12 +143,95 @@ GET https://nodeapi.z76.vn/sosec/donvi
 Content-Type: application/json
 
 ###
-GET  http://localhost:5000/erp/tgsx/sanpham/1
+GET  http://localhost:5000/invoice/invoice/
 Content-Type: application/json
 
+{
+  "RequesterUserId":784
+}
 ###
 GET https://nodeapi.z76.vn/erp/tgsx/sanpham/1
 Content-Type: application/json
 
 ###
 GET http://localhost:5000/erp_plp/baocao/ton-layout-btp?TenNha=Kho%20TP&ID_Kho=5&MaVung=B
+
+
+
+###
+POST https://apipccc.z76.vn/HR/check-in-machine
+Content-Type: application/json
+
+[
+  {
+    "IndRegID": "1",
+    "CheckTime": "PM",
+    "DateOnlyRecord": "2026-04-1",
+    "DateTimeRecord": "2026-04-1 17:51:32 PM",
+    "EmployeeGuid": "d02d7c33-4edf-4f74-b18f-d93989af4517",
+    "MachineNumber": "KM01",
+    "IPMachine": "nhadienkhub.cameraddns.net",
+    "IPPort": "8080"
+  },
+    {
+    "IndRegID": "1",
+    "CheckTime": "PM",
+    "DateOnlyRecord": "2026-04-1",
+    "DateTimeRecord": "2026-04-1 17:51:32 PM",
+    "EmployeeGuid": "d02d7c33-4edf-4f74-b18f-d93989af4517",
+    "MachineNumber": "KM01",
+    "IPMachine": "nhadienkhub.cameraddns.net",
+    "IPPort": "8080"
+  }
+]
+
+###
+GET https://nodeapi.z76.vn/erp/dm/quy-trinh-san-xuat
+Content-Type: application/json
+x-api-key: 7d91bfa5a2e349c4b4f7a1d7e6d4a3f6c9e2b8f17d44a92b5c63a4d5e8f1b2c3
+
+
+###
+POST https://nodeapi.z76.vn/erp/don-hang
+Content-Type: application/json
+x-api-key: 7d91bfa5a2e349c4b4f7a1d7e6d4a3f6c9e2b8f17d44a92b5c63a4d5e8f1b2c3
+
+{
+    "ID_DonHang": null,
+    "Ma_DonHang": null
+}
+
+###
+POST  https://nodeapi.z76.vn/hr/check-in-machine
+Content-Type: application/json
+
+[
+  {
+    "IndRegID": null,
+    "CheckTime": "PM",
+    "DateOnlyRecord": "2026-04-1",
+    "DateTimeRecord": "2026-04-1 17:51:32 PM",
+    "EmployeeGuid": "d02d7c33-4edf-4f74-b18f-d93989af4517",
+    "MachineNumber": "KM01",
+    "IPMachine": "nhadienkhub.cameraddns.net",
+    "IPPort": "8080"
+  },
+    {
+    "IndRegID": "1",
+    "CheckTime": "PM",
+    "DateOnlyRecord": "2026-04-1",
+    "DateTimeRecord": "2026-04-1 17:51:32 PM",
+    "EmployeeGuid": "d02d7c33-4edf-4f74-b18f-d93989af4517",
+    "MachineNumber": "KM01",
+    "IPMachine": "nhadienkhub.cameraddns.net",
+    "IPPort": "8080"
+  }
+]
+
+###
+POST https://nodeapi.z76.vn/khotm/giamdinhvt-detail
+Content-Type: application/json
+
+{
+  "ID_GiamDinhVT": 128709
+}

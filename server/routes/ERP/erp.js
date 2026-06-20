@@ -42,9 +42,9 @@ router.post('/dinhmucvattu', checkApiKey, async (req, res) => {
         const pool = await tagpoolPromise;
 
         const result = await pool.request()
-            .input('ItemCode', sql.NVarChar(50), ItemCode)   // đúng độ dài như stored
+            // .input('ItemCode', sql.NVarChar(50), ItemCode)   // đúng độ dài như stored
             .input('ID_DonHang', sql.Int, ID_DonHang)
-            .execute('dbo.sp_Laydinhmucvattu_idDonHang');
+            .execute('dbo.DonHang_VatTu_DinhMuc_ChiTiet');
 
         const dinhmucvattu = result.recordset || []; // recordset đầu tiên
         return res.json({ ok: true, count: dinhmucvattu.length, dinhmucvattu });
@@ -93,6 +93,90 @@ router.post('/invoice/packing-list', checkApiKey, async (req, res) => {
 
     } catch (error) {
         console.error('[POST /invoice/packing-list] error:', error);
+        return res.status(500).json({
+            ok: false,
+            message: error.message || 'Lỗi không xác định'
+        });
+    }
+});
+
+// ==========================================
+// LẤY FULL DM_QuyTrinhSanXuat
+// ==========================================
+router.get('/dm/quy-trinh-san-xuat', checkApiKey, async (req, res) => {
+    try {
+        const pool = await tagpoolPromise;
+
+        const result = await pool.request().query(`
+            SELECT *
+            FROM DM_QuyTrinhSanXuat
+            ORDER BY ID_QuyTrinhSanXuat
+        `);
+
+        const data = result.recordset || [];
+
+        return res.json({
+            ok: true,
+            count: data.length,
+            data
+        });
+
+    } catch (error) {
+        console.error('[GET /dm/quy-trinh-san-xuat] error:', error);
+
+        return res.status(500).json({
+            ok: false,
+            message: error.message || 'Lỗi không xác định'
+        });
+    }
+});
+
+router.post('/don-hang', checkApiKey, async (req, res) => {
+    try {
+        let { Ma_DonHang } = req.body || {};
+
+        const pool = await tagpoolPromise;
+
+        let query = `
+            SELECT 
+                ID_DonHang,
+                Ma_DonHang
+            FROM DonHang
+            WHERE 1 = 1
+        `;
+
+        const request = pool.request();
+
+        // ===== Filter theo mã đơn hàng nếu có =====
+        if (
+            Ma_DonHang !== undefined &&
+            Ma_DonHang !== null &&
+            String(Ma_DonHang).trim() !== ''
+        ) {
+            query += ` AND Ma_DonHang LIKE '%' + @MaDonHang + '%' `;
+
+            request.input(
+                'MaDonHang',
+                sql.NVarChar(100),
+                String(Ma_DonHang).trim()
+            );
+        }
+
+        query += ` ORDER BY ID_DonHang DESC `;
+
+        const result = await request.query(query);
+
+        const data = result.recordset || [];
+
+        return res.json({
+            ok: true,
+            count: data.length,
+            data
+        });
+
+    } catch (error) {
+        console.error('[POST /don-hang] error:', error);
+
         return res.status(500).json({
             ok: false,
             message: error.message || 'Lỗi không xác định'

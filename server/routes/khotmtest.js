@@ -446,5 +446,136 @@ router.post('/split-kien', async (req, res) => {
 });
 
 
+function getQrCodesFromBody(req) {
+    const { qrCodes, QRCodes, QRCode } = req.body || {};
+
+    if (Array.isArray(qrCodes)) return qrCodes;
+    if (Array.isArray(QRCodes)) return QRCodes;
+    if (typeof QRCode === 'string') return [QRCode];
+
+    return [];
+}
+
+function normalizeQrCodes(qrCodes = []) {
+    return [...new Set(
+        qrCodes
+            .map((item) => String(item || '').trim())
+            .filter(Boolean)
+    )];
+}
+
+function buildQrCodeTable(qrCodes = []) {
+    const table = new sql.Table('QrCodeListType');
+    table.columns.add('QRCode', sql.NVarChar(100), { nullable: false });
+
+    normalizeQrCodes(qrCodes).forEach((qrCode) => {
+        table.rows.add(qrCode);
+    });
+
+    return table;
+}
+
+function validateQrCodes(req, res) {
+    const qrCodes = normalizeQrCodes(getQrCodesFromBody(req));
+
+    if (!qrCodes.length) {
+        res.status(400).json({
+            ok: false,
+            message: 'Thiếu danh sách qrCodes',
+        });
+        return null;
+    }
+
+    return qrCodes;
+}
+
+router.post('/phieuxuat/phu-lieu/kien/scan-batch', async (req, res) => {
+    try {
+        const qrCodes = validateQrCodes(req, res);
+        if (!qrCodes) return;
+
+        const pool = await testpoolPromise;
+        const qrTable = buildQrCodeTable(qrCodes);
+
+        const result = await pool
+            .request()
+            .input('QrCodes', qrTable)
+            .execute('App_PhieuXuatVT_ScanBatchKien');
+
+        return res.json({
+            ok: true,
+            data: result.recordset || [],
+        });
+    } catch (err) {
+        console.error('App_PhieuXuatVT_ScanBatchKien error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message,
+        });
+    }
+});
+
+router.post('/phieuxuat/phu-lieu/tim-phieu-theo-kien', async (req, res) => {
+    try {
+        const qrCodes = validateQrCodes(req, res);
+        if (!qrCodes) return;
+
+        const pool = await testpoolPromise;
+        const qrTable = buildQrCodeTable(qrCodes);
+
+        const result = await pool
+            .request()
+            .input('QrCodes', qrTable)
+            .execute('App_TimKiem_PhieuXuatVT_ByBatchKien');
+
+        return res.json({
+            ok: true,
+            data: result.recordset || [],
+        });
+    } catch (err) {
+        console.error('App_TimKiem_PhieuXuatVT_ByBatchKien error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message,
+        });
+    }
+});
+
+router.post('/phieuxuat/phu-lieu/:idPhieuXuat/kien/batch-chitiet', async (req, res) => {
+    try {
+        const idPhieuXuat = Number(req.params.idPhieuXuat);
+        const qrCodes = validateQrCodes(req, res);
+        if (!qrCodes) return;
+        if (!Number.isInteger(idPhieuXuat) || idPhieuXuat <= 0) {
+            return res.status(400).json({
+                ok: false,
+                message: 'Sai idPhieuXuat',
+            });
+        }
+
+        const pool = await testpoolPromise;
+        const qrTable = buildQrCodeTable(qrCodes);
+
+        const result = await pool
+            .request()
+            .input('ID_PhieuXuatVT', sql.Int, idPhieuXuat)
+            .input('QrCodes', qrTable)
+            .execute('App_ChiTiet_PhieuXuatVT_ByBatchKien');
+
+        return res.json({
+            ok: true,
+            data: result.recordset || [],
+        });
+    } catch (err) {
+        console.error('App_ChiTiet_PhieuXuatVT_ByBatchKien error:', err);
+        return res.status(500).json({
+            ok: false,
+            message: 'Lỗi máy chủ',
+            detail: err?.message,
+        });
+    }
+});
 
 module.exports = router

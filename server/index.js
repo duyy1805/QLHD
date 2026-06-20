@@ -20,6 +20,7 @@ const sosecRouter = require('./routes/sosec');
 const invoiceRouter = require('./routes/invoice');
 const tgsxRouter = require('./routes/ERP/tgsx');
 const erp_plp = require('./routes/ERP/erp_plp');
+const thuthapRouter = require('./routes/thuthap.routes');
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -40,6 +41,14 @@ app.use('/khotmtest', khotmtest);
 app.use('/erp', erp);
 app.use('/erp/tgsx', tgsxRouter);
 app.use('/erp_plp', erp_plp)
+
+app.use('/thuthap', thuthapRouter);
+
+app.use('/upload', express.static(path.join('C:/Anh5s/Upload'), {
+    setHeaders: (res, filePath) => {
+        res.setHeader('Content-Disposition', 'inline');
+    }
+}));
 
 app.use('/uploads', express.static(path.join('C:/DocumentsUpload/HopDong/Upload'), {
     setHeaders: (res, filePath) => {

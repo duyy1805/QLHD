@@ -2,7 +2,29 @@ import axios from "axios";
 
 async function run() {
     const ids = [
-        60332
+        73407,
+        73595,
+        73651,
+        73759,
+        73765,
+        73788,
+        73789,
+        73800,
+        73860,
+        73861,
+        73872,
+        73873,
+        73883,
+        73884,
+        73894,
+        73905,
+        73906,
+        73907,
+        73908,
+        73909,
+        73910,
+        73913,
+        73917
     ];
 
     const API_URL = "http://125.212.207.52:1422/ERP";
@@ -13,14 +35,14 @@ async function run() {
     for (const id of ids) {
         const res = await axios.post(
             API_URL,
+            null,
             {
-                LoaiPhieu: 2,
-                TrangThai: 1,
-                ID_Phieu: id
-            },
-            {
+                params: {
+                    ID_Phieu: id,
+                    LoaiPhieu: 1,
+                    TrangThai: 1
+                },
                 headers: {
-                    "Content-Type": "application/json",
                     "ApiKey": API_KEY
                 }
             }
