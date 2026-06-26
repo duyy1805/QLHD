@@ -8,8 +8,8 @@ const sql = require('mssql');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { sendPushToUsers } = require('../utils/push'); // path chá»‰nh cho Ä‘Ãºng
-// ðŸ“ ThÆ° má»¥c lÆ°u file Ä‘Ã­nh kÃ¨m phiáº¿u sÃ©c
+const { sendPushToUsers } = require('../utils/push'); // path chỉnh cho đúng
+// 📁 Thư mục lưu file đính kèm phiếu séc
 const uploadDir = 'C:/DocumentsUpload/SoSec/Upload';
 
 if (!fs.existsSync(uploadDir)) {
@@ -29,7 +29,7 @@ function resolveAttachmentPath(filePath) {
 }
 
 function normalizeAttachmentName(fileName) {
-    if (typeof fileName !== 'string' || !/(Ãƒ|Ã‚|Ã„|Ã¡Â»|Ã¡Âº|Ã°Å¸)/.test(fileName)) {
+    if (typeof fileName !== 'string' || !/(Ã|Â|Ä|á»|áº|ðŸ)/.test(fileName)) {
         return fileName;
     }
 
@@ -37,13 +37,13 @@ function normalizeAttachmentName(fileName) {
     return decodedName.includes('\uFFFD') ? fileName : decodedName;
 }
 
-// âš™ï¸ Cáº¥u hÃ¬nh multer
+// ⚙️ Cấu hình multer
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, uploadDir);
     },
     filename: function (req, file, cb) {
-        // Giá»¯ tÃªn gá»‘c + timestamp cho dá»… nhÃ¬n
+        // Giữ tên gốc + timestamp cho dễ nhìn
         const originalName = path.basename(decodeMultipartFileName(file.originalname));
         const uniqueName = Date.now() + '-' + originalName;
         cb(null, uniqueName);
@@ -52,11 +52,11 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* ========= Helpers ========= */
-function httpError(res, err, fallback = "CÃ³ lá»—i xáº£y ra khi truy váº¥n cÆ¡ sá»Ÿ dá»¯ liá»‡u.") {
+function httpError(res, err, fallback = "Có lỗi xảy ra khi truy vấn cơ sở dữ liệu.") {
     console.error(err);
     const code = err?.number || err?.code;
     const msg = err?.originalError?.info?.message || err.message || fallback;
-    // náº¿u THROW 72xxx tá»« proc => lá»—i nghiá»‡p vá»¥ (400)
+    // nếu THROW 72xxx từ proc => lỗi nghiệp vụ (400)
     const http = String(code || "").startsWith("72") ? 400 : 500;
     return res.status(http).json({ message: msg, code });
 }
@@ -75,6 +75,8 @@ function mapPhieuSec(r) {
         maLenhChi: r.MaLenhChi,
         trangThai: r.MaTrangThai,
         tbpTime: r.TBP_Time,
+        expenseReviewerTime: r.ExpenseReviewer_Time,
+        expenseReviewerName: r.ExpenseReviewer_Name,
         kttTime: r.KTT_Time,
         gdTime: r.GD_Time,
         traLaiTime: r.TraLai_Time,
@@ -90,13 +92,25 @@ function mapPhieuSec(r) {
         maLoaiTien: r.MaLoaiTien || 'VND',
         tenNguoiTao: r.TenNguoiTao ?? null,
         tenDonViNguoiTao: r.TenDonViNguoiTao ?? null,
+        ngayNhapLenhChi: r.LenhChi_NgayNhap ?? null,
+        nguoiNhapLenhChiId: r.LenhChi_NguoiNhapId ?? null,
     };
 }
+
+async function userHasDbPermission(pool, userId, permissionCode) {
+    if (!Number(userId)) return false;
+    const rs = await pool.request()
+        .input("UserId", sql.Int, Number(userId))
+        .input("PermissionCode", sql.NVarChar(50), permissionCode)
+        .query(`SELECT HasPermission = dbo.SS_fn_UserCoQuyen(@UserId, @PermissionCode);`);
+    return !!rs.recordset?.[0]?.HasPermission;
+}
+
 // GET /api/sosec/role/:userId  => { role: "TBP" | "KTT" | "GD" | "NhanVien" }
 router.get("/role/:userId", async (req, res) => {
     try {
         const userId = Number(req.params.userId);
-        if (!userId) return res.status(400).json({ message: "userId khÃ´ng há»£p lá»‡" });
+        if (!userId) return res.status(400).json({ message: "userId không hợp lệ" });
 
         const pool = await poolPromise;
         const rs = await pool.request()
@@ -112,19 +126,25 @@ router.get("/role/:userId", async (req, res) => {
                   AND cn.TonTai = 1
                   AND cn.Ma_ChucNang IN (N'TBP', N'KTT', N'GD', N'Admin', N'TaoLenhChi', N'AdminDanhMuc')
                 ORDER BY cn.Ma_ChucNang;
+
+                SELECT MaLoaiChiPhi
+                FROM dbo.SS_LoaiChiPhi_NguoiPhuTrach
+                WHERE UserId = @UserId AND TonTai = 1
+                ORDER BY MaLoaiChiPhi;
             `);
 
         const role = rs.recordsets?.[0]?.[0]?.RoleCode || "NhanVien";
         const permissions = (rs.recordsets?.[1] || []).map((row) => row.MaQuyen);
-        res.json({ role, permissions });
+        const expenseReviewerCodes = (rs.recordsets?.[2] || []).map((row) => row.MaLoaiChiPhi);
+        res.json({ role, permissions, expenseReviewerCodes });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ message: "Láº¥y role tháº¥t báº¡i" });
+        res.status(500).json({ message: "Lấy role thất bại" });
     }
 });
 
 /* =========================================================================
- *                                ÄÆ N Vá»Š
+ *                                ĐƠN VỊ
  * ========================================================================= */
 
 // GET /api/sosec/donvi?tukhoa=&tontai=1
@@ -149,7 +169,7 @@ router.get("/donvi", async (req, res) => {
             tenNganHang: bankMap.get(row.maNganHang) || null,
         }))); // [{ id, name, stk, maNganHang, tenNganHang, TonTai }]
     } catch (err) {
-        return httpError(res, err, "CÃ³ lá»—i xáº£y ra khi láº¥y danh sÃ¡ch Ä‘Æ¡n vá»‹.");
+        return httpError(res, err, "Có lỗi xảy ra khi lấy danh sách đơn vị.");
     }
 });
 
@@ -170,7 +190,7 @@ router.post("/donvi", async (req, res) => {
 
         res.status(201).json({ id: rs.output.NewId, name, stk, maNganHang, chiNhanhNganHang: chiNhanhNganHang?.trim() || null, tenChuyenKhoan: tenChuyenKhoan?.trim() || null, TonTai: 1 });
     } catch (err) {
-        return httpError(res, err, "CÃ³ lá»—i xáº£y ra khi thÃªm Ä‘Æ¡n vá»‹.");
+        return httpError(res, err, "Có lỗi xảy ra khi thêm đơn vị.");
     }
 });
 
@@ -235,6 +255,100 @@ router.put("/donvi/:id", async (req, res) => {
     }
 });
 
+router.get("/expense-reviewers/users", verifyToken, async (req, res) => {
+    try {
+        const requesterUserId = Number(req.userId);
+        const pool = await poolPromise;
+        if (!await userHasDbPermission(pool, requesterUserId, "Admin")) {
+            return res.status(403).json({ message: "Chỉ Admin được cấu hình người phụ trách." });
+        }
+        const rs = await pool.request().query(`
+            SELECT id = tk.ID_TaiKhoanDangNhap, fullName = tk.TenDayDu
+            FROM Tag_System.dbo.TaiKhoanDangNhap tk
+            WHERE tk.ID_TaiKhoanDangNhap IS NOT NULL
+            ORDER BY tk.TenDayDu, tk.ID_TaiKhoanDangNhap;
+        `);
+        res.json(rs.recordset || []);
+    } catch (err) {
+        return httpError(res, err, "Không lấy được danh sách tài khoản.");
+    }
+});
+
+router.get("/expense-reviewers", verifyToken, async (req, res) => {
+    try {
+        const requesterUserId = Number(req.userId);
+        const pool = await poolPromise;
+        if (!await userHasDbPermission(pool, requesterUserId, "Admin")) {
+            return res.status(403).json({ message: "Chỉ Admin được cấu hình người phụ trách." });
+        }
+        const rs = await pool.request().query(`
+            SELECT maLoaiChiPhi = r.MaLoaiChiPhi, userId = r.UserId, fullName = tk.TenDayDu
+            FROM dbo.SS_LoaiChiPhi_NguoiPhuTrach r
+            LEFT JOIN Tag_System.dbo.TaiKhoanDangNhap tk
+              ON tk.ID_TaiKhoanDangNhap = r.UserId
+            WHERE r.TonTai = 1
+            ORDER BY r.MaLoaiChiPhi, tk.TenDayDu, r.UserId;
+        `);
+        res.json(rs.recordset || []);
+    } catch (err) {
+        return httpError(res, err, "Không lấy được cấu hình người phụ trách.");
+    }
+});
+
+router.put("/expense-reviewers/:maLoaiChiPhi", verifyToken, async (req, res) => {
+    const validExpenseCodes = new Set(["TienDien", "TienGiaCong", "Khac"]);
+    const maLoaiChiPhi = String(req.params.maLoaiChiPhi || "").trim();
+    const requesterUserId = Number(req.userId);
+    const userIds = [...new Set((Array.isArray(req.body?.userIds) ? req.body.userIds : [])
+        .map(Number)
+        .filter(Number.isInteger))];
+
+    if (!validExpenseCodes.has(maLoaiChiPhi)) {
+        return res.status(400).json({ message: "Loại chi phí không hợp lệ." });
+    }
+
+    const pool = await poolPromise;
+    if (!await userHasDbPermission(pool, requesterUserId, "Admin")) {
+        return res.status(403).json({ message: "Chỉ Admin được cấu hình người phụ trách." });
+    }
+
+    const transaction = new sql.Transaction(pool);
+    try {
+        await transaction.begin();
+        await new sql.Request(transaction)
+            .input("MaLoaiChiPhi", sql.NVarChar(30), maLoaiChiPhi)
+            .input("NguoiCapNhatId", sql.Int, requesterUserId)
+            .query(`
+                UPDATE dbo.SS_LoaiChiPhi_NguoiPhuTrach
+                SET TonTai = 0, NguoiCapNhatId = @NguoiCapNhatId, NgayCapNhat = SYSDATETIME()
+                WHERE MaLoaiChiPhi = @MaLoaiChiPhi;
+            `);
+
+        for (const userId of userIds) {
+            await new sql.Request(transaction)
+                .input("MaLoaiChiPhi", sql.NVarChar(30), maLoaiChiPhi)
+                .input("UserId", sql.Int, userId)
+                .input("NguoiCapNhatId", sql.Int, requesterUserId)
+                .query(`
+                    MERGE dbo.SS_LoaiChiPhi_NguoiPhuTrach AS target
+                    USING (SELECT @MaLoaiChiPhi AS MaLoaiChiPhi, @UserId AS UserId) AS source
+                    ON target.MaLoaiChiPhi = source.MaLoaiChiPhi AND target.UserId = source.UserId
+                    WHEN MATCHED THEN UPDATE SET
+                        TonTai = 1, NguoiCapNhatId = @NguoiCapNhatId, NgayCapNhat = SYSDATETIME()
+                    WHEN NOT MATCHED THEN INSERT
+                        (MaLoaiChiPhi, UserId, TonTai, NguoiCapNhatId)
+                    VALUES
+                        (@MaLoaiChiPhi, @UserId, 1, @NguoiCapNhatId);
+                `);
+        }
+        await transaction.commit();
+        res.json({ maLoaiChiPhi, userIds });
+    } catch (err) {
+        try { await transaction.rollback(); } catch {}
+        return httpError(res, err, "Không lưu được người phụ trách.");
+    }
+});
+
 router.delete("/donvi/:id", async (req, res) => {
     try {
         const id = Number(req.params.id);
@@ -245,7 +359,7 @@ router.delete("/donvi/:id", async (req, res) => {
 
         res.json({ id, TonTai: 0 });
     } catch (err) {
-        return httpError(res, err, "CÃ³ lá»—i xáº£y ra khi xoÃ¡ Ä‘Æ¡n vá»‹.");
+        return httpError(res, err, "Có lỗi xảy ra khi xoá đơn vị.");
     }
 });
 
@@ -429,7 +543,7 @@ router.delete("/loaitien/:maLoaiTien", async (req, res) => {
 
 
 /* =========================================================================
- *                               PHIáº¾U SÃ‰C
+ *                               PHIẾU SÉC
  * ========================================================================= */
 
 // GET /api/sosec/phieu?tukhoa=&trangthai=&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
@@ -437,7 +551,7 @@ router.get("/phieu", /* verifyToken, */ async (req, res) => {
     try {
         const { tukhoa, trangthai, dateFrom, dateTo, loaiSec, maLoaiTien } = req.query;
         const fromToken = req.user || {};
-        // Táº¡m thá»i nháº­n tá»« query náº¿u chÆ°a báº­t auth
+        // Tạm thời nhận từ query nếu chưa bật auth
         const userId = Number(req.query.userId || fromToken.userId) || null;
         const roleCode = (req.query.roleCode || fromToken.roleCode) || null;
         const idDonVi = Number(req.query.idDonVi || fromToken.idDonVi) || null;
@@ -454,11 +568,11 @@ router.get("/phieu", /* verifyToken, */ async (req, res) => {
             .input("MaLoaiTien", sql.NVarChar(10), maLoaiTien || null)
             .execute("SS_sp_PhieuSec_DanhSach");
 
-        // Map vá» shape FE Ä‘ang dÃ¹ng
+        // Map về shape FE đang dùng
         const data = rs.recordset.map(mapPhieuSec);
         res.json(data);
     } catch (err) {
-        return httpError(res, err, "CÃ³ lá»—i xáº£y ra khi láº¥y danh sÃ¡ch phiáº¿u sÃ©c.");
+        return httpError(res, err, "Có lỗi xảy ra khi lấy danh sách phiếu séc.");
     }
 });
 
@@ -484,10 +598,10 @@ router.get("/lenhchi/pending", async (req, res) => {
 router.get("/phieu/:id", /* verifyToken, */ async (req, res) => {
     try {
         const phieuId = Number(req.params.id);
-        if (!phieuId) return res.status(400).json({ message: "id khÃ´ng há»£p lá»‡" });
+        if (!phieuId) return res.status(400).json({ message: "id không hợp lệ" });
 
         const fromToken = req.user || {};
-        // Táº¡m thá»i nháº­n tá»« query náº¿u chÆ°a báº­t auth
+        // Tạm thời nhận từ query nếu chưa bật auth
         const userId = Number(req.query.userId || fromToken.userId) || null;
         const roleCode = (req.query.roleCode || fromToken.roleCode) || null;
         const idDonVi = Number(req.query.idDonVi || fromToken.idDonVi) || null;
@@ -496,18 +610,18 @@ router.get("/phieu/:id", /* verifyToken, */ async (req, res) => {
         console.log({ phieuId, userId, roleCode, idDonVi });
         let r;
 
-        // ===== CÃ¡ch 1: náº¿u cÃ³ proc GetById thÃ¬ dÃ¹ng (khuyáº¿n nghá»‹) =====
+        // ===== Cách 1: nếu có proc GetById thì dùng (khuyến nghị) =====
         try {
             const rs1 = await pool.request()
                 .input("PhieuSecId", sql.Int, phieuId)
                 .input("RequesterUserId", sql.Int, userId)
                 .input("RequesterRoleCode", sql.NVarChar(30), roleCode)
                 .input("RequesterIdDonVi", sql.Int, idDonVi)
-                .execute("SS_sp_PhieuSec_GetById"); // <-- táº¡o proc nÃ y theo quyá»n cá»§a báº¡n
+                .execute("SS_sp_PhieuSec_GetById"); // <-- tạo proc này theo quyền của bạn
 
             r = rs1.recordset?.[0];
         } catch (e) {
-            // Náº¿u proc chÆ°a tá»“n táº¡i thÃ¬ fallback DanhSach
+            // Nếu proc chưa tồn tại thì fallback DanhSach
             const rs2 = await pool.request()
                 .input("TuKhoa", sql.NVarChar(200), null)
                 .input("TrangThaiMa", sql.NVarChar(30), null)
@@ -523,12 +637,12 @@ router.get("/phieu/:id", /* verifyToken, */ async (req, res) => {
             r = rs2.recordset.find(x => x.PhieuSecId === phieuId);
         }
 
-        if (!r) return res.status(404).json({ message: "KhÃ´ng tÃ¬m tháº¥y phiáº¿u" });
+        if (!r) return res.status(404).json({ message: "Không tìm thấy phiếu" });
 
-        // Map vá» shape FE Ä‘ang dÃ¹ng
+        // Map về shape FE đang dùng
         const mapped = {
             id: r.PhieuSecId,
-            maSoSec: r.MaSoSec,               // << quan trá»ng
+            maSoSec: r.MaSoSec,               // << quan trọng
             loaiSec: r.LoaiSec || 'VND',
             maLoaiChiPhi: r.MaLoaiChiPhi || 'Khac',
             maLoaiTien: r.MaLoaiTien || 'VND',
@@ -540,8 +654,10 @@ router.get("/phieu/:id", /* verifyToken, */ async (req, res) => {
             idDonVi: r.IdDonVi,
             ghiChu: r.GhiChu,
             trangThai: r.MaTrangThai,         // "ChoDuyet_TBP" | ...
-            maLenhChi: r.MaLenhChi,           // náº¿u Ä‘Ã£ cÃ³
+            maLenhChi: r.MaLenhChi,           // nếu đã có
             tbpTime: r.TBP_Time,
+            expenseReviewerTime: r.ExpenseReviewer_Time,
+            expenseReviewerName: r.ExpenseReviewer_Name,
             kttTime: r.KTT_Time,
             gdTime: r.GD_Time,
             traLaiTime: r.TraLai_Time,
@@ -552,16 +668,16 @@ router.get("/phieu/:id", /* verifyToken, */ async (req, res) => {
             maNganHangHuongThu: r.MaNganHang ?? null,
             chiNhanhNganHangHuongThu: r.ChiNhanhNganHang ?? null,
 
-            // thÃªm má»›i:
+            // thêm mới:
             tenNguoiTao: r.TenNguoiTao ?? null,
             tenDonViNguoiTao: r.TenDonViNguoiTao ?? null,
-            // náº¿u proc GetById/DanhSach cÃ³ thÃªm cÃ¡c trÆ°á»ng dÆ°á»›i thÃ¬ tá»± hiá»‡n:
-            ngayNhapLenhChi: r.NgayNhapLenhChi ?? null,
-            nguoiNhapLenhChiId: r.NguoiNhapLenhChiId ?? null,
+            // nếu proc GetById/DanhSach có thêm các trường dưới thì tự hiện:
+            ngayNhapLenhChi: r.LenhChi_NgayNhap ?? null,
+            nguoiNhapLenhChiId: r.LenhChi_NguoiNhapId ?? null,
         };
         return res.json(mapped);
     } catch (err) {
-        return httpError(res, err, "CÃ³ lá»—i xáº£y ra khi láº¥y chi tiáº¿t phiáº¿u.");
+        return httpError(res, err, "Có lỗi xảy ra khi lấy chi tiết phiếu.");
     }
 });
 // POST /api/sosec/phieu
@@ -583,10 +699,10 @@ router.get("/phieu/:id", /* verifyToken, */ async (req, res) => {
 //             .execute("SS_sp_PhieuSec_Tao");
 //         res.status(201).json({ id: rs.output.NewId });
 //     } catch (err) {
-//         return httpError(res, err, "CÃ³ lá»—i xáº£y ra khi táº¡o phiáº¿u sÃ©c.");
+//         return httpError(res, err, "Có lỗi xảy ra khi tạo phiếu séc.");
 //     }
 // });
-// âš ï¸ XÃ“A hoáº·c comment cÃ¡i router.post("/phieu", /* verifyToken, */ ...) phÃ­a trÃªn Ä‘i
+// ⚠️ XÓA hoặc comment router.post("/phieu", /* verifyToken, */ ...) phía trên đi
 // POST /api/sosec/phieu
 router.post("/phieu", async (req, res) => {
     try {
@@ -595,7 +711,7 @@ router.post("/phieu", async (req, res) => {
             donViId,       // DonViHuongThuId
             soTien,
             nguoiDangKyId,
-            idDonVi,       // IdDonVi (Ä‘Æ¡n vá»‹ táº¡o phiáº¿u)
+            idDonVi,       // IdDonVi (đơn vị tạo phiếu)
             ghiChu,
             loaiSec = "VND",
             maLoaiChiPhi,
@@ -614,7 +730,7 @@ router.post("/phieu", async (req, res) => {
 
         const pool = await poolPromise;
 
-        // 1. Gá»i stored táº¡o phiáº¿u
+        // 1. Gọi stored tạo phiếu
         const rs = await pool
             .request()
             .input("NoiDung", sql.NVarChar(500), noiDung || null)
@@ -634,7 +750,7 @@ router.post("/phieu", async (req, res) => {
         const info = records[0];
 
         if (!newId || !info) {
-            return res.status(500).json({ message: "KhÃ´ng láº¥y Ä‘Æ°á»£c thÃ´ng tin phiáº¿u sau khi táº¡o." });
+            return res.status(500).json({ message: "Không lấy được thông tin phiếu sau khi tạo." });
         }
 
         const phieuId = info.Id || newId;
@@ -646,8 +762,8 @@ router.post("/phieu", async (req, res) => {
             trangThai: 'KhoiTao',
         });
     } catch (err) {
-        console.error('âŒ Lá»—i táº¡o phiáº¿u sÃ©c:', err);
-        return httpError(res, err, "CÃ³ lá»—i xáº£y ra khi táº¡o phiáº¿u sÃ©c.");
+        console.error('❌ Lỗi tạo phiếu séc:', err);
+        return httpError(res, err, "Có lỗi xảy ra khi tạo phiếu séc.");
     }
 });
 
@@ -759,7 +875,7 @@ router.delete("/phieu/:id", async (req, res) => {
 //         const pool = await poolPromise;
 
 //         const fromToken = req.user || {};
-//         // Táº¡m thá»i nháº­n tá»« query náº¿u chÆ°a báº­t auth
+//         // Tạm thời nhận từ query nếu chưa bật auth
 
 //         console.log({ requesterUserId, requesterRoleCode, requesterIdDonVi });
 //         await pool.request()
@@ -770,7 +886,7 @@ router.delete("/phieu/:id", async (req, res) => {
 //             .input("GhiChu", sql.NVarChar(500), ghiChu || null)
 //             .execute("SS_sp_PhieuSec_Duyet");
 
-//         // láº¥y láº¡i 1 record
+//         // lấy lại 1 record
 //         const rs = await pool.request()
 //             .input("TuKhoa", sql.NVarChar(200), null)
 //             .input("TrangThaiMa", sql.NVarChar(30), null)
@@ -782,9 +898,9 @@ router.delete("/phieu/:id", async (req, res) => {
 //             .execute("SS_sp_PhieuSec_DanhSach");
 
 //         const r = rs.recordset.find(x => x.PhieuSecId === Number(id));
-//         if (!r) return res.status(404).json({ message: "KhÃ´ng tÃ¬m tháº¥y phiáº¿u sau khi duyá»‡t" });
+//         if (!r) return res.status(404).json({ message: "Không tìm thấy phiếu sau khi duyệt" });
 
-//         // map vá» FE
+//         // map về FE
 //         const mapped = {
 //             id: r.PhieuSecId,
 //             ngay: r.Ngay,
@@ -802,7 +918,7 @@ router.delete("/phieu/:id", async (req, res) => {
 //             tenDonVi: r.TenDonVi,
 //             maSoSec: r.MaSoSec,
 
-//             // thÃªm má»›i:
+//             // thêm mới:
 //             tenNguoiTao: r.TenNguoiTao ?? null,
 //             tenDonViNguoiTao: r.TenDonViNguoiTao ?? null,
 //         };
@@ -810,7 +926,7 @@ router.delete("/phieu/:id", async (req, res) => {
 //         res.json(mapped);
 //     } catch (err) {
 //         console.error(err);
-//         res.status(500).json({ message: "CÃ³ lá»—i xáº£y ra khi duyá»‡t phiáº¿u." });
+//         res.status(500).json({ message: "Có lỗi xảy ra khi duyệt phiếu." });
 //     }
 // });
 router.post("/phieu/:id/approve", async (req, res) => {
@@ -828,12 +944,12 @@ router.post("/phieu/:id/approve", async (req, res) => {
         } = req.body;
 
         if ((chapThuan === false || traLai) && !ghiChu?.trim()) {
-            return res.status(400).json({ message: "Vui lÃ²ng nháº­p lÃ½ do tá»« chá»‘i hoáº·c tráº£ láº¡i." });
+            return res.status(400).json({ message: "Vui lòng nhập lý do từ chối hoặc trả lại." });
         }
 
         const pool = await poolPromise;
 
-        // 1. Gá»i proc duyá»‡t
+        // 1. Gọi proc duyệt
         await pool.request()
             .input("PhieuSecId", sql.Int, Number(id))
             .input("NguoiDuyetId", sql.Int, nguoiDuyetId)
@@ -843,7 +959,7 @@ router.post("/phieu/:id/approve", async (req, res) => {
             .input("TraLai", sql.Bit, !!traLai)
             .execute("SS_sp_PhieuSec_Duyet");
 
-        // 2. Láº¥y láº¡i 1 record sau khi duyá»‡t
+        // 2. Lấy lại 1 record sau khi duyệt
         const rs = await pool.request()
             .input("TuKhoa", sql.NVarChar(200), null)
             .input("TrangThaiMa", sql.NVarChar(30), null)
@@ -867,12 +983,12 @@ router.post("/phieu/:id/approve", async (req, res) => {
                 `);
             r = returned.recordset[0];
         }
-        if (!r) return res.status(404).json({ message: "KhÃ´ng tÃ¬m tháº¥y phiáº¿u sau khi duyá»‡t" });
+        if (!r) return res.status(404).json({ message: "Không tìm thấy phiếu sau khi duyệt" });
 
-        // ðŸ’¾ Äáº£m báº£o proc SS_sp_PhieuSec_DanhSach tráº£ thÃªm:
+        // 💾 Đảm bảo proc SS_sp_PhieuSec_DanhSach trả thêm:
         // r.MaSoSec, r.TBPUserId, r.KTTUserId, r.GDUserId, r.NguoiDangKyId, ...
 
-        // map vá» FE
+        // map về FE
         const mapped = {
             id: r.PhieuSecId,
             ngay: r.Ngay,
@@ -885,6 +1001,8 @@ router.post("/phieu/:id/approve", async (req, res) => {
             trangThai: r.MaTrangThai,
             maLenhChi: r.MaLenhChi,
             tbpTime: r.TBP_Time,
+            expenseReviewerTime: r.ExpenseReviewer_Time,
+            expenseReviewerName: r.ExpenseReviewer_Name,
             kttTime: r.KTT_Time,
             gdTime: r.GD_Time,
             traLaiTime: r.TraLai_Time,
@@ -902,7 +1020,7 @@ router.post("/phieu/:id/approve", async (req, res) => {
             tenDonViNguoiTao: r.TenDonViNguoiTao ?? null,
         };
 
-        // 3. Gá»­i push theo tráº¡ng thÃ¡i má»›i
+        // 3. Gửi push theo trạng thái mới
         try {
             const targets = [];
             let title = '';
@@ -918,29 +1036,40 @@ router.post("/phieu/:id/approve", async (req, res) => {
                     body = `Phieu sec ${maSoSec} da duoc tra lai ve Nhap de chinh sua. Ly do: ${ghiChu || 'Khong ghi ro.'}`;
                 }
             } else if (chapThuan) {
-                // âœ… TrÆ°á»ng há»£p DUYá»†T
-                if (trangThai === 'ChoDuyet_KTT' && r.KTTUserId) {
-                    // TBP duyá»‡t xong, Ä‘áº©y lÃªn KTT
+                // ✅ Trường hợp DUYỆT
+                if (trangThai === 'ChoDuyet_ThuKyKTT') {
+                    const reviewerRs = await pool.request()
+                        .input("MaLoaiChiPhi", sql.NVarChar(30), mapped.maLoaiChiPhi)
+                        .query(`
+                            SELECT UserId
+                            FROM dbo.SS_LoaiChiPhi_NguoiPhuTrach
+                            WHERE MaLoaiChiPhi = @MaLoaiChiPhi AND TonTai = 1;
+                        `);
+                    targets.push(...(reviewerRs.recordset || []).map((item) => item.UserId));
+                    title = 'Phiếu séc cần người phụ trách xem trước';
+                    body = `Phiếu séc ${maSoSec} đã được TBP duyệt, chờ người phụ trách loại chi phí xem trước.`;
+                } else if (trangThai === 'ChoDuyet_KTT' && r.KTTUserId) {
+                    // TBP duyệt xong, đẩy lên KTT
                     targets.push(r.KTTUserId);
-                    title = 'Phiáº¿u sÃ©c cáº§n KTT duyá»‡t';
-                    body = `Phiáº¿u sÃ©c ${maSoSec} Ä‘Ã£ Ä‘Æ°á»£c TBP duyá»‡t, chá» KTT phÃª duyá»‡t.`;
+                    title = 'Phiếu séc cần KTT duyệt';
+                    body = `Phiếu séc ${maSoSec} đã sẵn sàng, chờ KTT phê duyệt.`;
                 } else if (trangThai === 'ChoDuyet_GD' && r.GDUserId) {
-                    // KTT duyá»‡t xong, Ä‘áº©y lÃªn GD
+                    // KTT duyệt xong, đẩy lên GD
                     targets.push(r.GDUserId);
-                    title = 'Phiáº¿u sÃ©c cáº§n GiÃ¡m Ä‘á»‘c duyá»‡t';
-                    body = `Phiáº¿u sÃ©c ${maSoSec} Ä‘Ã£ Ä‘Æ°á»£c KTT duyá»‡t, chá» GiÃ¡m Ä‘á»‘c phÃª duyá»‡t.`;
+                    title = 'Phiếu séc cần Giám đốc duyệt';
+                    body = `Phiếu séc ${maSoSec} đã được KTT duyệt, chờ Giám đốc phê duyệt.`;
                 } else if (trangThai === 'HoanThanh' && mapped.nguoiDangKyId) {
-                    // GiÃ¡m Ä‘á»‘c duyá»‡t xong, bÃ¡o cho ngÆ°á»i Ä‘Äƒng kÃ½
+                    // Giám đốc duyệt xong, báo cho người đăng ký
                     targets.push(mapped.nguoiDangKyId);
-                    title = 'Phiáº¿u sÃ©c Ä‘Ã£ Ä‘Æ°á»£c duyá»‡t xong';
-                    body = `Phiáº¿u sÃ©c ${maSoSec} Ä‘Ã£ Ä‘Æ°á»£c duyá»‡t hoÃ n thÃ nh.`;
+                    title = 'Phiếu séc đã được duyệt xong';
+                    body = `Phiếu séc ${maSoSec} đã được duyệt hoàn thành.`;
                 }
             } else {
-                // âŒ TrÆ°á»ng há»£p Tá»ª CHá»I
+                // ❌ Trường hợp TỪ CHỐI
                 if (trangThai === 'TuChoi' && mapped.nguoiDangKyId) {
                     targets.push(mapped.nguoiDangKyId);
-                    title = 'Phiáº¿u sÃ©c bá»‹ tá»« chá»‘i';
-                    body = `Phiáº¿u sÃ©c ${maSoSec} Ä‘Ã£ bá»‹ tá»« chá»‘i. LÃ½ do: ${ghiChu || 'KhÃ´ng ghi rÃµ.'}`;
+                    title = 'Phiếu séc bị từ chối';
+                    body = `Phiếu séc ${maSoSec} đã bị từ chối. Lý do: ${ghiChu || 'Không ghi rõ.'}`;
                 }
             }
             console.log(targets, title, body);
@@ -954,13 +1083,13 @@ router.post("/phieu/:id/approve", async (req, res) => {
                 console.log('Result push approve:', resultPush);
             }
         } catch (pushErr) {
-            console.error('âš  Lá»—i gá»­i push khi duyá»‡t phiáº¿u:', pushErr);
-            // KhÃ´ng throw ra ngoÃ i, trÃ¡nh lÃ m fail duyá»‡t vÃ¬ lá»—i push
+            console.error('⚠ Lỗi gửi push khi duyệt phiếu:', pushErr);
+            // Không throw ra ngoài, tránh làm fail duyệt vì lỗi push
         }
 
         res.json(mapped);
     } catch (err) {
-        return httpError(res, err, "CÃ³ lá»—i xáº£y ra khi duyá»‡t phiáº¿u.");
+        return httpError(res, err, "Có lỗi xảy ra khi duyệt phiếu.");
     }
 });
 
@@ -978,9 +1107,9 @@ router.post("/phieu/:id/lenhchi", async (req, res) => {
             .input("NguoiNhapId", sql.Int, nguoiNhapId)
             .execute("SS_sp_LenhChi_Tao");
 
-        res.status(201).json({ message: "ÄÃ£ táº¡o lá»‡nh chi cho phiáº¿u " + id });
+        res.status(201).json({ message: "Đã tạo lệnh chi cho phiếu " + id });
     } catch (err) {
-        return httpError(res, err, "CÃ³ lá»—i khi táº¡o lá»‡nh chi");
+        return httpError(res, err, "Có lỗi khi tạo lệnh chi");
     }
 });
 
@@ -1007,6 +1136,7 @@ router.get("/dashboard", async (req, res) => {
         return res.json({
             draft: Number(r.KhoiTao || 0),
             waitingTBP: Number(r.ChoDuyet_TBP || 0),
+            waitingExpenseReviewer: Number(r.ChoDuyet_ThuKyKTT || 0),
             waitingKTT: Number(r.ChoDuyet_KTT || 0),
             waitingGD: Number(r.ChoDuyet_GD || 0),
             completed: Number(r.HoanThanh || 0),
@@ -1014,7 +1144,7 @@ router.get("/dashboard", async (req, res) => {
             total: Number(r.Tong || 0),
         });
     } catch (err) {
-        return httpError(res, err, "CÃ³ lá»—i khi láº¥y dashboard.");
+        return httpError(res, err, "Có lỗi khi lấy dashboard.");
     }
 });
 
@@ -1054,6 +1184,7 @@ router.get("/dashboard/summary", async (req, res) => {
             byStatus: {
                 draft: { count: Number(r.KhoiTao_Count || 0), amount: nullableNumber(r.KhoiTao_Amount) },
                 waitingTBP: { count: Number(r.ChoDuyet_TBP_Count || 0), amount: nullableNumber(r.ChoDuyet_TBP_Amount) },
+                waitingExpenseReviewer: { count: Number(r.ChoDuyet_ThuKyKTT_Count || 0), amount: nullableNumber(r.ChoDuyet_ThuKyKTT_Amount) },
                 waitingKTT: { count: Number(r.ChoDuyet_KTT_Count || 0), amount: nullableNumber(r.ChoDuyet_KTT_Amount) },
                 waitingGD: { count: Number(r.ChoDuyet_GD_Count || 0), amount: nullableNumber(r.ChoDuyet_GD_Amount) },
                 completed: { count: Number(r.HoanThanh_Count || 0), amount: nullableNumber(r.HoanThanh_Amount) },
@@ -1062,7 +1193,7 @@ router.get("/dashboard/summary", async (req, res) => {
             byCurrency,
         });
     } catch (err) {
-        return httpError(res, err, "CÃ³ lá»—i khi láº¥y dashboard summary.");
+        return httpError(res, err, "Có lỗi khi lấy dashboard summary.");
     }
 });
 
@@ -1098,12 +1229,12 @@ router.get("/dashboard/grouped", async (req, res) => {
         }));
         res.json(data);
     } catch (err) {
-        return httpError(res, err, "CÃ³ lá»—i khi láº¥y dashboard grouped.");
+        return httpError(res, err, "Có lỗi khi lấy dashboard grouped.");
     }
 });
 
 /**
- * âœ… Upload 1 hoáº·c nhiá»u tÃ i liá»‡u cho 1 Phiáº¿u sÃ©c
+ * ✅ Upload 1 hoặc nhiều tài liệu cho 1 Phiếu séc
  * Frontend: formData.append("files", file1); formData.append("files", file2)...
  * POST /phieu/:phieuSecId/tailieu
  */
@@ -1114,20 +1245,20 @@ router.post('/phieu/:phieuSecId/tailieu', upload.array('files', 10), async (req,
         const nguoiTao = req.body?.NguoiTao || 'system';
 
         if (!files.length) {
-            return res.status(400).json({ success: false, message: 'KhÃ´ng cÃ³ file nÃ o Ä‘Æ°á»£c upload.' });
+            return res.status(400).json({ success: false, message: 'Không có file nào được upload.' });
         }
 
         const pool = await poolPromise;
 
         for (const file of files) {
-            // â— FIX MÃƒ HOÃ TÃŠN FILE
+            // ❗ FIX MÃ HOÁ TÊN FILE
             const fileName = path.basename(decodeMultipartFileName(file.originalname));
             const filePath = file.path.replace(/\\/g, '/');
 
             await pool.request()
                 .input('PhieuSecId', sql.Int, phieuSecId)
-                .input('FilePath', sql.NVarChar(500), filePath)   // Ä‘Ã£ lÃ  Unicode Ä‘Ãºng
-                .input('FileName', sql.NVarChar(255), fileName)   // Unicode Ä‘Ãºng
+                .input('FilePath', sql.NVarChar(500), filePath)   // đã là Unicode đúng
+                .input('FileName', sql.NVarChar(255), fileName)   // Unicode đúng
                 .input('NguoiTao', sql.NVarChar(50), nguoiTao)
                 .query(`
                     INSERT INTO SS_PhieuSecTaiLieu (PhieuSecId, FilePath, FileName, NguoiTao)
@@ -1135,16 +1266,16 @@ router.post('/phieu/:phieuSecId/tailieu', upload.array('files', 10), async (req,
                 `);
         }
 
-        res.json({ success: true, message: 'Upload tÃ i liá»‡u thÃ nh cÃ´ng.' });
+        res.json({ success: true, message: 'Upload tài liệu thành công.' });
     } catch (err) {
-        console.error('âŒ Lá»—i upload tÃ i liá»‡u phiáº¿u sÃ©c:', err);
-        res.status(500).json({ success: false, message: 'Lá»—i khi upload tÃ i liá»‡u phiáº¿u sÃ©c.' });
+        console.error('❌ Lỗi upload tài liệu phiếu séc:', err);
+        res.status(500).json({ success: false, message: 'Lỗi khi upload tài liệu phiếu séc.' });
     }
 });
 
 
 /**
- * ðŸ“„ Láº¥y danh sÃ¡ch tÃ i liá»‡u theo phiáº¿u
+ * 📄 Lấy danh sách tài liệu theo phiếu
  * GET /phieu/:phieuSecId/tailieu
  */
 router.get('/phieu/:phieuSecId/tailieu', async (req, res) => {
@@ -1166,13 +1297,13 @@ router.get('/phieu/:phieuSecId/tailieu', async (req, res) => {
             FileName: normalizeAttachmentName(row.FileName),
         })));
     } catch (err) {
-        console.error('âŒ Lá»—i láº¥y tÃ i liá»‡u phiáº¿u sÃ©c:', err);
-        res.status(500).json({ success: false, message: 'Lá»—i khi láº¥y tÃ i liá»‡u phiáº¿u sÃ©c.' });
+        console.error('❌ Lỗi lấy tài liệu phiếu séc:', err);
+        res.status(500).json({ success: false, message: 'Lỗi khi lấy tài liệu phiếu séc.' });
     }
 });
 
 /**
- * ðŸ‘€ Xem / táº£i file
+ * 👀 Xem / tải file
  * GET /phieu/tailieu/:taiLieuId
  */
 router.get('/phieu/tailieu/:taiLieuId', async (req, res) => {
@@ -1190,12 +1321,12 @@ router.get('/phieu/tailieu/:taiLieuId', async (req, res) => {
 
         const row = result.recordset[0];
         if (!row) {
-            return res.status(404).send('KhÃ´ng tÃ¬m tháº¥y tÃ i liá»‡u.');
+            return res.status(404).send('Không tìm thấy tài liệu.');
         }
 
         const filePath = resolveAttachmentPath(row.FilePath);
         if (!filePath) {
-            return res.status(404).send('File khÃ´ng tá»“n táº¡i trÃªn server.');
+            return res.status(404).send('File không tồn tại trên server.');
         }
 
         res.setHeader(
@@ -1204,8 +1335,8 @@ router.get('/phieu/tailieu/:taiLieuId', async (req, res) => {
         );
         res.sendFile(path.resolve(filePath));
     } catch (err) {
-        console.error('âŒ Lá»—i xem tÃ i liá»‡u phiáº¿u sÃ©c:', err);
-        res.status(500).send('Lá»—i khi xem tÃ i liá»‡u phiáº¿u sÃ©c.');
+        console.error('❌ Lỗi xem tài liệu phiếu séc:', err);
+        res.status(500).send('Lỗi khi xem tài liệu phiếu séc.');
     }
 });
 
@@ -1224,11 +1355,11 @@ router.get('/phieu/tailieu/:taiLieuId', async (req, res) => {
             `);
 
         const row = result.recordset[0];
-        if (!row) return res.status(404).send('KhÃ´ng tÃ¬m tháº¥y tÃ i liá»‡u.');
+        if (!row) return res.status(404).send('Không tìm thấy tài liệu.');
 
         const filePath = resolveAttachmentPath(row.FilePath);
         if (!filePath) {
-            return res.status(404).send('File khÃ´ng tá»“n táº¡i trÃªn server.');
+            return res.status(404).send('File không tồn tại trên server.');
         }
 
         res.setHeader(
@@ -1237,8 +1368,8 @@ router.get('/phieu/tailieu/:taiLieuId', async (req, res) => {
         );
         res.sendFile(path.resolve(filePath));
     } catch (err) {
-        console.error('âŒ Lá»—i xem tÃ i liá»‡u phiáº¿u sÃ©c:', err);
-        res.status(500).send('Lá»—i khi xem tÃ i liá»‡u phiáº¿u sÃ©c.');
+        console.error('❌ Lỗi xem tài liệu phiếu séc:', err);
+        res.status(500).send('Lỗi khi xem tài liệu phiếu séc.');
     }
 });
 
@@ -1248,7 +1379,7 @@ router.delete('/phieu/tailieu/:taiLieuId', async (req, res) => {
         const { taiLieuId } = req.params;
         const pool = await poolPromise;
 
-        // 1. Láº¥y Ä‘Æ°á»ng dáº«n file
+        // 1. Lấy đường dẫn file
         const result = await pool.request()
             .input('TaiLieuId', sql.Int, taiLieuId)
             .query(`
@@ -1259,21 +1390,21 @@ router.delete('/phieu/tailieu/:taiLieuId', async (req, res) => {
 
         const row = result.recordset[0];
         if (!row) {
-            return res.status(404).json({ success: false, message: 'KhÃ´ng tÃ¬m tháº¥y tÃ i liá»‡u.' });
+            return res.status(404).json({ success: false, message: 'Không tìm thấy tài liệu.' });
         }
 
         const filePath = resolveAttachmentPath(row.FilePath);
 
-        // 2. XoÃ¡ file trÃªn server
+        // 2. Xoá file trên server
         if (filePath && fs.existsSync(filePath)) {
             try {
                 fs.unlinkSync(filePath);
             } catch (e) {
-                console.error('âš  KhÃ´ng xoÃ¡ Ä‘Æ°á»£c file, nhÆ°ng tiáº¿p tá»¥c xoÃ¡ DB:', e);
+                console.error('⚠ Không xoá được file, nhưng tiếp tục xoá DB:', e);
             }
         }
 
-        // 3. XoÃ¡/Ä‘Ã¡nh dáº¥u xoÃ¡ trong DB
+        // 3. Xoá/đánh dấu xoá trong DB
         await pool.request()
             .input('TaiLieuId', sql.Int, taiLieuId)
             .query(`
@@ -1281,16 +1412,16 @@ router.delete('/phieu/tailieu/:taiLieuId', async (req, res) => {
                 SET IsDeleted = 1
                 WHERE TaiLieuId = @TaiLieuId
             `);
-        // hoáº·c náº¿u muá»‘n xoÃ¡ háº³n: DELETE FROM SS_PhieuSecTaiLieu WHERE TaiLieuId = @TaiLieuId
+        // hoặc nếu muốn xoá hẳn: DELETE FROM SS_PhieuSecTaiLieu WHERE TaiLieuId = @TaiLieuId
 
-        res.json({ success: true, message: 'ÄÃ£ xoÃ¡ tÃ i liá»‡u.' });
+        res.json({ success: true, message: 'Đã xoá tài liệu.' });
     } catch (err) {
-        console.error('âŒ Lá»—i xoÃ¡ tÃ i liá»‡u phiáº¿u sÃ©c:', err);
-        res.status(500).json({ success: false, message: 'Lá»—i khi xoÃ¡ tÃ i liá»‡u phiáº¿u sÃ©c.' });
+        console.error('❌ Lỗi xoá tài liệu phiếu séc:', err);
+        res.status(500).json({ success: false, message: 'Lỗi khi xoá tài liệu phiếu séc.' });
     }
 });
 
-// ðŸ“¡ ÄÄƒng kÃ½ / cáº­p nháº­t device token cho 1 user
+// 📡 Đăng ký / cập nhật device token cho 1 user
 router.post('/device/register', async (req, res) => {
     try {
         const { userId, roleCode, pushToken, platform } = req.body;
@@ -1298,13 +1429,13 @@ router.post('/device/register', async (req, res) => {
         if (!userId || !pushToken) {
             return res.status(400).json({
                 success: false,
-                message: 'Thiáº¿u userId hoáº·c pushToken',
+                message: 'Thiếu userId hoặc pushToken',
             });
         }
 
         const pool = await poolPromise;
 
-        // Náº¿u token Ä‘Ã£ tá»“n táº¡i cho user nÃ y -> báº­t láº¡i IsActive
+        // Nếu token đã tồn tại cho user này -> bật lại IsActive
         await pool.request()
             .input('UserId', sql.Int, userId)
             .input('RoleCode', sql.NVarChar(50), roleCode || null)
@@ -1328,10 +1459,10 @@ router.post('/device/register', async (req, res) => {
 
         return res.json({ success: true });
     } catch (err) {
-        console.error('âŒ Lá»—i /device/register:', err);
+        console.error('❌ Lỗi /device/register:', err);
         return res.status(500).json({
             success: false,
-            message: 'Lá»—i server khi Ä‘Äƒng kÃ½ device',
+            message: 'Lỗi server khi đăng ký device',
         });
     }
 });
