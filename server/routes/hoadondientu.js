@@ -434,12 +434,32 @@ router.get('/hoa-don/:id', async (req, res) => {
         const header = mapHoaDon(firstRecordset(rs, 0)[0]);
         if (!header) return res.status(404).json({ message: 'Không tìm thấy hóa đơn.' });
 
+        const lichSuDuyet = firstRecordset(rs, 4);
+        const userIds = [...new Set(lichSuDuyet.map((row) => Number(row.NguoiThucHienId)).filter(Boolean))];
+        let userNameMap = new Map();
+        if (userIds.length) {
+            const userRs = await pool.request()
+                .input('UserIdsJson', sql.NVarChar(sql.MAX), JSON.stringify(userIds))
+                .query(`
+                    SELECT
+                        u.ID_TaiKhoanDangNhap,
+                        TenNguoiDung = COALESCE(NULLIF(u.TenDayDu, N''), NULLIF(u.TenDangNhap, N''), CONVERT(NVARCHAR(20), u.ID_TaiKhoanDangNhap))
+                    FROM Tag_System.dbo.TaiKhoanDangNhap u
+                    JOIN OPENJSON(@UserIdsJson) ids
+                      ON u.ID_TaiKhoanDangNhap = TRY_CONVERT(INT, ids.[value])
+                `);
+            userNameMap = new Map((userRs.recordset || []).map((row) => [Number(row.ID_TaiKhoanDangNhap), row.TenNguoiDung]));
+        }
+
         res.json({
             ...header,
             chiTiet: firstRecordset(rs, 1),
             quocPhong: firstRecordset(rs, 2)[0] || null,
             quocPhongChiTiet: firstRecordset(rs, 3),
-            lichSuDuyet: firstRecordset(rs, 4),
+            lichSuDuyet: lichSuDuyet.map((row) => ({
+                ...row,
+                TenNguoiThucHien: row.TenNguoiThucHien || userNameMap.get(Number(row.NguoiThucHienId)) || row.NguoiThucHienId,
+            })),
             taiLieu: firstRecordset(rs, 5).map((row) => ({
                 ...row,
                 FileName: normalizeAttachmentName(row.FileName),
@@ -553,6 +573,31 @@ router.post('/hoa-don/:id/approve', async (req, res) => {
         res.json(mapHoaDon(rs.recordset?.[0]));
     } catch (err) {
         return httpError(res, err, 'Có lỗi khi duyệt hóa đơn.');
+    }
+});
+
+router.put('/hoa-don/:id/thong-tin-xuat', async (req, res) => {
+    try {
+        const hoaDonId = Number(req.params.id);
+        const requester = getRequester(req);
+        if (!hoaDonId || !requester.userId) {
+            return res.status(400).json({ message: 'Thiếu id hoặc requesterUserId.' });
+        }
+
+        const payload = buildPayload(req.body);
+        const pool = await poolPromise;
+        const rs = await pool.request()
+            .input('HoaDonId', sql.Int, hoaDonId)
+            .input('Payload', sql.NVarChar(sql.MAX), JSON.stringify(payload))
+            .input('RequesterUserId', sql.Int, requester.userId)
+            .execute('HD_sp_HoaDon_CapNhatThongTinXuat');
+
+        res.json({
+            hoaDon: mapHoaDon(firstRecordset(rs, 0)[0]),
+            chiTiet: firstRecordset(rs, 1),
+        });
+    } catch (err) {
+        return httpError(res, err, 'Có lỗi khi cập nhật thông tin xuất hóa đơn.');
     }
 });
 
@@ -707,9 +752,32 @@ router.get('/dot-xuat-file/:id/export.xlsx', async (req, res) => {
             .execute('HD_sp_DotXuatFile_LayDuLieu');
 
         const rows = rs.recordset || [];
-        const worksheet = XLSX.utils.json_to_sheet(rows);
+        const headers = [
+            'Số thứ tự hóa đơn (*)',
+            'Ngày hóa đơn',
+            'Tên đơn vị mua hàng',
+            'Địa chỉ',
+            'Mã số thuế',
+            'Người mua hàng',
+            'Email',
+            'Hình thức thanh toán',
+            'Loại tiền',
+            'Tỷ giá',
+            'Thuế suất GTGT (%)',
+            'Tiền thuế GTGT',
+            'Tiền thuế GTGT quy đổi',
+            'Mã hàng',
+            'Tên hàng hóa/dịch vụ (*)',
+            'ĐVT',
+            'Số lượng',
+            'Đơn giá',
+            'Thành tiền',
+            'Thành tiền quy đổi',
+        ];
+        const exportRows = rows.map((row) => Object.fromEntries(headers.map((header) => [header, row[header] ?? null])));
+        const worksheet = XLSX.utils.json_to_sheet(exportRows, { header: headers });
         const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, 'Hoa don GTGT');
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Hóa đơn GTGT');
         const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
