@@ -1,10 +1,20 @@
-node_modules
+﻿node_modules
 
 server/.env
+QuanLyTaiLieu/.env*.local
+QuanLyTaiLieu/.next/
+QuanLyTaiLieu/node_modules/
+QuanLyTaiLieu/dev.log
+QuanLyTaiLieu/public/uploads/
 
 # Build output
 dist/
 build/
+QuanLyTaiLieu/out/
+QuanLyTaiLieu/.vercel/
 
 *.xls
 *.txt
+*.log
+
+*.env
