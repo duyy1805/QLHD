@@ -22,6 +22,7 @@ export function AssignmentDocumentCard({
 }) {
   const assignmentCount = document.assignmentCount || 0;
   const completedCount = document.completedAssignmentCount || 0;
+
   const progress =
     assignmentCount > 0
       ? Math.round((completedCount / assignmentCount) * 100)
@@ -38,18 +39,20 @@ export function AssignmentDocumentCard({
         <div className="border-b border-slate-100 bg-gradient-to-br from-amber-50 via-white to-slate-50 p-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-500 text-white shadow-lg shadow-amber-500/20">
-                <FileClock className="h-6 w-6" />
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-3xl bg-amber-500 text-white shadow-lg shadow-amber-500/20">
+                <FileClock className="h-7 w-7" />
               </div>
 
               <div className="min-w-0">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
                     Thông báo xử lý
                   </span>
+
                   <DocumentStatusBadge status={document.status} />
+
                   {isOverdue && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
                       <AlertTriangle className="h-3.5 w-3.5" />
                       Quá hạn
                     </span>
@@ -58,7 +61,7 @@ export function AssignmentDocumentCard({
 
                 <Link
                   href={`/documents/${document.typeCode}/${document.id}`}
-                  className="line-clamp-2 text-lg font-semibold leading-6 text-slate-950 transition group-hover:text-amber-700"
+                  className="line-clamp-2 text-xl font-semibold leading-7 text-slate-950 transition group-hover:text-amber-700"
                 >
                   {document.title}
                 </Link>
@@ -73,15 +76,14 @@ export function AssignmentDocumentCard({
 
             <Link
               href={`/documents/${document.typeCode}/${document.id}`}
-              className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-amber-200 hover:text-amber-700 sm:inline-flex"
-              aria-label="Xem chi tiết thông báo"
+              className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition hover:border-amber-200 hover:text-amber-700 sm:inline-flex"
             >
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
         </div>
 
-        <div className="grid gap-4 p-5 lg:grid-cols-[1fr_220px]">
+        <div className="grid gap-4 p-5 lg:grid-cols-[1fr_240px]">
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">
               <InfoBox
@@ -89,6 +91,7 @@ export function AssignmentDocumentCard({
                 label="Người xử lý"
                 value={`${completedCount}/${assignmentCount}`}
               />
+
               <InfoBox
                 icon={<CalendarClock className="h-4 w-4" />}
                 label="Hạn gần nhất"
@@ -98,6 +101,7 @@ export function AssignmentDocumentCard({
                     : "Chưa có"
                 }
               />
+
               <InfoBox
                 icon={<Clock3 className="h-4 w-4" />}
                 label="Ngày tạo"
@@ -107,7 +111,7 @@ export function AssignmentDocumentCard({
 
             <div>
               <div className="mb-2 flex items-center justify-between text-sm">
-                <span className="font-medium text-slate-700">
+                <span className="font-semibold text-slate-700">
                   Tiến độ xác nhận
                 </span>
                 <span className="font-semibold text-slate-900">
@@ -135,26 +139,12 @@ export function AssignmentDocumentCard({
             </div>
 
             <div className="space-y-2 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500">Đã hoàn thành</span>
-                <span className="font-semibold text-slate-900">
-                  {completedCount}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500">Tổng giao việc</span>
-                <span className="font-semibold text-slate-900">
-                  {assignmentCount}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500">Còn lại</span>
-                <span className="font-semibold text-slate-900">
-                  {Math.max(assignmentCount - completedCount, 0)}
-                </span>
-              </div>
+              <Row label="Đã hoàn thành" value={completedCount} />
+              <Row label="Tổng giao việc" value={assignmentCount} />
+              <Row
+                label="Còn lại"
+                value={Math.max(assignmentCount - completedCount, 0)}
+              />
             </div>
           </div>
         </div>
@@ -167,7 +157,7 @@ export function AssignmentDocumentCard({
 
           <Link
             href={`/documents/${document.typeCode}/${document.id}`}
-            className="inline-flex h-9 items-center gap-2 rounded-xl bg-slate-950 px-3 text-sm font-medium text-white transition hover:bg-slate-800"
+            className="inline-flex h-9 items-center gap-2 rounded-xl bg-slate-950 px-3 text-sm font-semibold text-white transition hover:bg-slate-800"
           >
             Xem xử lý
             <ArrowRight className="h-4 w-4" />
@@ -188,14 +178,23 @@ function InfoBox({
   value: string;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
         {icon}
         {label}
       </div>
       <div className="truncate text-sm font-semibold text-slate-900">
         {value}
       </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-slate-500">{label}</span>
+      <span className="font-semibold text-slate-900">{value}</span>
     </div>
   );
 }
