@@ -39,7 +39,7 @@ export function VersionedDocumentCard({
 
                 <Link
                   href={`/documents/${document.typeCode}/${document.id}`}
-                  className="line-clamp-2 text-xl font-semibold leading-7 text-slate-950 transition group-hover:text-blue-700"
+                  className="line-clamp-2 text-xl font-semibold leading-7 text-foreground transition group-hover:text-blue-700"
                 >
                   {document.title}
                 </Link>
@@ -107,7 +107,7 @@ export function VersionedDocumentCard({
 
             <Link
               href={`/documents/${document.typeCode}/${document.id}`}
-              className="inline-flex h-9 items-center gap-2 rounded-xl bg-slate-950 px-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+              className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-white transition hover:bg-primary/90"
             >
               Chi tiết
               <ArrowRight className="h-4 w-4" />

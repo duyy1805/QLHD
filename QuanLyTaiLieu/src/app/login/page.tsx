@@ -1,4 +1,4 @@
-﻿import { redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import {
   ArrowRight,
   CheckCircle2,
@@ -81,32 +81,26 @@ export default async function LoginPage() {
             <p className="mt-2 text-sm text-slate-300">Đăng nhập để tiếp tục</p>
           </div>
 
-          <div className="rounded-3xl border border-white/15 bg-white/95 p-2 text-slate-950 shadow-2xl shadow-blue-950/40 backdrop-blur">
-            <div className="rounded-[1.35rem] border border-slate-200/70 bg-white p-6 shadow-sm sm:p-8">
+          <div className="rounded-3xl border border-white/15 bg-card/95 p-2 text-foreground shadow-2xl shadow-primary/30 backdrop-blur">
+            <div className="rounded-[1.35rem] border border-input bg-card p-6 shadow-sm sm:p-8">
               <div className="mb-7">
-                <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-950/20">
+                <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-white shadow-lg shadow-primary/20">
                   <FileCheck2 className="h-6 w-6" />
                 </div>
 
                 <h2 className="text-2xl font-semibold tracking-tight">
                   Đăng nhập
                 </h2>
-                <p className="mt-2 text-sm leading-6 text-slate-500">
-                  Sử dụng tài khoản nội bộ để truy cập hệ thống quản lý tài
-                  liệu.
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  Sử dụng tài khoản ERP để truy cập hệ thống quản lý tài liệu.
                 </p>
               </div>
 
               <LoginForm />
-
-              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
-                Tài khoản được phân quyền theo vai trò người dùng, trưởng bộ
-                phận hoặc admin.
-              </div>
             </div>
           </div>
 
-          <p className="mt-6 text-center text-xs text-slate-400">
+          <p className="mt-6 text-center text-xs text-white/60">
             © {new Date().getFullYear()} Quản lý tài liệu nội bộ
           </p>
         </div>

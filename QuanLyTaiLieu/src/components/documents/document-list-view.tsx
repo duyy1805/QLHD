@@ -1,4 +1,4 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import {
   Download,
   FileSearch,
@@ -45,7 +45,7 @@ export function DocumentListView({
 
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-xl font-semibold tracking-tight text-slate-950">
+              <h1 className="truncate text-xl font-semibold tracking-tight text-foreground">
                 {type.name}
               </h1>
 
@@ -75,7 +75,7 @@ export function DocumentListView({
 
         <Link
           href={`/documents/${type.code}/new`}
-          className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90"
         >
           <Plus className="h-4 w-4" />
           Thêm tài liệu
@@ -141,7 +141,7 @@ export function DocumentListView({
                         <FileSearch className="h-7 w-7" />
                       </div>
 
-                      <div className="font-semibold text-slate-950">
+                      <div className="font-semibold text-foreground">
                         Không có tài liệu
                       </div>
 
@@ -182,7 +182,7 @@ function DocumentTableRow({
       <td className="px-5 py-4">
         <Link
           href={`/documents/${typeCode}/${document.id}`}
-          className="block max-w-[320px] truncate font-semibold text-slate-950 transition hover:text-blue-700"
+          className="block max-w-[320px] truncate font-semibold text-foreground transition hover:text-blue-700"
           title={document.title}
         >
           {document.title}
@@ -268,7 +268,7 @@ function DocumentTableRow({
 
           <Link
             href={`/documents/${typeCode}/${document.id}`}
-            className="inline-flex h-9 items-center justify-center rounded-xl bg-slate-950 px-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+            className="inline-flex h-9 items-center justify-center rounded-xl bg-primary px-3 text-sm font-semibold text-white transition hover:bg-primary/90"
           >
             Chi tiết
           </Link>

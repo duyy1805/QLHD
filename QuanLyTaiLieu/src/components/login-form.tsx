@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -43,13 +43,13 @@ export function LoginForm() {
       <div className="space-y-2">
         <label
           htmlFor="username"
-          className="text-sm font-medium text-slate-700"
+          className="text-sm font-medium text-foreground"
         >
           Tài khoản
         </label>
 
         <div className="relative">
-          <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             id="username"
             name="username"
@@ -57,7 +57,7 @@ export function LoginForm() {
             required
             disabled={loading}
             placeholder="Nhập tài khoản"
-            className="h-11 rounded-xl border-slate-200 bg-slate-50 pl-10 text-slate-900 placeholder:text-slate-400 focus:bg-white"
+            className="h-11 rounded-xl border-input bg-card pl-10 text-foreground placeholder:text-muted-foreground focus:bg-card"
           />
         </div>
       </div>
@@ -66,15 +66,14 @@ export function LoginForm() {
         <div className="flex items-center justify-between">
           <label
             htmlFor="password"
-            className="text-sm font-medium text-slate-700"
+            className="text-sm font-medium text-foreground"
           >
             Mật khẩu
           </label>
-          <span className="text-xs text-slate-400">Bảo mật nội bộ</span>
         </div>
 
         <div className="relative">
-          <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 
           <Input
             id="password"
@@ -84,14 +83,14 @@ export function LoginForm() {
             required
             disabled={loading}
             placeholder="Nhập mật khẩu"
-            className="h-11 rounded-xl border-slate-200 bg-slate-50 pl-10 pr-10 text-slate-900 placeholder:text-slate-400 focus:bg-white"
+            className="h-11 rounded-xl border-input bg-card pl-10 pr-10 text-foreground placeholder:text-muted-foreground focus:bg-card"
           />
 
           <button
             type="button"
             disabled={loading}
             onClick={() => setShowPassword((value) => !value)}
-            className="absolute right-3 top-1/2 inline-flex -translate-y-1/2 items-center justify-center rounded-md text-slate-400 transition hover:text-slate-700 disabled:pointer-events-none disabled:opacity-50"
+            className="absolute right-3 top-1/2 inline-flex -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
             aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
           >
             {showPassword ? (
@@ -104,7 +103,7 @@ export function LoginForm() {
       </div>
 
       <Button
-        className="h-11 w-full rounded-xl bg-slate-950 font-semibold text-white shadow-lg shadow-slate-950/20 hover:bg-slate-800"
+        className="h-11 w-full rounded-xl bg-primary font-semibold text-white shadow-lg shadow-primary/20 hover:bg-primary/90"
         disabled={loading}
       >
         {loading ? (

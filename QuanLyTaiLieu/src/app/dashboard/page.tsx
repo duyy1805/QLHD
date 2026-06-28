@@ -1,4 +1,4 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import {
   AlertTriangle,
   ArrowRight,
@@ -56,7 +56,7 @@ export default async function DashboardPage() {
     <DashboardLayout>
       <div className="space-y-6">
         {/* Hero */}
-        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-950 text-white shadow-xl shadow-slate-200">
+        <section className="overflow-hidden rounded-3xl border bg-gradient-to-br from-primary via-indigo-700 to-blue-700 text-white shadow-xl shadow-primary/10">
           <div className="relative px-6 py-7 sm:px-8 lg:px-10">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.35),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(59,130,246,0.22),transparent_35%)]" />
             <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.06)_1px,transparent_1px)] bg-[size:44px_44px] opacity-20" />
@@ -80,7 +80,7 @@ export default async function DashboardPage() {
                 <div className="mt-6 flex flex-wrap gap-3">
                   <Link
                     href="/assignments"
-                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
+                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-foreground transition hover:bg-secondary"
                   >
                     Xem việc của tôi
                     <ArrowRight className="h-4 w-4" />
@@ -209,7 +209,7 @@ export default async function DashboardPage() {
                       className="group flex items-center justify-between gap-4 px-6 py-4 transition hover:bg-slate-50"
                     >
                       <div className="flex min-w-0 items-center gap-4">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 transition group-hover:bg-slate-950 group-hover:text-white">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 transition group-hover:bg-primary group-hover:text-white">
                           {doc.moduleKind === "VERSIONED_DOCUMENT" ? (
                             <Layers3 className="h-5 w-5" />
                           ) : (
@@ -292,7 +292,7 @@ export default async function DashboardPage() {
 
             <Card className="overflow-hidden rounded-3xl border-slate-200 bg-white shadow-sm">
               <CardContent className="p-0">
-                <div className="bg-gradient-to-br from-slate-950 to-slate-800 p-6 text-white">
+                <div className="bg-gradient-to-br from-primary to-indigo-700 p-6 text-white">
                   <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10">
                     <FolderKanban className="h-6 w-6" />
                   </div>
@@ -338,7 +338,7 @@ function StatCard({
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-sm font-medium text-slate-500">{title}</div>
-            <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">
+            <div className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
               {value}
             </div>
           </div>

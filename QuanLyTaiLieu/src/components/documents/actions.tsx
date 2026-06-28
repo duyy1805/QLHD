@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -227,7 +227,7 @@ export function VersionUploadForm({ documentId }: { documentId: number }) {
       <Button
         type="submit"
         disabled={loading}
-        className="h-12 w-full rounded-2xl bg-slate-950 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+        className="h-12 w-full rounded-2xl bg-primary text-sm font-semibold text-white shadow-sm hover:bg-primary/90"
       >
         {loading ? (
           <>

@@ -8,8 +8,8 @@ const buttonVariants = cva("focus-ring inline-flex h-10 items-center justify-cen
     variant: {
       default: "bg-primary text-primary-foreground hover:bg-primary/90",
       secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-      outline: "border bg-background hover:bg-secondary",
-      ghost: "hover:bg-secondary",
+      outline: "border border-input bg-card hover:bg-secondary",
+      ghost: "hover:bg-secondary hover:text-secondary-foreground",
       destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
     },
     size: { default: "h-10 px-4", sm: "h-9 px-3", icon: "h-10 w-10 px-0" },

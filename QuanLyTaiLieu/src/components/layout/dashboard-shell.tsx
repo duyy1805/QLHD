@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
   Bell,
-  ChevronLeft,
   ChevronRight,
   FileText,
   FolderKanban,
@@ -45,10 +44,10 @@ export function DashboardShell({
   }, [pathname, types]);
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-950">
+    <div className="min-h-screen bg-background text-foreground">
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-30 hidden border-r border-slate-200 bg-white/95 shadow-sm backdrop-blur-xl transition-all duration-300 lg:block",
+          "fixed inset-y-0 left-0 z-30 hidden border-r bg-card/95 shadow-sm backdrop-blur-xl transition-all duration-300 lg:block",
           collapsed ? "w-20" : "w-72",
         )}
       >
@@ -117,32 +116,32 @@ export function DashboardShell({
           collapsed && "lg:pl-20",
         )}
       >
-        <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur-xl">
+        <header className="sticky top-0 z-20 border-b bg-card/90 backdrop-blur-xl">
           <div className="flex h-16 items-center justify-between gap-4 px-4 lg:px-8">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white lg:hidden">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary text-white lg:hidden">
                 <LayoutDashboard className="h-5 w-5" />
               </div>
 
               <div className="min-w-0">
-                <div className="truncate text-base font-semibold text-slate-950">
+                <div className="truncate text-base font-semibold text-foreground">
                   {pageTitle}
                 </div>
-                <div className="mt-0.5 hidden truncate text-xs text-slate-500 sm:block">
+                <div className="mt-0.5 hidden truncate text-xs text-muted-foreground sm:block">
                   {pageDescription}
                 </div>
               </div>
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
-              <div className="hidden items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 md:flex">
+              <div className="hidden items-center gap-2 rounded-full border bg-secondary/60 px-3 py-1.5 text-xs font-medium text-muted-foreground md:flex">
                 <Sparkles className="h-3.5 w-3.5 text-blue-500" />
                 Hệ thống nội bộ
               </div>
 
               <button
                 type="button"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-card text-muted-foreground shadow-sm transition hover:bg-secondary/60"
                 title="Thông báo"
               >
                 <Bell className="h-4 w-4" />
@@ -163,7 +162,7 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
   return (
     <div
       className={cn(
-        "flex h-20 items-center border-b border-slate-200 px-4",
+        "flex h-20 items-center border-b px-4",
         collapsed ? "justify-center" : "justify-start",
       )}
     >
@@ -175,7 +174,7 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
         )}
         title="Quản lý tài liệu"
       >
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-950/20">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-white shadow-lg shadow-primary/20">
           <FolderKanban className="h-5 w-5" />
         </div>
 
@@ -184,7 +183,7 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
             <div className="truncate text-base font-semibold leading-5">
               Quản lý tài liệu
             </div>
-            <div className="mt-1 truncate text-xs text-slate-500">
+            <div className="mt-1 truncate text-xs text-muted-foreground">
               Document Management
             </div>
           </div>
@@ -206,7 +205,7 @@ function SidebarGroup({
   return (
     <div className="mb-6">
       {!collapsed && (
-        <div className="mb-3 px-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
+        <div className="mb-3 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           {title}
         </div>
       )}
@@ -241,8 +240,8 @@ function NavItem({
           ? "justify-center px-2 py-2.5"
           : "justify-between px-3 py-2.5",
         active
-          ? "bg-slate-950 text-white shadow-sm"
-          : "text-slate-600 hover:bg-slate-100 hover:text-slate-950",
+          ? "bg-primary text-white shadow-sm"
+          : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground",
       )}
     >
       <span
@@ -256,7 +255,7 @@ function NavItem({
             "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition",
             active
               ? "bg-white/10 text-white"
-              : "bg-slate-100 text-slate-500 group-hover:bg-white group-hover:text-slate-900",
+              : "bg-secondary text-muted-foreground group-hover:bg-card group-hover:text-foreground",
           )}
         >
           {icon}
@@ -287,12 +286,12 @@ function SidebarBottomCollapse({
   onClick: () => void;
 }) {
   return (
-    <div className="border-t border-slate-200 px-3 py-4">
+    <div className="border-t px-3 py-4">
       <button
         type="button"
         onClick={onClick}
         title={collapsed ? "Mở rộng menu" : "Thu gọn menu"}
-        className="flex h-10 w-full items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+        className="flex h-10 w-full items-center justify-center rounded-xl text-muted-foreground transition hover:bg-slate-100 hover:text-foreground"
       >
         {collapsed ? (
           <PanelLeftOpen className="h-5 w-5" />
@@ -321,7 +320,7 @@ function UserMenu({ user }: { user: SessionUser }) {
       ? "border-violet-200 bg-violet-50 text-violet-700"
       : user.role === "TBP"
         ? "border-blue-200 bg-blue-50 text-blue-700"
-        : "border-slate-200 bg-slate-50 text-slate-700";
+        : "border-slate-200 bg-secondary/60 text-foreground";
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -339,7 +338,7 @@ function UserMenu({ user }: { user: SessionUser }) {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50"
+        className="flex h-10 w-10 items-center justify-center rounded-xl border bg-card text-foreground shadow-sm transition hover:bg-secondary/60"
         title="Tài khoản"
       >
         <UserRound className="h-4 w-4" />
@@ -354,8 +353,8 @@ function UserMenu({ user }: { user: SessionUser }) {
             onClick={() => setOpen(false)}
           />
 
-          <div className="absolute right-0 top-12 z-50 w-80 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/10">
-            <div className="bg-gradient-to-br from-slate-950 to-slate-800 p-5 text-white">
+          <div className="absolute right-0 top-12 z-50 w-80 overflow-hidden rounded-3xl border bg-card shadow-2xl shadow-primary/10">
+            <div className="bg-gradient-to-br from-primary to-indigo-700 p-5 text-white">
               <div className="flex items-center gap-3">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15">
                   <UserRound className="h-6 w-6" />
@@ -381,8 +380,8 @@ function UserMenu({ user }: { user: SessionUser }) {
                 {roleLabel}
               </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              <div className="rounded-2xl border bg-secondary/60 p-3">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Quyền hiện tại
                 </div>
 
@@ -390,7 +389,7 @@ function UserMenu({ user }: { user: SessionUser }) {
                   {user.permissions.map((permission) => (
                     <span
                       key={permission}
-                      className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600"
+                      className="rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground"
                     >
                       {permission}
                     </span>
@@ -402,7 +401,7 @@ function UserMenu({ user }: { user: SessionUser }) {
                 type="button"
                 disabled={loggingOut}
                 onClick={handleLogout}
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-60"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-primary text-sm font-semibold text-white transition hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-60"
               >
                 <LogOut className="h-4 w-4" />
                 {loggingOut ? "Đang đăng xuất..." : "Đăng xuất"}

@@ -7,7 +7,6 @@ import {
   Download,
   FileText,
   History,
-  Info,
   Layers3,
   UploadCloud,
   UserRound,
@@ -75,13 +74,15 @@ export function DocumentDetailView({ doc }: { doc: DocumentDetail }) {
       </div>
 
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="relative overflow-hidden bg-slate-950 px-6 py-7 text-white">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.32),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(14,165,233,0.18),transparent_35%)]" />
+        <div className="relative overflow-hidden bg-gradient-to-br from-white via-blue-50/60 to-slate-50 px-6 py-7 text-slate-900">
+          <div className="absolute inset-x-0 top-0 h-1 bg-primary" />
+          <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
+          <div className="absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-blue-400/10 blur-3xl" />
 
-          <div className="relative grid gap-6 lg:grid-cols-[1fr_340px]">
+          <div className="relative grid gap-6 lg:grid-cols-[1fr_360px]">
             <div className="min-w-0">
               <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold text-slate-100 backdrop-blur">
+                <span className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
                   {isVersioned ? (
                     <Layers3 className="h-3.5 w-3.5" />
                   ) : (
@@ -91,17 +92,17 @@ export function DocumentDetailView({ doc }: { doc: DocumentDetail }) {
                 </span>
 
                 {currentVersion?.versionNo && (
-                  <span className="inline-flex rounded-full border border-blue-300/30 bg-blue-300/15 px-3 py-1 text-xs font-semibold text-blue-100">
+                  <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
                     Phiên bản {currentVersion.versionNo}
                   </span>
                 )}
               </div>
 
-              <h1 className="max-w-4xl text-2xl font-semibold tracking-tight sm:text-3xl">
+              <h1 className="max-w-4xl break-words text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
                 {doc.title}
               </h1>
 
-              <div className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-3">
+              <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
                 <InfoItem label="Số tài liệu" value={doc.documentNo || "-"} />
                 <InfoItem
                   label="Người tạo"
@@ -113,35 +114,35 @@ export function DocumentDetailView({ doc }: { doc: DocumentDetail }) {
                 />
               </div>
 
-              <div className="mt-5 rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
+              <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Mô tả
                 </div>
 
-                <p className="whitespace-pre-line text-sm leading-6 text-slate-100">
+                <p className="whitespace-pre-line text-sm leading-6 text-slate-700">
                   {doc.description || "Không có mô tả."}
                 </p>
               </div>
             </div>
 
-            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur">
-              <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-                <FileText className="h-4 w-4" />
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <FileText className="h-4 w-4 text-primary" />
                 File hiện hành
               </div>
 
-              <div className="mt-4 rounded-2xl bg-white/10 p-4">
+              <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-blue-100">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                     <FileText className="h-5 w-5" />
                   </div>
 
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-white">
+                    <div className="truncate text-sm font-semibold text-slate-900">
                       {currentVersion?.fileName || "Chưa có file"}
                     </div>
 
-                    <div className="mt-1 text-xs text-slate-400">
+                    <div className="mt-1 text-xs text-slate-500">
                       {currentVersion?.uploadedAt
                         ? `Cập nhật ${safeFormatDate(currentVersion.uploadedAt)}`
                         : "Không có thông tin cập nhật"}
@@ -153,20 +154,20 @@ export function DocumentDetailView({ doc }: { doc: DocumentDetail }) {
               {!isVersioned && (
                 <div className="mt-5">
                   <div className="mb-2 flex items-center justify-between text-xs">
-                    <span className="text-slate-300">Tiến độ xử lý</span>
-                    <span className="font-semibold text-white">
+                    <span className="text-slate-500">Tiến độ xử lý</span>
+                    <span className="font-semibold text-slate-900">
                       {progress}%
                     </span>
                   </div>
 
-                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-100">
                     <div
-                      className="h-full rounded-full bg-emerald-300"
+                      className="h-full rounded-full bg-primary"
                       style={{ width: `${progress}%` }}
                     />
                   </div>
 
-                  <div className="mt-2 text-xs text-slate-400">
+                  <div className="mt-2 text-xs text-slate-500">
                     {completedCount}/{assignmentCount} việc đã hoàn thành
                   </div>
                 </div>
@@ -197,9 +198,9 @@ export function DocumentDetailView({ doc }: { doc: DocumentDetail }) {
 
 function InfoItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-      <div className="text-xs text-slate-400">{label}</div>
-      <div className="mt-1 truncate font-semibold text-white">{value}</div>
+    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className="mt-1 truncate font-semibold text-slate-900">{value}</div>
     </div>
   );
 }
@@ -209,8 +210,10 @@ function UploadVersionPanel({ documentId }: { documentId: number }) {
     <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-100 px-5 py-4">
         <div className="flex items-center gap-2">
-          <UploadCloud className="h-5 w-5 text-blue-600" />
-          <h2 className="font-semibold text-slate-950">Upload phiên bản mới</h2>
+          <UploadCloud className="h-5 w-5 text-primary" />
+          <h2 className="font-semibold text-foreground">
+            Upload phiên bản mới
+          </h2>
         </div>
 
         <p className="mt-1 text-sm text-slate-500">
@@ -230,8 +233,8 @@ function VersionHistoryPanel({ versions }: { versions: DocumentVersion[] }) {
     <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-100 px-5 py-4">
         <div className="flex items-center gap-2">
-          <Layers3 className="h-5 w-5 text-blue-600" />
-          <h2 className="font-semibold text-slate-950">Lịch sử phiên bản</h2>
+          <Layers3 className="h-5 w-5 text-primary" />
+          <h2 className="font-semibold text-foreground">Lịch sử phiên bản</h2>
         </div>
 
         <p className="mt-1 text-sm text-slate-500">
@@ -248,7 +251,7 @@ function VersionHistoryPanel({ versions }: { versions: DocumentVersion[] }) {
             >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="font-semibold text-slate-950">
+                  <div className="font-semibold text-foreground">
                     Phiên bản {version.versionNo}
                   </div>
 
@@ -316,7 +319,7 @@ function AssignmentPanel({
       <div className="border-b border-slate-100 px-5 py-4">
         <div className="flex items-center gap-2">
           <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-          <h2 className="font-semibold text-slate-950">Danh sách xử lý</h2>
+          <h2 className="font-semibold text-foreground">Danh sách xử lý</h2>
         </div>
 
         <p className="mt-1 text-sm text-slate-500">
@@ -330,7 +333,7 @@ function AssignmentPanel({
             <div key={assignment.id} className="px-5 py-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2 font-semibold text-slate-950">
+                  <div className="flex items-center gap-2 font-semibold text-foreground">
                     <UserRound className="h-4 w-4 text-slate-400" />
                     {getAssignmentName(assignment)}
                   </div>
@@ -382,7 +385,7 @@ function LogPanel({ logs }: { logs: DocumentLog[] }) {
       <div className="border-b border-slate-100 px-5 py-4">
         <div className="flex items-center gap-2">
           <History className="h-5 w-5 text-slate-600" />
-          <h2 className="font-semibold text-slate-950">Lịch sử thao tác</h2>
+          <h2 className="font-semibold text-foreground">Lịch sử thao tác</h2>
         </div>
 
         <p className="mt-1 text-sm text-slate-500">
@@ -400,7 +403,7 @@ function LogPanel({ logs }: { logs: DocumentLog[] }) {
                 </div>
 
                 <div className="min-w-0">
-                  <div className="font-semibold text-slate-950">
+                  <div className="font-semibold text-foreground">
                     {formatAction(log.action)}
                   </div>
 

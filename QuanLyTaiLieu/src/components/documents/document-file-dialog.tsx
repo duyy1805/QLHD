@@ -47,7 +47,7 @@ export function DocumentFileDialog({
       {open && (
         <div className="fixed inset-0 z-50">
           <div
-            className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+            className="absolute inset-0 bg-primary/60 backdrop-blur-sm"
             onClick={() => setOpen(false)}
           />
 
@@ -59,7 +59,7 @@ export function DocumentFileDialog({
                 </div>
 
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-slate-950">
+                  <div className="truncate text-sm font-semibold text-foreground">
                     {title}
                   </div>
                   <div className="truncate text-xs text-slate-500">
@@ -101,7 +101,7 @@ export function DocumentFileDialog({
                 )}
 
                 {isImage && (
-                  <div className="flex h-full items-center justify-center overflow-auto bg-slate-950/5 p-4">
+                  <div className="flex h-full items-center justify-center overflow-auto bg-primary/5 p-4">
                     <img
                       src={fileUrl}
                       alt={fileName || title}
@@ -116,7 +116,7 @@ export function DocumentFileDialog({
                       <FileText className="h-8 w-8" />
                     </div>
 
-                    <div className="text-lg font-semibold text-slate-950">
+                    <div className="text-lg font-semibold text-foreground">
                       Không thể xem trực tiếp file này
                     </div>
 
@@ -129,7 +129,7 @@ export function DocumentFileDialog({
                     <a
                       href={fileUrl}
                       download
-                      className="mt-6 inline-flex h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
+                      className="mt-6 inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white transition hover:bg-primary/90"
                     >
                       <Download className="h-4 w-4" />
                       Tải file

@@ -3,27 +3,31 @@
 @tailwind utilities;
 
 :root {
-  --background: 0 0% 100%;
+  --background: 220 33% 98%;
   --foreground: 222 47% 11%;
   --card: 0 0% 100%;
   --card-foreground: 222 47% 11%;
-  --primary: 173 58% 26%;
+  --primary: 226 71% 40%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 220 14% 96%;
-  --secondary-foreground: 222 47% 11%;
-  --muted: 220 14% 96%;
-  --muted-foreground: 215 16% 47%;
-  --accent: 38 92% 55%;
-  --accent-foreground: 222 47% 11%;
+  --secondary: 221 83% 96%;
+  --secondary-foreground: 226 71% 24%;
+  --muted: 220 29% 95%;
+  --muted-foreground: 215 16% 43%;
+  --accent: 238 74% 61%;
+  --accent-foreground: 0 0% 100%;
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --border: 214 32% 91%;
-  --input: 214 32% 91%;
-  --ring: 173 58% 26%;
+  --border: 218 31% 88%;
+  --input: 218 31% 88%;
+  --ring: 226 71% 40%;
   --radius: 0.5rem;
 }
 
 * { border-color: hsl(var(--border)); }
-body { background: hsl(var(--background)); color: hsl(var(--foreground)); }
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  text-rendering: optimizeLegibility;
+}
 
 .focus-ring { @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2; }
