@@ -1,16 +1,14 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import {
   Download,
   FileSearch,
   FileText,
   FolderKanban,
-  Layers3,
   Plus,
 } from "lucide-react";
 
 import { DocumentFilterBar } from "@/components/documents/document-filter-bar";
 import { DocumentFileDialog } from "@/components/documents/document-file-dialog";
-import { DocumentStatusBadge } from "@/components/documents/document-status-badge";
 import { formatDate } from "@/lib/utils";
 import type { DocumentListItem, DocumentType } from "@/types/document";
 
@@ -92,6 +90,7 @@ export function DocumentListView({
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
               Danh sách {type.name.toLowerCase()}
             </h2>
+
             <p className="mt-0.5 text-xs text-slate-500">
               Theo dõi, xem file, tải file và mở chi tiết tài liệu.
             </p>
@@ -99,12 +98,12 @@ export function DocumentListView({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-sm">
+          <table className="w-full min-w-[1080px] text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <th className="px-5 py-3">Tài liệu</th>
+                <th className="px-5 py-3">Tên tài liệu</th>
+                <th className="px-5 py-3">Mô tả</th>
                 <th className="px-5 py-3">Số</th>
-                <th className="px-5 py-3">Trạng thái</th>
                 <th className="px-5 py-3">Người tạo</th>
                 <th className="px-5 py-3">Ngày tạo</th>
 
@@ -181,31 +180,25 @@ function DocumentTableRow({
   return (
     <tr className="transition hover:bg-slate-50">
       <td className="px-5 py-4">
-        <div className="min-w-0">
-          <Link
-            href={`/documents/${typeCode}/${document.id}`}
-            className="block max-w-[420px] truncate font-semibold text-slate-950 transition hover:text-blue-700"
-            title={document.title}
-          >
-            {document.title}
-          </Link>
+        <Link
+          href={`/documents/${typeCode}/${document.id}`}
+          className="block max-w-[320px] truncate font-semibold text-slate-950 transition hover:text-blue-700"
+          title={document.title}
+        >
+          {document.title}
+        </Link>
+      </td>
 
-          {document.description && (
-            <div
-              className="mt-1 max-w-[420px] truncate text-xs text-slate-500"
-              title={document.description}
-            >
-              {document.description}
-            </div>
-          )}
+      <td className="px-5 py-4">
+        <div
+          className="max-w-[360px] truncate text-slate-500"
+          title={document.description || ""}
+        >
+          {document.description || "-"}
         </div>
       </td>
 
       <td className="px-5 py-4 text-slate-700">{document.documentNo || "-"}</td>
-
-      <td className="px-5 py-4">
-        <DocumentStatusBadge status={document.status} />
-      </td>
 
       <td className="px-5 py-4 text-slate-700">
         {document.createdByName || document.createdByUserId}
@@ -218,7 +211,7 @@ function DocumentTableRow({
       {isVersioned ? (
         <td className="px-5 py-4">
           <span className="inline-flex items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
-            v{document.currentVersionNo || "-"}
+            {document.currentVersionNo || "-"}
           </span>
         </td>
       ) : (
@@ -229,6 +222,7 @@ function DocumentTableRow({
                 <span className="text-slate-500">
                   {completedCount}/{assignmentCount}
                 </span>
+
                 <span className="font-semibold text-slate-700">
                   {progress}%
                 </span>

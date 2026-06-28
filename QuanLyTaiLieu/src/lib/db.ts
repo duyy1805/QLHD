@@ -28,6 +28,7 @@ const config: sql.config = {
   port: Number(process.env.DB_PORT || 1433),
   options: {
     encrypt: true,
+    useUTC: false,
     trustedConnection: process.env.DB_TRUSTED_CONNECTION === "true",
     enableArithAbort: process.env.DB_ENABLE_ARITHABORT === "true",
     trustServerCertificate: process.env.DB_TRUST_SERVER_CERTIFICATE === "true",

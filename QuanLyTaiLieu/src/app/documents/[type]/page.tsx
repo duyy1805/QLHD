@@ -7,35 +7,41 @@ import { listDocuments } from "@/services/document.service";
 
 export const dynamic = "force-dynamic";
 
+type DocumentsPageProps = {
+  params: Promise<{
+    type: string;
+  }>;
+  searchParams?: Promise<{
+    q?: string;
+    status?: string;
+  }>;
+};
+
 export default async function DocumentsPage({
   params,
   searchParams,
-}: {
-  params: { type: string };
-  searchParams?: {
-    q?: string;
-    status?: string;
-  };
-}) {
-  const docType = await getDocumentTypeByCode(params.type);
+}: DocumentsPageProps) {
+  const { type } = await params;
+  const resolvedSearchParams = await searchParams;
+
+  const query = resolvedSearchParams?.q || "";
+  const status = resolvedSearchParams?.status || "";
+
+  const docType = await getDocumentTypeByCode(type);
 
   if (!docType) {
     notFound();
   }
 
-  const documents = await listDocuments(
-    docType.code,
-    searchParams?.q,
-    searchParams?.status,
-  );
+  const documents = await listDocuments(docType.code, query, status);
 
   return (
     <DashboardLayout>
       <DocumentListView
         type={docType}
         documents={documents}
-        query={searchParams?.q || ""}
-        status={searchParams?.status || ""}
+        query={query}
+        status={status}
       />
     </DashboardLayout>
   );

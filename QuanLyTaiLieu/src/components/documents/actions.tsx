@@ -1,7 +1,15 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  CheckCircle2,
+  FileUp,
+  Loader2,
+  Paperclip,
+  UploadCloud,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -9,11 +17,47 @@ import { Input, Textarea } from "@/components/ui/input";
 
 export function VersionUploadForm({ documentId }: { documentId: number }) {
   const router = useRouter();
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [loading, setLoading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  function openFilePicker() {
+    fileInputRef.current?.click();
+  }
+
+  function clearSelectedFile() {
+    setSelectedFile(null);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  function handleFileChange(file?: File | null) {
+    if (!file) {
+      setSelectedFile(null);
+      return;
+    }
+
+    setSelectedFile(file);
+  }
+
+  function handleDrop(file: File) {
+    if (!fileInputRef.current) return;
+
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    fileInputRef.current.files = dataTransfer.files;
+
+    setSelectedFile(file);
+  }
 
   return (
     <form
-      className="grid gap-3 rounded-lg border bg-white p-4"
+      className="space-y-5"
       onSubmit={async (event) => {
         event.preventDefault();
 
@@ -36,6 +80,7 @@ export function VersionUploadForm({ documentId }: { documentId: number }) {
 
           toast.success("Đã upload phiên bản mới");
           form.reset();
+          setSelectedFile(null);
           router.refresh();
         } catch {
           toast.error("Có lỗi xảy ra khi upload phiên bản mới");
@@ -44,19 +89,157 @@ export function VersionUploadForm({ documentId }: { documentId: number }) {
         }
       }}
     >
-      <div className="grid gap-3 md:grid-cols-2">
-        <Input name="versionNo" placeholder="v2" required disabled={loading} />
-        <Input name="file" type="file" required disabled={loading} />
+      <div className="grid gap-4 xl:grid-cols-[260px_1fr]">
+        <div className="space-y-2">
+          <label
+            htmlFor="versionNo"
+            className="text-sm font-semibold text-slate-700"
+          >
+            Số phiên bản
+          </label>
+
+          <Input
+            id="versionNo"
+            name="versionNo"
+            placeholder="Ví dụ: v2, v3, 1.0.1"
+            required
+            disabled={loading}
+            className="h-11 rounded-2xl border-slate-200 bg-white px-4 text-sm font-medium shadow-sm"
+          />
+
+          <p className="text-xs text-slate-500">
+            Nên nhập theo quy ước: v1, v2, v3 hoặc 1.0, 1.1.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-sm font-semibold text-slate-700">
+              File tài liệu
+            </label>
+
+            {selectedFile && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Đã chọn file
+              </span>
+            )}
+          </div>
+
+          <input
+            ref={fileInputRef}
+            name="file"
+            type="file"
+            required
+            disabled={loading}
+            className="hidden"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+            onChange={(event) => {
+              handleFileChange(event.target.files?.[0]);
+            }}
+          />
+
+          <button
+            type="button"
+            disabled={loading}
+            onClick={openFilePicker}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragOver(false);
+
+              const file = event.dataTransfer.files?.[0];
+              if (file) handleDrop(file);
+            }}
+            className={
+              dragOver
+                ? "flex min-h-[120px] w-full flex-col items-center justify-center rounded-3xl border border-blue-300 bg-blue-50 px-5 py-6 text-center shadow-sm transition"
+                : "flex min-h-[120px] w-full flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-slate-50/70 px-5 py-6 text-center shadow-sm transition hover:border-blue-300 hover:bg-blue-50/60"
+            }
+          >
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-blue-600 shadow-sm">
+              <UploadCloud className="h-6 w-6" />
+            </div>
+
+            <div className="text-sm font-semibold text-slate-900">
+              Kéo thả file vào đây hoặc bấm để chọn file
+            </div>
+
+            <div className="mt-1 text-xs text-slate-500">
+              Hỗ trợ PDF, Word, Excel, ảnh. Dung lượng tối đa theo cấu hình
+              server.
+            </div>
+          </button>
+
+          {selectedFile && (
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                  <Paperclip className="h-5 w-5" />
+                </div>
+
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-slate-900">
+                    {selectedFile.name}
+                  </div>
+
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    {formatFileSize(selectedFile.size)}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={loading}
+                onClick={clearSelectedFile}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                title="Bỏ chọn file"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
-      <Textarea
-        name="changeNote"
-        placeholder="Ghi chú thay đổi"
-        disabled={loading}
-      />
+      <div className="space-y-2">
+        <label
+          htmlFor="changeNote"
+          className="text-sm font-semibold text-slate-700"
+        >
+          Ghi chú thay đổi
+        </label>
 
-      <Button disabled={loading}>
-        {loading ? "Đang upload..." : "Upload phiên bản mới"}
+        <Textarea
+          id="changeNote"
+          name="changeNote"
+          placeholder="Ví dụ: Cập nhật biểu mẫu, bổ sung bước kiểm tra, thay đổi người phê duyệt..."
+          disabled={loading}
+          className="min-h-28 rounded-2xl border-slate-200 bg-white px-4 py-3 text-sm shadow-sm"
+        />
+      </div>
+
+      <Button
+        type="submit"
+        disabled={loading}
+        className="h-12 w-full rounded-2xl bg-slate-950 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+      >
+        {loading ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Đang upload...
+          </>
+        ) : (
+          <>
+            <FileUp className="mr-2 h-4 w-4" />
+            Upload phiên bản mới
+          </>
+        )}
       </Button>
     </form>
   );
@@ -74,6 +257,7 @@ export function CompleteAssignmentButton({
     <Button
       size="sm"
       disabled={loading}
+      className="rounded-xl"
       onClick={async () => {
         const completionNote = window.prompt("Ghi chú hoàn thành", "") || "";
 
@@ -101,7 +285,24 @@ export function CompleteAssignmentButton({
         }
       }}
     >
-      {loading ? "Đang lưu..." : "Xác nhận"}
+      {loading ? (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Đang lưu...
+        </>
+      ) : (
+        "Xác nhận"
+      )}
     </Button>
   );
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+
+  const kb = size / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
 }
