@@ -18,3 +18,13 @@ QuanLyTaiLieu/.vercel/
 *.log
 
 *.env
+
+node_modules
+.next
+dist
+build
+coverage
+logs
+*.bak
+*.zip
+*.sql
