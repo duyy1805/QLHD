@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import {
   CalendarClock,
   ClipboardList,
-  ChevronsUpDown,
   FileText,
   Hash,
   Layers3,
@@ -32,6 +31,7 @@ export function DocumentForm({
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+
   const isVersioned = type.moduleKind === "VERSIONED_DOCUMENT";
   const isAssignment = type.moduleKind === "ASSIGNMENT_DOCUMENT";
 
@@ -41,24 +41,35 @@ export function DocumentForm({
       onSubmit={async (event) => {
         event.preventDefault();
         setLoading(true);
-        const form = new FormData(event.currentTarget);
-        form.set("documentTypeId", String(type.id));
-        const res = await fetch("/api/documents", {
-          method: "POST",
-          body: form,
-        });
-        setLoading(false);
-        if (!res.ok) {
-          toast.error((await res.json()).message || "Không tạo được tài liệu");
-          return;
+
+        try {
+          const form = new FormData(event.currentTarget);
+          form.set("documentTypeId", String(type.id));
+
+          const res = await fetch("/api/documents", {
+            method: "POST",
+            body: form,
+          });
+
+          if (!res.ok) {
+            const data = await res.json().catch(() => null);
+            toast.error(data?.message || "Không tạo được tài liệu");
+            return;
+          }
+
+          toast.success("Đã tạo tài liệu");
+          router.push(`/documents/${type.code}`);
+          router.refresh();
+        } catch {
+          toast.error("Có lỗi xảy ra khi tạo tài liệu");
+        } finally {
+          setLoading(false);
         }
-        toast.success("Đã tạo tài liệu");
-        router.push(`/documents/${type.code}`);
-        router.refresh();
       }}
     >
       <div className="relative overflow-hidden border-b border-slate-100 bg-gradient-to-br from-white via-blue-50/60 to-slate-50 px-5 py-5 sm:px-6">
         <div className="absolute inset-x-0 top-0 h-1 bg-primary" />
+
         <div className="relative flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex min-w-0 gap-3">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -73,9 +84,11 @@ export function DocumentForm({
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Tạo tài liệu mới
               </div>
+
               <h2 className="mt-1 break-words text-xl font-semibold tracking-tight text-slate-950">
                 {type.name}
               </h2>
+
               <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
                 Điền thông tin chính, tải file và thiết lập xử lý ban đầu cho
                 tài liệu.
@@ -104,6 +117,7 @@ export function DocumentForm({
                 className="h-11 rounded-xl"
               />
             </Field>
+
             <Field label="Số tài liệu" icon={<Hash />}>
               <Input
                 name="documentNo"
@@ -121,7 +135,7 @@ export function DocumentForm({
             <Textarea
               name="description"
               placeholder="Nhập mô tả ngắn cho tài liệu"
-              className="min-h-32 rounded-xl"
+              className="min-h-28 rounded-xl"
             />
           </Field>
         </FormSection>
@@ -136,9 +150,6 @@ export function DocumentForm({
               label={isVersioned ? "Phiên bản" : "Phiên bản/file"}
               required={isVersioned}
               icon={<Layers3 />}
-              hint={
-                isVersioned ? "Bắt buộc với tài liệu quản lý phiên bản." : ""
-              }
             >
               <Input
                 name="versionNo"
@@ -147,13 +158,9 @@ export function DocumentForm({
                 className="h-11 rounded-xl"
               />
             </Field>
+
             <Field label="File" required icon={<UploadCloud />}>
-              <Input
-                name="file"
-                type="file"
-                required
-                className="h-11 cursor-pointer rounded-xl file:mr-3 file:rounded-lg file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-primary"
-              />
+              <FileUploadInput name="file" required />
             </Field>
           </div>
 
@@ -161,7 +168,7 @@ export function DocumentForm({
             <Textarea
               name="changeNote"
               placeholder="Ghi chú thay đổi hoặc thông tin về file"
-              className="min-h-28 rounded-xl"
+              className="min-h-24 rounded-xl"
             />
           </Field>
         </FormSection>
@@ -182,7 +189,7 @@ export function DocumentForm({
                     emptyLabel="Không tìm thấy người phù hợp"
                     options={users.map((u) => ({
                       value: String(u.id),
-                      label: u.fullName,
+                      label: `${u.fullName} - ${u.department}`,
                     }))}
                   />
                 </div>
@@ -209,7 +216,8 @@ export function DocumentForm({
         >
           Hủy
         </Button>
-        <Button disabled={loading} className="rounded-xl">
+
+        <Button type="submit" disabled={loading} className="rounded-xl">
           {loading ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -239,12 +247,13 @@ function FormSection({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white">
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
       <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-primary">
             {icon}
           </div>
+
           <div className="min-w-0">
             <h3 className="font-semibold text-slate-950">{title}</h3>
             <p className="mt-1 text-sm leading-5 text-slate-500">
@@ -253,6 +262,7 @@ function FormSection({
           </div>
         </div>
       </div>
+
       <div className="grid gap-4 px-4 py-4 sm:px-5">{children}</div>
     </section>
   );
@@ -272,18 +282,63 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <label className="grid gap-2 text-sm">
-      <span className="flex items-center gap-2 font-medium text-slate-800">
+    <div className="grid min-w-0 gap-2 text-sm">
+      <div className="flex min-w-0 items-center gap-2 font-medium text-slate-800">
         {icon && (
-          <span className="text-slate-400 [&_svg]:h-4 [&_svg]:w-4">{icon}</span>
+          <span className="shrink-0 text-slate-400 [&_svg]:h-4 [&_svg]:w-4">
+            {icon}
+          </span>
         )}
-        <span>
+
+        <span className="min-w-0 truncate">
           {label}
           {required && <span className="ml-1 text-red-500">*</span>}
         </span>
-      </span>
-      {children}
+      </div>
+
+      <div className="min-w-0">{children}</div>
+
       {hint && <span className="text-xs leading-5 text-slate-500">{hint}</span>}
+    </div>
+  );
+}
+
+function FileUploadInput({
+  name,
+  required,
+}: {
+  name: string;
+  required?: boolean;
+}) {
+  const [fileName, setFileName] = useState("");
+
+  return (
+    <label className="flex h-11 w-full min-w-0 cursor-pointer items-center overflow-hidden rounded-xl border border-slate-200 bg-white text-sm transition hover:border-primary/40 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+      <input
+        name={name}
+        type="file"
+        required={required}
+        className="sr-only"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          setFileName(file?.name || "");
+        }}
+      />
+
+      <span className="flex h-full shrink-0 items-center gap-2 border-r border-slate-200 bg-slate-50 px-3 font-semibold text-primary">
+        <UploadCloud className="h-4 w-4" />
+        <span className="hidden sm:inline">Chọn file</span>
+        <span className="sm:hidden">Chọn</span>
+      </span>
+
+      <span
+        className={`min-w-0 flex-1 truncate px-3 ${
+          fileName ? "font-medium text-slate-800" : "text-slate-500"
+        }`}
+        title={fileName || "Chưa có file nào được chọn"}
+      >
+        {fileName || "Chưa có file nào được chọn"}
+      </span>
     </label>
   );
 }

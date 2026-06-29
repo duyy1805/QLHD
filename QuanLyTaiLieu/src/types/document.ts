@@ -95,4 +95,5 @@ export type TagUser = {
   id: number;
   username: string;
   fullName: string;
+  department: string | null;
 };

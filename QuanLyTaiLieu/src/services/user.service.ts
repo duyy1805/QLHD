@@ -8,5 +8,6 @@ export async function listTagUsers(): Promise<TagUser[]> {
     id: Number(row.id),
     username: String(row.username),
     fullName: String(row.fullName),
+    department: String(row.department || null),
   }));
 }
