@@ -47,7 +47,7 @@ export function DashboardShell({
     <div className="min-h-screen bg-background text-foreground">
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-30 hidden border-r bg-card/95 shadow-sm backdrop-blur-xl transition-all duration-300 lg:block",
+          "fixed inset-y-0 left-0 z-30 hidden border-r border-slate-200 bg-card/95 shadow-sm backdrop-blur-xl transition-all duration-300 lg:block",
           collapsed ? "w-20" : "w-72",
         )}
       >
@@ -116,7 +116,7 @@ export function DashboardShell({
           collapsed && "lg:pl-20",
         )}
       >
-        <header className="sticky top-0 z-20 border-b bg-card/90 backdrop-blur-xl">
+        <header className="sticky top-0 z-20 border-b border-slate-200 bg-card/90 backdrop-blur-xl">
           <div className="flex h-16 items-center justify-between gap-4 px-4 lg:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary text-white lg:hidden">
@@ -162,7 +162,7 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
   return (
     <div
       className={cn(
-        "flex h-20 items-center border-b px-4",
+        "flex h-16 items-center border-b border-slate-200 px-4",
         collapsed ? "justify-center" : "justify-start",
       )}
     >
@@ -174,7 +174,7 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
         )}
         title="Quản lý tài liệu"
       >
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-white shadow-lg shadow-primary/20">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary text-white shadow-lg shadow-primary/20">
           <FolderKanban className="h-5 w-5" />
         </div>
 

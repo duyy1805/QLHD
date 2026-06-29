@@ -16,12 +16,12 @@ export default async function NewDocumentPage({
   return (
     <DashboardLayout>
       <div className="space-y-5">
-        <div>
+        {/* <div>
           <h1 className="text-2xl font-semibold">Thêm {docType.name}</h1>
           <p className="text-sm text-muted-foreground">
             Mọi người dùng đăng nhập đều có thể upload tài liệu.
           </p>
-        </div>
+        </div> */}
         <DocumentForm type={docType} users={users} />
       </div>
     </DashboardLayout>
