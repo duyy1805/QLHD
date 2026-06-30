@@ -1,4 +1,4 @@
-﻿import { getPool, sql } from "@/lib/db";
+import { getPool, sql } from "@/lib/db";
 import type { DocumentType, ModuleKind } from "@/types/document";
 import type { DocumentTypeInput } from "@/schemas/document-type.schema";
 

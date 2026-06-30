@@ -1,4 +1,4 @@
-﻿import crypto from "crypto";
+import crypto from "crypto";
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import argon2 from "argon2";

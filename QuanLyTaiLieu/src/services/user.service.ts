@@ -1,4 +1,4 @@
-﻿import { getPool } from "@/lib/db";
+import { getPool } from "@/lib/db";
 import type { TagUser } from "@/types/document";
 
 export async function listTagUsers(): Promise<TagUser[]> {

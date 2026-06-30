@@ -1,4 +1,4 @@
-﻿import { redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { getSession } from "@/lib/auth";
 import { listDocumentTypes } from "@/services/document-type.service";

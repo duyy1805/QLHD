@@ -1,4 +1,4 @@
-﻿import { getPool, sql } from "@/lib/db";
+import { getPool, sql } from "@/lib/db";
 import type { DocumentAssignment, SessionUser } from "@/types/document";
 
 function iso(value: unknown) {

@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 
 export const completeAssignmentSchema = z.object({
   completionNote: z.string().max(1000).optional().nullable(),

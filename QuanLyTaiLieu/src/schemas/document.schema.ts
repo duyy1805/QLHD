@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 
 export const createDocumentSchema = z.object({
   documentTypeId: z.number().int().positive(),

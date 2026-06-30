@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { documentTypeSchema } from "@/schemas/document-type.schema";
 import { listDocumentTypes, setDocumentTypeActive, upsertDocumentType } from "@/services/document-type.service";

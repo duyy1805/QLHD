@@ -1,4 +1,4 @@
-﻿import type { SavedFile } from "@/lib/upload";
+import type { SavedFile } from "@/lib/upload";
 import { getPool, sql } from "@/lib/db";
 import type { CreateDocumentInput, UpdateDocumentInput } from "@/schemas/document.schema";
 import type { DocumentAssignment, DocumentDetail, DocumentListItem, DocumentLog, DocumentVersion, SessionUser } from "@/types/document";

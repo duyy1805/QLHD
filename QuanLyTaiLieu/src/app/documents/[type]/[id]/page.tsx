@@ -1,4 +1,4 @@
-﻿import { notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { DocumentDetailView } from "@/components/documents/document-detail-view";

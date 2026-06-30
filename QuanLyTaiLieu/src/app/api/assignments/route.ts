@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { createAssignmentSchema } from "@/schemas/assignment.schema";
 import { createAssignment, listAssignments } from "@/services/assignment.service";

@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 
 export const documentTypeSchema = z.object({
   code: z.string().min(2).max(50).regex(/^[A-Z0-9_]+$/, "Mã chỉ dùng chữ hoa, số và dấu gạch dưới."),

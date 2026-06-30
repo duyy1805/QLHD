@@ -1,4 +1,4 @@
-﻿import { getPool, sql } from "@/lib/db";
+import { getPool, sql } from "@/lib/db";
 
 export async function logDocument(documentId: number, action: string, userId: number, oldValue?: unknown, newValue?: unknown) {
   const pool = await getPool();

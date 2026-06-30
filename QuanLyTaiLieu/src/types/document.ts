@@ -1,4 +1,4 @@
-﻿export type ModuleKind = "VERSIONED_DOCUMENT" | "ASSIGNMENT_DOCUMENT";
+export type ModuleKind = "VERSIONED_DOCUMENT" | "ASSIGNMENT_DOCUMENT";
 export type DocumentStatus = "DRAFT" | "ACTIVE" | "ARCHIVED" | "CANCELLED";
 export type AssignmentStatus = "PENDING" | "IN_PROGRESS" | "COMPLETED" | "OVERDUE" | "CANCELLED";
 export type AppRole = "ADMIN" | "TBP" | "USER";
