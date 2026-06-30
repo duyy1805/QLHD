@@ -22,14 +22,16 @@ export function DocumentFileDialog({
     return null;
   }
 
+  const lowerFileName = (fileName || "").toLowerCase();
   const lowerUrl = fileUrl.toLowerCase();
+  const fileIdentity = `${lowerFileName} ${lowerUrl}`;
   const isImage =
-    lowerUrl.endsWith(".png") ||
-    lowerUrl.endsWith(".jpg") ||
-    lowerUrl.endsWith(".jpeg") ||
-    lowerUrl.endsWith(".webp");
+    fileIdentity.includes(".png") ||
+    fileIdentity.includes(".jpg") ||
+    fileIdentity.includes(".jpeg") ||
+    fileIdentity.includes(".webp");
 
-  const isPdf = lowerUrl.endsWith(".pdf");
+  const isPdf = fileIdentity.includes(".pdf");
 
   const canPreview = isImage || isPdf;
 

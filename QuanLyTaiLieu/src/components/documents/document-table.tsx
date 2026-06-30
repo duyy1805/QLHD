@@ -1,10 +1,10 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { Download, Eye, Plus } from "lucide-react";
 
 import type { DocumentListItem } from "@/types/document";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Table, Td, Th } from "@/components/ui/table";
+import { Table, TableCell as Td, TableHead as Th } from "@/components/ui/table";
 import { formatDate } from "@/lib/utils";
 
 export function DocumentTable({

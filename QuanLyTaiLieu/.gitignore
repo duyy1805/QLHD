@@ -1,0 +1,7 @@
+.next/
+node_modules/
+
+# Local env and Google service-account secrets
+.env*.local
+qlvb-501001-debed95641da.json
+*.service-account.json

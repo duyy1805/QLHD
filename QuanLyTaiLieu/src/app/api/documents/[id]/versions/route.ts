@@ -1,7 +1,9 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { saveUpload } from "@/lib/upload";
 import { uploadNewVersion } from "@/services/document.service";
+
+export const runtime = "nodejs";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSession();

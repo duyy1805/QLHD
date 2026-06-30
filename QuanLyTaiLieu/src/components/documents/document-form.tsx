@@ -16,6 +16,7 @@ import {
   UploadCloud,
   UserRound,
 } from "lucide-react";
+
 import type { DocumentType, TagUser } from "@/types/document";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +38,7 @@ export function DocumentForm({
 
   return (
     <form
-      className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
+      className="relative rounded-3xl border border-slate-200 bg-white shadow-sm"
       onSubmit={async (event) => {
         event.preventDefault();
         setLoading(true);
@@ -67,8 +68,8 @@ export function DocumentForm({
         }
       }}
     >
-      <div className="relative overflow-hidden border-b border-slate-100 bg-gradient-to-br from-white via-blue-50/60 to-slate-50 px-5 py-5 sm:px-6">
-        <div className="absolute inset-x-0 top-0 h-1 bg-primary" />
+      <div className="relative rounded-t-3xl border-b border-slate-100 bg-gradient-to-br from-white via-blue-50/60 to-slate-50 px-5 py-5 sm:px-6">
+        <div className="absolute inset-x-0 top-0 h-1 rounded-t-3xl bg-primary" />
 
         <div className="relative flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex min-w-0 gap-3">
@@ -181,7 +182,7 @@ export function DocumentForm({
           >
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Người thực hiện" icon={<UserRound />}>
-                <div className="space-y-2">
+                <div className="relative z-20">
                   <SearchableSelect
                     name="assignedToUserId"
                     placeholder="Chọn người thực hiện"
@@ -194,6 +195,7 @@ export function DocumentForm({
                   />
                 </div>
               </Field>
+
               <Field label="Hạn hoàn thành" icon={<CalendarClock />}>
                 <Input
                   name="dueDate"
@@ -206,7 +208,7 @@ export function DocumentForm({
         )}
       </div>
 
-      <div className="flex flex-col-reverse gap-3 border-t border-slate-100 bg-slate-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-6">
+      <div className="flex flex-col-reverse gap-3 rounded-b-3xl border-t border-slate-100 bg-slate-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-6">
         <Button
           type="button"
           variant="outline"
@@ -247,8 +249,8 @@ function FormSection({
   children: ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-      <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
+    <section className="relative rounded-2xl border border-slate-200 bg-white">
+      <div className="rounded-t-2xl border-b border-slate-100 px-4 py-4 sm:px-5">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-primary">
             {icon}

@@ -1,9 +1,11 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { createDocumentSchema, updateDocumentSchema } from "@/schemas/document.schema";
 import { createDocument, listDocuments, updateDocument } from "@/services/document.service";
 import { saveUpload } from "@/lib/upload";
 import { toInt } from "@/lib/utils";
+
+export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
