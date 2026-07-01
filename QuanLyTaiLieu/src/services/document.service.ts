@@ -1,5 +1,6 @@
 import type { SavedFile } from "@/lib/upload";
 import { getPool, sql } from "@/lib/db";
+import { deleteDriveFileByPath } from "@/lib/google-drive";
 import type { CreateDocumentInput, UpdateDocumentInput } from "@/schemas/document.schema";
 import type { DocumentAssignment, DocumentDetail, DocumentListItem, DocumentLog, DocumentVersion, SessionUser } from "@/types/document";
 
@@ -9,6 +10,23 @@ function dateValue(value: unknown) {
 
 function text(value: unknown) { return value == null ? null : String(value); }
 function num(value: unknown) { return value == null ? null : Number(value); }
+
+type DeleteFileRow = {
+  Id: number;
+  FilePath: string | null;
+};
+
+function isPrivileged(user: SessionUser) {
+  return user.role === "ADMIN" || user.role === "TBP";
+}
+
+async function deleteDriveFiles(rows: DeleteFileRow[]) {
+  const uniquePaths = Array.from(new Set(rows.map((row) => text(row.FilePath)).filter(Boolean)));
+
+  for (const filePath of uniquePaths) {
+    await deleteDriveFileByPath(filePath);
+  }
+}
 
 function mapList(row: Record<string, unknown>): DocumentListItem {
   return {
@@ -169,4 +187,39 @@ export async function dashboardStats(user: SessionUser): Promise<{ totalDocument
     myAssignments: Number(row.myAssignments || 0),
     overdueAssignments: Number(row.overdueAssignments || 0),
   };
+}
+export async function deleteDocument(id: number, user: SessionUser) {
+  const pool = await getPool();
+  const files = await pool.request()
+    .input("DocumentId", sql.Int, id)
+    .input("UserId", sql.Int, user.userId)
+    .input("IsPrivileged", sql.Bit, isPrivileged(user) ? 1 : 0)
+    .execute("doc.sp_Document_Delete_GetFiles");
+
+  await deleteDriveFiles((files.recordset || []) as DeleteFileRow[]);
+
+  await pool.request()
+    .input("DocumentId", sql.Int, id)
+    .input("DeletedByUserId", sql.Int, user.userId)
+    .input("IsPrivileged", sql.Bit, isPrivileged(user) ? 1 : 0)
+    .execute("doc.sp_Document_Delete");
+}
+
+export async function deleteDocumentVersion(documentId: number, versionId: number, user: SessionUser) {
+  const pool = await getPool();
+  const files = await pool.request()
+    .input("DocumentId", sql.Int, documentId)
+    .input("VersionId", sql.Int, versionId)
+    .input("UserId", sql.Int, user.userId)
+    .input("IsPrivileged", sql.Bit, isPrivileged(user) ? 1 : 0)
+    .execute("doc.sp_DocumentVersion_Delete_GetFile");
+
+  await deleteDriveFiles((files.recordset || []) as DeleteFileRow[]);
+
+  await pool.request()
+    .input("DocumentId", sql.Int, documentId)
+    .input("VersionId", sql.Int, versionId)
+    .input("DeletedByUserId", sql.Int, user.userId)
+    .input("IsPrivileged", sql.Bit, isPrivileged(user) ? 1 : 0)
+    .execute("doc.sp_DocumentVersion_Delete");
 }

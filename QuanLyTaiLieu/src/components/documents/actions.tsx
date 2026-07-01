@@ -7,6 +7,7 @@ import {
   FileUp,
   Loader2,
   Paperclip,
+  Trash2,
   UploadCloud,
   X,
 } from "lucide-react";
@@ -15,6 +16,17 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 export function VersionUploadForm({ documentId }: { documentId: number }) {
   const router = useRouter();
@@ -298,6 +310,129 @@ export function CompleteAssignmentButton({
   );
 }
 
+export function DeleteDocumentButton({
+  documentId,
+  redirectTo,
+  label = "Xoá",
+}: {
+  documentId: number;
+  redirectTo?: string;
+  label?: string;
+}) {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  async function handleDelete() {
+    setLoading(true);
+
+    try {
+      const res = await fetch(`/api/documents/${documentId}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        toast.error(data?.message || "Không thể xoá tài liệu");
+        return;
+      }
+
+      toast.success("Đã xoá tài liệu");
+      if (redirectTo) {
+        router.push(redirectTo);
+        router.refresh();
+      } else {
+        router.refresh();
+      }
+    } catch {
+      toast.error("Có lỗi xảy ra khi xoá tài liệu");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="outline" size="sm" disabled={loading} className="rounded-xl text-red-600 hover:text-red-700">
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          <span className="ml-2">{loading ? "Đang xoá..." : label}</span>
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Xoá tài liệu?</AlertDialogTitle>
+          <AlertDialogDescription>
+            File trên Google Drive sẽ bị xoá thật. Thông tin tài liệu được xoá mềm trong database.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={loading}>Huỷ</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" disabled={loading} onClick={handleDelete}>
+            Xoá
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+export function DeleteVersionButton({
+  documentId,
+  versionId,
+}: {
+  documentId: number;
+  versionId: number;
+}) {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  async function handleDelete() {
+    setLoading(true);
+
+    try {
+      const res = await fetch(`/api/documents/${documentId}/versions/${versionId}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        toast.error(data?.message || "Không thể xoá phiên bản");
+        return;
+      }
+
+      toast.success("Đã xoá phiên bản");
+      router.refresh();
+    } catch {
+      toast.error("Có lỗi xảy ra khi xoá phiên bản");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="outline" size="sm" disabled={loading} className="rounded-xl text-red-600 hover:text-red-700" title="Xoá phiên bản">
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Xoá phiên bản?</AlertDialogTitle>
+          <AlertDialogDescription>
+            File của phiên bản này trên Google Drive sẽ bị xoá thật. Phiên bản được xoá mềm trong database.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={loading}>Huỷ</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" disabled={loading} onClick={handleDelete}>
+            Xoá
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 function formatFileSize(size: number) {
   if (size < 1024) return `${size} B`;
 

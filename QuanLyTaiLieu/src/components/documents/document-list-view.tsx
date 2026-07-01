@@ -9,19 +9,24 @@ import {
 
 import { DocumentFilterBar } from "@/components/documents/document-filter-bar";
 import { DocumentFileDialog } from "@/components/documents/document-file-dialog";
+import { DeleteDocumentButton } from "@/components/documents/actions";
 import { formatDate } from "@/lib/utils";
-import type { DocumentListItem, DocumentType } from "@/types/document";
+import type { AppRole, DocumentListItem, DocumentType } from "@/types/document";
+
+type DeleteViewer = { userId: number; role: AppRole };
 
 export function DocumentListView({
   type,
   documents,
   query,
   status,
+  viewer,
 }: {
   type: DocumentType;
   documents: DocumentListItem[];
   query?: string;
   status?: string;
+  viewer: DeleteViewer | null;
 }) {
   const isVersioned = type.moduleKind === "VERSIONED_DOCUMENT";
 
@@ -127,6 +132,7 @@ export function DocumentListView({
                   document={doc}
                   typeCode={type.code}
                   isVersioned={isVersioned}
+                  viewer={viewer}
                 />
               ))}
 
@@ -164,13 +170,21 @@ function DocumentTableRow({
   document,
   typeCode,
   isVersioned,
+  viewer,
 }: {
   document: DocumentListItem;
   typeCode: string;
   isVersioned: boolean;
+  viewer: DeleteViewer | null;
 }) {
   const assignmentCount = document.assignmentCount || 0;
   const completedCount = document.completedAssignmentCount || 0;
+  const canDelete = Boolean(
+    viewer &&
+      (viewer.role === "ADMIN" ||
+        viewer.role === "TBP" ||
+        viewer.userId === document.createdByUserId),
+  );
 
   const progress =
     assignmentCount > 0
@@ -273,6 +287,8 @@ function DocumentTableRow({
           >
             Chi tiết
           </Link>
+
+          {canDelete && <DeleteDocumentButton documentId={document.id} />}
         </div>
       </td>
     </tr>

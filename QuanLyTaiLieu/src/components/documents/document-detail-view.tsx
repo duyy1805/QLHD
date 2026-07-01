@@ -17,18 +17,34 @@ import { Badge } from "@/components/ui/badge";
 import { DocumentFileDialog } from "@/components/documents/document-file-dialog";
 import {
   CompleteAssignmentButton,
+  DeleteDocumentButton,
+  DeleteVersionButton,
   VersionUploadForm,
 } from "@/components/documents/actions";
 import { formatDate } from "@/lib/utils";
 import type { getDocument } from "@/services/document.service";
+import type { AppRole } from "@/types/document";
 
 type DocumentDetail = NonNullable<Awaited<ReturnType<typeof getDocument>>>;
 type DocumentVersion = DocumentDetail["versions"][number];
 type DocumentAssignment = DocumentDetail["assignments"][number];
 type DocumentLog = DocumentDetail["logs"][number];
+type DeleteViewer = { userId: number; role: AppRole };
 
-export function DocumentDetailView({ doc }: { doc: DocumentDetail }) {
+export function DocumentDetailView({
+  doc,
+  viewer,
+}: {
+  doc: DocumentDetail;
+  viewer: DeleteViewer | null;
+}) {
   const isVersioned = doc.moduleKind === "VERSIONED_DOCUMENT";
+  const canDeleteDocument = Boolean(
+    viewer &&
+      (viewer.role === "ADMIN" ||
+        viewer.role === "TBP" ||
+        viewer.userId === doc.createdByUserId),
+  );
 
   const currentVersion =
     doc.versions.find((version) => version.isCurrent) || doc.versions[0];
@@ -54,6 +70,14 @@ export function DocumentDetailView({ doc }: { doc: DocumentDetail }) {
         </Button>
 
         <div className="flex flex-wrap gap-2">
+          {canDeleteDocument && (
+            <DeleteDocumentButton
+              documentId={doc.id}
+              redirectTo={`/documents/${doc.typeCode}`}
+              label="Xoá tài liệu"
+            />
+          )}
+
           {currentVersion?.fileUrl && (
             <>
               <DocumentFileDialog
@@ -182,7 +206,7 @@ export function DocumentDetailView({ doc }: { doc: DocumentDetail }) {
         <div className="space-y-5">
           {isVersioned && <UploadVersionPanel documentId={doc.id} />}
 
-          <VersionHistoryPanel versions={doc.versions} />
+          <VersionHistoryPanel documentId={doc.id} versions={doc.versions} viewer={viewer} />
 
           {!isVersioned && <AssignmentPanel assignments={doc.assignments} />}
 
@@ -229,7 +253,15 @@ function UploadVersionPanel({ documentId }: { documentId: number }) {
   );
 }
 
-function VersionHistoryPanel({ versions }: { versions: DocumentVersion[] }) {
+function VersionHistoryPanel({
+  documentId,
+  versions,
+  viewer,
+}: {
+  documentId: number;
+  versions: DocumentVersion[];
+  viewer: DeleteViewer | null;
+}) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-100 px-5 py-4">
@@ -300,6 +332,17 @@ function VersionHistoryPanel({ versions }: { versions: DocumentVersion[] }) {
                     <Download className="h-4 w-4" />
                   </a>
                 </Button>
+
+                {versions.length > 1 &&
+                  viewer &&
+                  (viewer.role === "ADMIN" ||
+                    viewer.role === "TBP" ||
+                    viewer.userId === version.uploadedByUserId) && (
+                    <DeleteVersionButton
+                      documentId={documentId}
+                      versionId={version.id}
+                    />
+                  )}
               </div>
             </div>
           ))

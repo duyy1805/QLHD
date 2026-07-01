@@ -1,4 +1,4 @@
-import { Readable } from "stream";
+﻿import { Readable } from "stream";
 import { google } from "googleapis";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
@@ -52,4 +52,33 @@ export async function uploadFileToDrive(file: File, storedName: string) {
 
   if (!response.data.id) throw new Error("Kh\u00f4ng l\u1ea5y \u0111\u01b0\u1ee3c m\u00e3 file t\u1eeb Google Drive.");
   return response.data.id;
+}
+export function parseDriveFileId(filePath: string | null | undefined) {
+  if (!filePath) return null;
+  if (!filePath.startsWith("drive:")) return null;
+
+  const fileId = filePath.slice("drive:".length).trim();
+  return fileId || null;
+}
+
+export async function deleteFileFromDrive(fileId: string) {
+  const drive = getDriveClient();
+
+  try {
+    await drive.files.delete({
+      fileId,
+      supportsAllDrives: true,
+    });
+  } catch (error) {
+    const status = (error as { response?: { status?: number } }).response?.status;
+    if (status === 404) return;
+    throw error;
+  }
+}
+
+export async function deleteDriveFileByPath(filePath: string | null | undefined) {
+  const fileId = parseDriveFileId(filePath);
+  if (!fileId) throw new Error("Không xác định được file Google Drive cần xoá.");
+
+  await deleteFileFromDrive(fileId);
 }

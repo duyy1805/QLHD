@@ -1,31 +1,29 @@
 ﻿import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { deleteDocument, getDocument } from "@/services/document.service";
+import { deleteDocumentVersion } from "@/services/document.service";
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const document = await getDocument(Number(id));
-  if (!document) return NextResponse.json({ message: "Không tìm thấy tài liệu." }, { status: 404 });
-  return NextResponse.json(document);
-}
-
-export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string; versionId: string }> },
+) {
   const user = await getSession();
   if (!user) return NextResponse.json({ message: "Bạn chưa đăng nhập." }, { status: 401 });
 
-  const { id } = await params;
+  const { id, versionId } = await params;
   const documentId = Number(id);
-  if (!Number.isFinite(documentId) || documentId <= 0) {
-    return NextResponse.json({ message: "Mã tài liệu không hợp lệ." }, { status: 400 });
+  const documentVersionId = Number(versionId);
+
+  if (!Number.isFinite(documentId) || documentId <= 0 || !Number.isFinite(documentVersionId) || documentVersionId <= 0) {
+    return NextResponse.json({ message: "Mã phiên bản không hợp lệ." }, { status: 400 });
   }
 
   try {
-    await deleteDocument(documentId, user);
+    await deleteDocumentVersion(documentId, documentVersionId, user);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return deleteErrorResponse(error, "Không thể xoá tài liệu.");
+    return deleteErrorResponse(error, "Không thể xoá phiên bản tài liệu.");
   }
 }
 
