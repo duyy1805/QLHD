@@ -353,8 +353,17 @@ export function DeleteDocumentButton({
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="outline" size="sm" disabled={loading} className="rounded-xl text-red-600 hover:text-red-700">
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={loading}
+          className="h-9 shrink-0 whitespace-nowrap rounded-xl px-3 text-red-600 hover:text-red-700"
+        >
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Trash2 className="h-4 w-4" />
+          )}
           <span className="ml-2">{loading ? "Đang xoá..." : label}</span>
         </Button>
       </AlertDialogTrigger>
@@ -362,12 +371,17 @@ export function DeleteDocumentButton({
         <AlertDialogHeader>
           <AlertDialogTitle>Xoá tài liệu?</AlertDialogTitle>
           <AlertDialogDescription>
-            File trên Google Drive sẽ bị xoá thật. Thông tin tài liệu được xoá mềm trong database.
+            File trên Google Drive sẽ bị xoá thật. Thông tin tài liệu được xoá
+            mềm trong database.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={loading}>Huỷ</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" disabled={loading} onClick={handleDelete}>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={loading}
+            onClick={handleDelete}
+          >
             Xoá
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -390,9 +404,12 @@ export function DeleteVersionButton({
     setLoading(true);
 
     try {
-      const res = await fetch(`/api/documents/${documentId}/versions/${versionId}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/documents/${documentId}/versions/${versionId}`,
+        {
+          method: "DELETE",
+        },
+      );
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
@@ -412,20 +429,35 @@ export function DeleteVersionButton({
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="outline" size="sm" disabled={loading} className="rounded-xl text-red-600 hover:text-red-700" title="Xoá phiên bản">
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={loading}
+          className="shrink-0 whitespace-nowrap rounded-xl text-red-600 hover:text-red-700"
+          title="Xoá phiên bản"
+        >
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Trash2 className="h-4 w-4" />
+          )}
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Xoá phiên bản?</AlertDialogTitle>
           <AlertDialogDescription>
-            File của phiên bản này trên Google Drive sẽ bị xoá thật. Phiên bản được xoá mềm trong database.
+            File của phiên bản này trên Google Drive sẽ bị xoá thật. Phiên bản
+            được xoá mềm trong database.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={loading}>Huỷ</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" disabled={loading} onClick={handleDelete}>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={loading}
+            onClick={handleDelete}
+          >
             Xoá
           </AlertDialogAction>
         </AlertDialogFooter>

@@ -103,7 +103,7 @@ export function DocumentListView({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] text-sm">
+          <table className="w-full min-w-[1240px] text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-5 py-3">Tên tài liệu</th>
@@ -121,7 +121,7 @@ export function DocumentListView({
                   </>
                 )}
 
-                <th className="px-5 py-3 text-right">Thao tác</th>
+                <th className="w-[440px] px-5 py-3 text-right">Thao tác</th>
               </tr>
             </thead>
 
@@ -181,9 +181,9 @@ function DocumentTableRow({
   const completedCount = document.completedAssignmentCount || 0;
   const canDelete = Boolean(
     viewer &&
-      (viewer.role === "ADMIN" ||
-        viewer.role === "TBP" ||
-        viewer.userId === document.createdByUserId),
+    (viewer.role === "ADMIN" ||
+      viewer.role === "TBP" ||
+      viewer.userId === document.createdByUserId),
   );
 
   const progress =
@@ -259,8 +259,8 @@ function DocumentTableRow({
         </>
       )}
 
-      <td className="px-5 py-4">
-        <div className="flex justify-end gap-2">
+      <td className="w-[440px] px-5 py-4">
+        <div className="flex flex-nowrap justify-end gap-2">
           {document.currentFileUrl && (
             <>
               <DocumentFileDialog
@@ -283,12 +283,14 @@ function DocumentTableRow({
 
           <Link
             href={`/documents/${typeCode}/${document.id}`}
-            className="inline-flex h-9 items-center justify-center rounded-xl bg-primary px-3 text-sm font-semibold text-white transition hover:bg-primary/90"
+            className="inline-flex h-9 min-w-20 shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-primary px-3 text-sm font-semibold text-white transition hover:bg-primary/90"
           >
             Chi tiết
           </Link>
 
-          {canDelete && <DeleteDocumentButton documentId={document.id} />}
+          {canDelete && (
+            <DeleteDocumentButton documentId={document.id} label="Xoá" />
+          )}
         </div>
       </td>
     </tr>

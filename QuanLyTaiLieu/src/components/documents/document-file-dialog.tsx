@@ -48,7 +48,6 @@ export function DocumentFileDialog({
         className="inline-flex h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
       >
         <Eye className="h-4 w-4" />
-        Xem
       </button>
 
       {open && (
