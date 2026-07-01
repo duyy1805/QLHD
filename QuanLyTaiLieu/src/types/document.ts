@@ -36,6 +36,8 @@ export type DocumentListItem = {
   createdAt: string;
   currentVersionNo: string | null;
   currentFileUrl: string | null;
+  currentFileName: string | null;
+  currentFileType: string | null;
   assignmentCount: number;
   completedAssignmentCount: number;
   nearestDueDate: string | null;

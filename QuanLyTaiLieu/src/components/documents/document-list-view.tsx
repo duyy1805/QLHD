@@ -251,7 +251,8 @@ function DocumentTableRow({
             <>
               <DocumentFileDialog
                 fileUrl={document.currentFileUrl}
-                fileName={document.title}
+                fileName={document.currentFileName || document.title}
+                fileType={document.currentFileType}
                 title={`Xem tài liệu: ${document.title}`}
               />
 

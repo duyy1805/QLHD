@@ -244,6 +244,8 @@ BEGIN
       CreatedByName = COALESCE(NULLIF(u.TenDayDu, N''), NULLIF(u.TenDangNhap, N''), CONVERT(NVARCHAR(20), d.CreatedByUserId)),
       CurrentVersionNo = cv.VersionNo,
       CurrentFileUrl = cv.FileUrl,
+      CurrentFileName = cv.FileName,
+      CurrentFileType = cv.FileType,
       AssignmentCount = COUNT(a.Id),
       CompletedAssignmentCount = SUM(CASE WHEN a.Status = N'COMPLETED' THEN 1 ELSE 0 END),
       NearestDueDate = MIN(CASE WHEN a.Status <> N'COMPLETED' THEN a.DueDate ELSE NULL END)
@@ -270,6 +272,8 @@ BEGIN
       CreatedByName = COALESCE(NULLIF(u.TenDayDu, N''), NULLIF(u.TenDangNhap, N''), CONVERT(NVARCHAR(20), d.CreatedByUserId)),
       CurrentVersionNo = cv.VersionNo,
       CurrentFileUrl = cv.FileUrl,
+      CurrentFileName = cv.FileName,
+      CurrentFileType = cv.FileType,
       AssignmentCount = COUNT(a.Id),
       CompletedAssignmentCount = SUM(CASE WHEN a.Status = N'COMPLETED' THEN 1 ELSE 0 END),
       NearestDueDate = MIN(CASE WHEN a.Status <> N'COMPLETED' THEN a.DueDate ELSE NULL END)

@@ -8,12 +8,14 @@ import { Button } from "@/components/ui/button";
 type DocumentFileDialogProps = {
   fileUrl: string | null;
   fileName?: string | null;
+  fileType?: string | null;
   title?: string;
 };
 
 export function DocumentFileDialog({
   fileUrl,
   fileName,
+  fileType,
   title = "Xem tài liệu",
 }: DocumentFileDialogProps) {
   const [open, setOpen] = useState(false);
@@ -24,14 +26,17 @@ export function DocumentFileDialog({
 
   const lowerFileName = (fileName || "").toLowerCase();
   const lowerUrl = fileUrl.toLowerCase();
+  const lowerFileType = (fileType || "").toLowerCase();
   const fileIdentity = `${lowerFileName} ${lowerUrl}`;
   const isImage =
+    lowerFileType.startsWith("image/") ||
     fileIdentity.includes(".png") ||
     fileIdentity.includes(".jpg") ||
     fileIdentity.includes(".jpeg") ||
     fileIdentity.includes(".webp");
 
-  const isPdf = fileIdentity.includes(".pdf");
+  const isPdf =
+    lowerFileType === "application/pdf" || fileIdentity.includes(".pdf");
 
   const canPreview = isImage || isPdf;
 

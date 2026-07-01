@@ -26,6 +26,8 @@ function mapList(row: Record<string, unknown>): DocumentListItem {
     createdAt: dateValue(row.CreatedAt) || "",
     currentVersionNo: text(row.CurrentVersionNo),
     currentFileUrl: text(row.CurrentFileUrl),
+    currentFileName: text(row.CurrentFileName),
+    currentFileType: text(row.CurrentFileType),
     assignmentCount: Number(row.AssignmentCount || 0),
     completedAssignmentCount: Number(row.CompletedAssignmentCount || 0),
     nearestDueDate: dateValue(row.NearestDueDate),

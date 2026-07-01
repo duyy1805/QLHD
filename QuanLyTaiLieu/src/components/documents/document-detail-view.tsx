@@ -59,6 +59,7 @@ export function DocumentDetailView({ doc }: { doc: DocumentDetail }) {
               <DocumentFileDialog
                 fileUrl={currentVersion.fileUrl}
                 fileName={currentVersion.fileName || doc.title}
+                fileType={currentVersion.fileType}
                 title={`Xem tài liệu: ${doc.title}`}
               />
 
@@ -285,6 +286,7 @@ function VersionHistoryPanel({ versions }: { versions: DocumentVersion[] }) {
                 <DocumentFileDialog
                   fileUrl={version.fileUrl}
                   fileName={version.fileName}
+                  fileType={version.fileType}
                   title={`Xem phiên bản ${version.versionNo}`}
                 />
 
