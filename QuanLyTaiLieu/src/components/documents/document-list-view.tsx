@@ -102,26 +102,50 @@ export function DocumentListView({
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1240px] text-sm">
+        <div className="overflow-hidden">
+          <table className="w-full table-fixed text-sm">
+            <colgroup>
+              {isVersioned ? (
+                <>
+                  <col className="w-[17%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[7%]" />
+                  <col className="w-[24%]" />
+                </>
+              ) : (
+                <>
+                  <col className="w-[12%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[26%]" />
+                </>
+              )}
+            </colgroup>
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <th className="px-5 py-3">Tên tài liệu</th>
-                <th className="px-5 py-3">Mô tả</th>
-                <th className="px-5 py-3">Số</th>
-                <th className="px-5 py-3">Người tạo</th>
-                <th className="px-5 py-3">Ngày tạo</th>
+                <th className="px-4 py-3">Tên tài liệu</th>
+                <th className="px-4 py-3">Mô tả</th>
+                <th className="px-4 py-3">Số</th>
+                <th className="px-4 py-3">Người tạo</th>
+                <th className="px-4 py-3">Ngày tạo</th>
 
                 {isVersioned ? (
-                  <th className="px-5 py-3">Phiên bản</th>
+                  <th className="px-4 py-3">Phiên bản</th>
                 ) : (
                   <>
-                    <th className="px-5 py-3">Xử lý</th>
-                    <th className="px-5 py-3">Hạn gần nhất</th>
+                    <th className="px-4 py-3">Xử lý</th>
+                    <th className="px-4 py-3">Hạn gần nhất</th>
                   </>
                 )}
 
-                <th className="w-[440px] px-5 py-3 text-right">Thao tác</th>
+                <th className="px-4 py-3 text-right">Thao tác</th>
               </tr>
             </thead>
 
@@ -166,6 +190,21 @@ export function DocumentListView({
   );
 }
 
+type CellTextProps = {
+  value: string;
+  className?: string;
+};
+
+function CellText({ value, className = "" }: CellTextProps) {
+  const displayValue = value || "-";
+  const cellClassName = `block min-w-0 max-w-full truncate ${className}`.trim();
+
+  return (
+    <span className={cellClassName} title={displayValue}>
+      {displayValue}
+    </span>
+  );
+}
 function DocumentTableRow({
   document,
   typeCode,
@@ -193,44 +232,46 @@ function DocumentTableRow({
 
   return (
     <tr className="transition hover:bg-slate-50">
-      <td className="px-5 py-4">
+      <td className="px-4 py-4">
         <Link
           href={`/documents/${typeCode}/${document.id}`}
-          className="block max-w-[320px] truncate font-semibold text-foreground transition hover:text-blue-700"
+          className="block min-w-0 max-w-full truncate font-semibold text-foreground transition hover:text-blue-700"
           title={document.title}
         >
           {document.title}
         </Link>
       </td>
 
-      <td className="px-5 py-4">
-        <div
-          className="max-w-[360px] truncate text-slate-500"
-          title={document.description || ""}
-        >
-          {document.description || "-"}
-        </div>
+      <td className="px-4 py-4">
+        <CellText
+          value={document.description || "-"}
+          className="text-slate-500"
+        />
       </td>
 
-      <td className="px-5 py-4 text-slate-700">{document.documentNo || "-"}</td>
-
-      <td className="px-5 py-4 text-slate-700">
-        {document.createdByName || document.createdByUserId}
+      <td className="px-4 py-4 text-slate-700">
+        <CellText value={document.documentNo || "-"} />
       </td>
 
-      <td className="px-5 py-4 text-slate-700">
-        {formatDate(document.createdAt)}
+      <td className="px-4 py-4 text-slate-700">
+        <CellText
+          value={document.createdByName || String(document.createdByUserId)}
+        />
+      </td>
+
+      <td className="px-4 py-4 text-slate-700">
+        <CellText value={formatDate(document.createdAt)} />
       </td>
 
       {isVersioned ? (
-        <td className="px-5 py-4">
+        <td className="px-4 py-4">
           <span className="inline-flex items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
             {document.currentVersionNo || "-"}
           </span>
         </td>
       ) : (
         <>
-          <td className="px-5 py-4">
+          <td className="px-4 py-4">
             <div className="min-w-32">
               <div className="mb-1 flex items-center justify-between text-xs">
                 <span className="text-slate-500">
@@ -251,15 +292,19 @@ function DocumentTableRow({
             </div>
           </td>
 
-          <td className="px-5 py-4 text-slate-700">
-            {document.nearestDueDate
-              ? formatDate(document.nearestDueDate)
-              : "-"}
+          <td className="px-4 py-4 text-slate-700">
+            <CellText
+              value={
+                document.nearestDueDate
+                  ? formatDate(document.nearestDueDate)
+                  : "-"
+              }
+            />
           </td>
         </>
       )}
 
-      <td className="w-[440px] px-5 py-4">
+      <td className="px-4 py-4">
         <div className="flex flex-nowrap justify-end gap-2">
           {document.currentFileUrl && (
             <>
