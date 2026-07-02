@@ -40,6 +40,7 @@ export type DocumentListItem = {
   currentFileType: string | null;
   assignmentCount: number;
   completedAssignmentCount: number;
+  activeAssigneeNames: string | null;
   nearestDueDate: string | null;
 };
 
@@ -80,6 +81,22 @@ export type DocumentAssignment = {
   completedAt: string | null;
   completionNote: string | null;
   assignedAt: string;
+  files?: DocumentAssignmentFile[];
+};
+
+export type DocumentAssignmentFile = {
+  id: number;
+  documentId: number;
+  assignmentId: number;
+  fileName: string;
+  fileUrl: string;
+  filePath: string;
+  fileSize: number | null;
+  fileType: string | null;
+  note: string | null;
+  uploadedByUserId: number;
+  uploadedByName: string | null;
+  uploadedAt: string;
 };
 
 export type DocumentLog = {

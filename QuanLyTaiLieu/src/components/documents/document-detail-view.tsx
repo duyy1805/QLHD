@@ -8,6 +8,7 @@ import {
   FileText,
   History,
   Layers3,
+  Paperclip,
   UploadCloud,
   UserRound,
 } from "lucide-react";
@@ -16,20 +17,22 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DocumentFileDialog } from "@/components/documents/document-file-dialog";
 import {
+  AssignmentFileUploadForm,
   CompleteAssignmentButton,
+  DeleteAssignmentFileButton,
   DeleteDocumentButton,
   DeleteVersionButton,
   VersionUploadForm,
 } from "@/components/documents/actions";
 import { formatDate } from "@/lib/utils";
 import type { getDocument } from "@/services/document.service";
-import type { AppRole } from "@/types/document";
+import type { AppRole, DocPermission } from "@/types/document";
 
 type DocumentDetail = NonNullable<Awaited<ReturnType<typeof getDocument>>>;
 type DocumentVersion = DocumentDetail["versions"][number];
 type DocumentAssignment = DocumentDetail["assignments"][number];
 type DocumentLog = DocumentDetail["logs"][number];
-type DeleteViewer = { userId: number; role: AppRole };
+type DeleteViewer = { userId: number; role: AppRole; permissions: DocPermission[] };
 
 export function DocumentDetailView({
   doc,
@@ -208,10 +211,10 @@ export function DocumentDetailView({
 
           <VersionHistoryPanel documentId={doc.id} versions={doc.versions} viewer={viewer} />
 
-          {!isVersioned && <AssignmentPanel assignments={doc.assignments} />}
+          {!isVersioned && <AssignmentPanel assignments={doc.assignments} viewer={viewer} />}
 
           {isVersioned && doc.assignments.length > 0 && (
-            <AssignmentPanel assignments={doc.assignments} />
+            <AssignmentPanel assignments={doc.assignments} viewer={viewer} />
           )}
         </div>
 
@@ -356,8 +359,10 @@ function VersionHistoryPanel({
 
 function AssignmentPanel({
   assignments,
+  viewer,
 }: {
   assignments: DocumentAssignment[];
+  viewer: DeleteViewer | null;
 }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
@@ -368,7 +373,7 @@ function AssignmentPanel({
         </div>
 
         <p className="mt-1 text-sm text-slate-500">
-          Theo dõi người được giao và trạng thái hoàn thành.
+          Theo dõi người được giao, trạng thái hoàn thành và file xử lý.
         </p>
       </div>
 
@@ -414,6 +419,12 @@ function AssignmentPanel({
                     )}
                 </div>
               </div>
+
+              <AssignmentFilesList assignment={assignment} viewer={viewer} />
+
+              {canUploadAssignmentFile(viewer, assignment) && (
+                <AssignmentFileUploadForm assignmentId={assignment.id} />
+              )}
             </div>
           ))
         ) : (
@@ -422,6 +433,111 @@ function AssignmentPanel({
       </div>
     </div>
   );
+}
+
+function AssignmentFilesList({
+  assignment,
+  viewer,
+}: {
+  assignment: DocumentAssignment;
+  viewer: DeleteViewer | null;
+}) {
+  const files = assignment.files || [];
+
+  if (files.length === 0) {
+    return (
+      <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-500">
+        Chưa có file xử lý.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 space-y-2">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        File xử lý
+      </div>
+
+      <div className="space-y-2">
+        {files.map((file) => (
+          <div
+            key={file.id}
+            className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                <Paperclip className="h-5 w-5" />
+              </div>
+
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-slate-900">
+                  {file.fileName}
+                </div>
+
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                  <span>{formatFileSize(file.fileSize || 0)}</span>
+                  <span>
+                    Người tải: {file.uploadedByName || file.uploadedByUserId}
+                  </span>
+                  <span>Ngày tải: {safeFormatDate(file.uploadedAt)}</span>
+                </div>
+
+                {file.note && (
+                  <div className="mt-2 rounded-xl bg-white px-3 py-2 text-sm text-slate-600">
+                    {file.note}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex shrink-0 gap-2">
+              <DocumentFileDialog
+                fileUrl={file.fileUrl}
+                fileName={file.fileName}
+                fileType={file.fileType}
+                title={`Xem file xử lý: ${file.fileName}`}
+              />
+
+              <Button asChild variant="outline" size="sm" className="rounded-xl">
+                <a href={file.fileUrl} download title="Tải về">
+                  <Download className="h-4 w-4" />
+                </a>
+              </Button>
+
+              {canDeleteAssignmentFile(viewer, assignment, file) && (
+                <DeleteAssignmentFileButton
+                  assignmentId={assignment.id}
+                  fileId={file.id}
+                />
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function isAssignmentOpen(assignment: DocumentAssignment) {
+  return assignment.status !== "COMPLETED" && assignment.status !== "CANCELLED";
+}
+
+function canUploadAssignmentFile(viewer: DeleteViewer | null, assignment: DocumentAssignment) {
+  if (!viewer || !isAssignmentOpen(assignment)) return false;
+  if (viewer.role === "ADMIN") return true;
+  if (assignment.assignedToUserId) return viewer.userId === assignment.assignedToUserId;
+  if (!assignment.requiredRoleCode) return false;
+  return viewer.permissions.includes(assignment.requiredRoleCode);
+}
+
+function canDeleteAssignmentFile(
+  viewer: DeleteViewer | null,
+  assignment: DocumentAssignment,
+  file: NonNullable<DocumentAssignment["files"]>[number],
+) {
+  if (!viewer) return false;
+  if (viewer.role === "ADMIN" || viewer.role === "TBP") return true;
+  return viewer.userId === file.uploadedByUserId && isAssignmentOpen(assignment);
 }
 
 function LogPanel({ logs }: { logs: DocumentLog[] }) {
@@ -568,6 +684,8 @@ function formatAction(action: string) {
     UPLOAD_VERSION: "Tải phiên bản mới",
     ASSIGN_USER: "Giao xử lý",
     COMPLETE_ASSIGNMENT: "Xác nhận hoàn thành",
+    UPLOAD_ASSIGNMENT_FILE: "Tải file xử lý",
+    DELETE_ASSIGNMENT_FILE: "Xoá file xử lý",
   };
 
   return map[action] || action;
@@ -576,4 +694,14 @@ function formatAction(action: string) {
 function safeFormatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
   return formatDate(value);
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+
+  const kb = size / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
 }

@@ -2,7 +2,7 @@ import type { SavedFile } from "@/lib/upload";
 import { getPool, sql } from "@/lib/db";
 import { deleteDriveFileByPath } from "@/lib/google-drive";
 import type { CreateDocumentInput, UpdateDocumentInput } from "@/schemas/document.schema";
-import type { DocumentAssignment, DocumentDetail, DocumentListItem, DocumentLog, DocumentVersion, SessionUser } from "@/types/document";
+import type { DocumentAssignment, DocumentAssignmentFile, DocumentDetail, DocumentListItem, DocumentLog, DocumentVersion, SessionUser } from "@/types/document";
 
 function dateValue(value: unknown) {
   return value instanceof Date ? value.toISOString() : value ? new Date(String(value)).toISOString() : null;
@@ -48,6 +48,7 @@ function mapList(row: Record<string, unknown>): DocumentListItem {
     currentFileType: text(row.CurrentFileType),
     assignmentCount: Number(row.AssignmentCount || 0),
     completedAssignmentCount: Number(row.CompletedAssignmentCount || 0),
+    activeAssigneeNames: text(row.ActiveAssigneeNames),
     nearestDueDate: dateValue(row.NearestDueDate),
   };
 }
@@ -88,6 +89,22 @@ function mapAssignment(row: Record<string, unknown>): DocumentAssignment {
   };
 }
 
+function mapAssignmentFile(row: Record<string, unknown>): DocumentAssignmentFile {
+  return {
+    id: Number(row.Id),
+    documentId: Number(row.DocumentId),
+    assignmentId: Number(row.AssignmentId),
+    fileName: String(row.FileName),
+    fileUrl: String(row.FileUrl),
+    filePath: String(row.FilePath),
+    fileSize: num(row.FileSize),
+    fileType: text(row.FileType),
+    note: text(row.Note),
+    uploadedByUserId: Number(row.UploadedByUserId),
+    uploadedByName: text(row.UploadedByName),
+    uploadedAt: dateValue(row.UploadedAt) || "",
+  };
+}
 function mapLog(row: Record<string, unknown>): DocumentLog {
   return {
     id: Number(row.Id),
@@ -117,11 +134,26 @@ export async function getDocument(id: number): Promise<DocumentDetail | null> {
   if (!header.recordset?.[0]) return null;
   const versions = await pool.request().input("Id", sql.Int, id).execute("doc.sp_Document_GetVersions");
   const assignments = await pool.request().input("Id", sql.Int, id).execute("doc.sp_Document_GetAssignments");
+  const assignmentFiles = await pool.request().input("Id", sql.Int, id).execute("doc.sp_Document_GetAssignmentFiles");
   const logs = await pool.request().input("Id", sql.Int, id).execute("doc.sp_Document_GetLogs");
+  const filesByAssignment = new Map<number, DocumentAssignmentFile[]>();
+
+  for (const file of ((assignmentFiles.recordset || []) as Record<string, unknown>[]).map(mapAssignmentFile)) {
+    const files = filesByAssignment.get(file.assignmentId) || [];
+    files.push(file);
+    filesByAssignment.set(file.assignmentId, files);
+  }
+
   return {
     ...mapList(header.recordset[0] as Record<string, unknown>),
     versions: ((versions.recordset || []) as Record<string, unknown>[]).map(mapVersion),
-    assignments: ((assignments.recordset || []) as Record<string, unknown>[]).map(mapAssignment),
+    assignments: ((assignments.recordset || []) as Record<string, unknown>[]).map((row) => {
+      const assignment = mapAssignment(row);
+      return {
+        ...assignment,
+        files: filesByAssignment.get(assignment.id) || [],
+      };
+    }),
     logs: ((logs.recordset || []) as Record<string, unknown>[]).map(mapLog),
   };
 }
@@ -222,4 +254,43 @@ export async function deleteDocumentVersion(documentId: number, versionId: numbe
     .input("DeletedByUserId", sql.Int, user.userId)
     .input("IsPrivileged", sql.Bit, isPrivileged(user) ? 1 : 0)
     .execute("doc.sp_DocumentVersion_Delete");
+}
+
+export async function uploadAssignmentFile(assignmentId: number, file: SavedFile, note: string | null, user: SessionUser) {
+  const pool = await getPool();
+  try {
+    await pool.request()
+      .input("AssignmentId", sql.Int, assignmentId)
+      .input("FileName", sql.NVarChar(260), file.fileName)
+      .input("FileUrl", sql.NVarChar(1000), file.fileUrl)
+      .input("FilePath", sql.NVarChar(1000), file.filePath)
+      .input("FileSize", sql.Int, file.fileSize)
+      .input("FileType", sql.NVarChar(120), file.fileType)
+      .input("Note", sql.NVarChar(1000), note || null)
+      .input("UploadedByUserId", sql.Int, user.userId)
+      .input("IsAdmin", sql.Bit, user.role === "ADMIN" ? 1 : 0)
+      .execute("doc.sp_AssignmentFile_Upload");
+  } catch (error) {
+    await deleteDriveFileByPath(file.filePath).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function deleteAssignmentFile(assignmentId: number, fileId: number, user: SessionUser) {
+  const pool = await getPool();
+  const files = await pool.request()
+    .input("AssignmentId", sql.Int, assignmentId)
+    .input("FileId", sql.Int, fileId)
+    .input("UserId", sql.Int, user.userId)
+    .input("IsSupport", sql.Bit, user.role === "ADMIN" || user.role === "TBP" ? 1 : 0)
+    .execute("doc.sp_AssignmentFile_Delete_GetFile");
+
+  await deleteDriveFiles((files.recordset || []) as DeleteFileRow[]);
+
+  await pool.request()
+    .input("AssignmentId", sql.Int, assignmentId)
+    .input("FileId", sql.Int, fileId)
+    .input("DeletedByUserId", sql.Int, user.userId)
+    .input("IsSupport", sql.Bit, user.role === "ADMIN" || user.role === "TBP" ? 1 : 0)
+    .execute("doc.sp_AssignmentFile_Delete");
 }

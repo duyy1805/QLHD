@@ -118,13 +118,14 @@ export function DocumentListView({
               ) : (
                 <>
                   <col className="w-[12%]" />
-                  <col className="w-[14%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[7%]" />
                   <col className="w-[8%]" />
-                  <col className="w-[9%]" />
-                  <col className="w-[9%]" />
+                  <col className="w-[8%]" />
                   <col className="w-[13%]" />
                   <col className="w-[9%]" />
-                  <col className="w-[26%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[21%]" />
                 </>
               )}
             </colgroup>
@@ -140,6 +141,7 @@ export function DocumentListView({
                   <th className="px-4 py-3">Phiên bản</th>
                 ) : (
                   <>
+                    <th className="px-4 py-3">Người xử lý</th>
                     <th className="px-4 py-3">Xử lý</th>
                     <th className="px-4 py-3">Hạn gần nhất</th>
                   </>
@@ -163,7 +165,7 @@ export function DocumentListView({
               {documents.length === 0 && (
                 <tr>
                   <td
-                    colSpan={isVersioned ? 7 : 8}
+                    colSpan={isVersioned ? 7 : 9}
                     className="px-5 py-16 text-center"
                   >
                     <div className="mx-auto flex max-w-sm flex-col items-center">
@@ -271,6 +273,13 @@ function DocumentTableRow({
         </td>
       ) : (
         <>
+          <td className="px-4 py-4 text-slate-700">
+            <CellText
+              value={document.activeAssigneeNames || "Chưa phân xử lý"}
+              className={document.activeAssigneeNames ? "text-slate-700" : "text-slate-400"}
+            />
+          </td>
+
           <td className="px-4 py-4">
             <div className="min-w-32">
               <div className="mb-1 flex items-center justify-between text-xs">

@@ -19,7 +19,7 @@ export default async function DocumentDetailPage({
 
   return (
     <DashboardLayout>
-      <DocumentDetailView doc={doc} viewer={user ? { userId: user.userId, role: user.role } : null} />
+      <DocumentDetailView doc={doc} viewer={user ? { userId: user.userId, role: user.role, permissions: user.permissions } : null} />
     </DashboardLayout>
   );
 }

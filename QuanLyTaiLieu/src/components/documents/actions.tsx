@@ -371,8 +371,7 @@ export function DeleteDocumentButton({
         <AlertDialogHeader>
           <AlertDialogTitle>Xoá tài liệu?</AlertDialogTitle>
           <AlertDialogDescription>
-            File trên Google Drive sẽ bị xoá thật. Thông tin tài liệu được xoá
-            mềm trong database.
+            Bạn có chắc chắn muốn xoá tài liệu này?
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -449,6 +448,200 @@ export function DeleteVersionButton({
           <AlertDialogDescription>
             File của phiên bản này trên Google Drive sẽ bị xoá thật. Phiên bản
             được xoá mềm trong database.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={loading}>Huỷ</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={loading}
+            onClick={handleDelete}
+          >
+            Xoá
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+export function AssignmentFileUploadForm({
+  assignmentId,
+}: {
+  assignmentId: number;
+}) {
+  const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  function clearSelectedFile() {
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  return (
+    <form
+      className="mt-4 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const formData = new FormData(form);
+
+        setLoading(true);
+        try {
+          const res = await fetch(`/api/assignments/${assignmentId}/files`, {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            const data = await res.json().catch(() => null);
+            toast.error(data?.message || "Không thể upload file xử lý");
+            return;
+          }
+
+          toast.success("Đã upload file xử lý");
+          form.reset();
+          setSelectedFile(null);
+          router.refresh();
+        } catch {
+          toast.error("Có lỗi xảy ra khi upload file xử lý");
+        } finally {
+          setLoading(false);
+        }
+      }}
+    >
+      <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            File xử lý
+          </label>
+          <Input
+            ref={fileInputRef}
+            name="file"
+            type="file"
+            required
+            disabled={loading}
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+            onChange={(event) =>
+              setSelectedFile(event.target.files?.[0] || null)
+            }
+            className="h-10 rounded-xl border-slate-200 bg-white text-sm"
+          />
+        </div>
+
+        <Button
+          type="submit"
+          disabled={loading}
+          className="h-10 rounded-xl px-4 text-sm font-semibold"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Đang upload...
+            </>
+          ) : (
+            <>
+              <FileUp className="mr-2 h-4 w-4" />
+              Upload
+            </>
+          )}
+        </Button>
+      </div>
+
+      {selectedFile && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Paperclip className="h-4 w-4 shrink-0 text-blue-600" />
+            <span className="truncate text-sm font-medium text-slate-700">
+              {selectedFile.name}
+            </span>
+            <span className="shrink-0 text-xs text-slate-400">
+              {formatFileSize(selectedFile.size)}
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={clearSelectedFile}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            title="Bỏ chọn file"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      <Textarea
+        name="note"
+        disabled={loading}
+        placeholder="Ghi chú cho file xử lý"
+        className="min-h-20 rounded-xl border-slate-200 bg-white text-sm"
+      />
+    </form>
+  );
+}
+
+export function DeleteAssignmentFileButton({
+  assignmentId,
+  fileId,
+}: {
+  assignmentId: number;
+  fileId: number;
+}) {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  async function handleDelete() {
+    setLoading(true);
+
+    try {
+      const res = await fetch(
+        `/api/assignments/${assignmentId}/files/${fileId}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        toast.error(data?.message || "Không thể xoá file xử lý");
+        return;
+      }
+
+      toast.success("Đã xoá file xử lý");
+      router.refresh();
+    } catch {
+      toast.error("Có lỗi xảy ra khi xoá file xử lý");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={loading}
+          className="shrink-0 rounded-xl text-red-600 hover:text-red-700"
+          title="Xoá file xử lý"
+        >
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Trash2 className="h-4 w-4" />
+          )}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Xoá file xử lý?</AlertDialogTitle>
+          <AlertDialogDescription>
+            File này trên Google Drive sẽ bị xoá thật. Bản ghi được xoá mềm
+            trong database.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
