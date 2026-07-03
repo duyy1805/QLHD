@@ -29,6 +29,17 @@ export async function getDocumentTypeByCode(code: string): Promise<DocumentType 
   return rs.recordset?.[0] ? mapType(rs.recordset[0] as Record<string, unknown>) : null;
 }
 
+export async function getDocumentTypeById(id: number): Promise<DocumentType | null> {
+  const pool = await getPool();
+  const rs = await pool.request()
+    .input("ActiveOnly", sql.Bit, 0)
+    .execute("doc.sp_DocumentType_List");
+  const row = ((rs.recordset || []) as Record<string, unknown>[]).find(
+    (item) => Number(item.Id) === id,
+  );
+  return row ? mapType(row) : null;
+}
+
 export async function upsertDocumentType(input: DocumentTypeInput): Promise<DocumentType> {
   const pool = await getPool();
   const rs = await pool.request()

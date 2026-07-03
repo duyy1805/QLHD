@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { saveUpload } from "@/lib/upload";
+import { deleteDriveFileByPath } from "@/lib/google-drive";
+import { saveUpload, type SavedFile } from "@/lib/upload";
 import { uploadAssignmentFile } from "@/services/document.service";
 
 export const runtime = "nodejs";
@@ -16,11 +17,24 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const { id } = await params;
     const form = await request.formData();
-    const file = form.get("file");
+    const files = form.getAll("file").filter((item): item is File => item instanceof File);
+    const file = files[0];
     if (!(file instanceof File)) return NextResponse.json({ message: "File là bắt buộc." }, { status: 400 });
 
-    const savedFile = await saveUpload(file);
-    await uploadAssignmentFile(Number(id), savedFile, String(form.get("note") || "") || null, user);
+    const savedFiles: SavedFile[] = [];
+    try {
+      for (const item of files) {
+        savedFiles.push(await saveUpload(item));
+      }
+
+      for (const savedFile of savedFiles) {
+        await uploadAssignmentFile(Number(id), savedFile, String(form.get("note") || "") || null, user);
+      }
+    } catch (error) {
+      await Promise.all(savedFiles.map((item) => deleteDriveFileByPath(item.filePath).catch(() => undefined)));
+      throw error;
+    }
+
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json({ message: getErrorMessage(error) }, { status: 400 });

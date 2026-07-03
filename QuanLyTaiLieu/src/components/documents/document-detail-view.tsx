@@ -20,6 +20,8 @@ import {
   AssignmentFileUploadForm,
   CompleteAssignmentButton,
   DeleteAssignmentFileButton,
+  DeleteDocumentAttachmentButton,
+  DocumentAttachmentUploadForm,
   DeleteDocumentButton,
   DeleteVersionButton,
   VersionUploadForm,
@@ -30,6 +32,7 @@ import type { AppRole, DocPermission } from "@/types/document";
 
 type DocumentDetail = NonNullable<Awaited<ReturnType<typeof getDocument>>>;
 type DocumentVersion = DocumentDetail["versions"][number];
+type DocumentAttachment = DocumentDetail["attachments"][number];
 type DocumentAssignment = DocumentDetail["assignments"][number];
 type DocumentLog = DocumentDetail["logs"][number];
 type DeleteViewer = { userId: number; role: AppRole; permissions: DocPermission[] };
@@ -51,6 +54,7 @@ export function DocumentDetailView({
 
   const currentVersion =
     doc.versions.find((version) => version.isCurrent) || doc.versions[0];
+  const currentFile = isVersioned ? currentVersion : doc.attachments[0];
 
   const assignmentCount = doc.assignments.length;
   const completedCount = doc.assignments.filter(
@@ -81,17 +85,17 @@ export function DocumentDetailView({
             />
           )}
 
-          {currentVersion?.fileUrl && (
+          {currentFile?.fileUrl && (
             <>
               <DocumentFileDialog
-                fileUrl={currentVersion.fileUrl}
-                fileName={currentVersion.fileName || doc.title}
-                fileType={currentVersion.fileType}
+                fileUrl={currentFile.fileUrl}
+                fileName={currentFile.fileName || doc.title}
+                fileType={currentFile.fileType}
                 title={`Xem tài liệu: ${doc.title}`}
               />
 
               <Button asChild variant="outline" className="rounded-2xl">
-                <a href={currentVersion.fileUrl} download>
+                <a href={currentFile.fileUrl} download>
                   <Download className="mr-2 h-4 w-4" />
                   Tải file
                 </a>
@@ -167,12 +171,12 @@ export function DocumentDetailView({
 
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-slate-900">
-                      {currentVersion?.fileName || "Chưa có file"}
+                      {currentFile?.fileName || "Chưa có file"}
                     </div>
 
                     <div className="mt-1 text-xs text-slate-500">
-                      {currentVersion?.uploadedAt
-                        ? `Cập nhật ${safeFormatDate(currentVersion.uploadedAt)}`
+                      {currentFile?.uploadedAt
+                        ? `Cập nhật ${safeFormatDate(currentFile.uploadedAt)}`
                         : "Không có thông tin cập nhật"}
                     </div>
                   </div>
@@ -209,7 +213,11 @@ export function DocumentDetailView({
         <div className="space-y-5">
           {isVersioned && <UploadVersionPanel documentId={doc.id} />}
 
-          <VersionHistoryPanel documentId={doc.id} versions={doc.versions} viewer={viewer} />
+          {isVersioned ? (
+            <VersionHistoryPanel documentId={doc.id} versions={doc.versions} viewer={viewer} />
+          ) : (
+            <SourceFilesPanel documentId={doc.id} files={doc.attachments} viewer={viewer} />
+          )}
 
           {!isVersioned && <AssignmentPanel assignments={doc.assignments} viewer={viewer} />}
 
@@ -353,6 +361,88 @@ function VersionHistoryPanel({
           <EmptyBlock text="Chưa có phiên bản tài liệu." />
         )}
       </div>
+    </div>
+  );
+}
+
+function SourceFilesPanel({
+  documentId,
+  files,
+  viewer,
+}: {
+  documentId: number;
+  files: DocumentAttachment[];
+  viewer: DeleteViewer | null;
+}) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-100 px-5 py-4">
+        <div className="flex items-center gap-2">
+          <Paperclip className="h-5 w-5 text-primary" />
+          <h2 className="font-semibold text-foreground">File gốc thông báo</h2>
+        </div>
+
+        <p className="mt-1 text-sm text-slate-500">
+          Danh sách file đính kèm ban đầu của thông báo.
+        </p>
+      </div>
+
+      <div className="divide-y divide-slate-100">
+        {files.length > 0 ? (
+          files.map((file) => (
+            <div
+              key={file.id}
+              className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <div className="truncate font-semibold text-foreground">
+                  {file.fileName}
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+                  <span>{formatFileSize(file.fileSize || 0)}</span>
+                  <span>
+                    Người tải: {file.uploadedByName || file.uploadedByUserId || "-"}
+                  </span>
+                  <span>Ngày tải: {safeFormatDate(file.uploadedAt)}</span>
+                </div>
+
+                {file.note && (
+                  <div className="mt-2 rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                    {file.note}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex shrink-0 gap-2">
+                <DocumentFileDialog
+                  fileUrl={file.fileUrl}
+                  fileName={file.fileName}
+                  fileType={file.fileType}
+                  title={`Xem file gốc: ${file.fileName}`}
+                />
+
+                <Button asChild variant="outline" size="sm" className="rounded-xl">
+                  <a href={file.fileUrl} download title="Tải về">
+                    <Download className="h-4 w-4" />
+                  </a>
+                </Button>
+
+                {canDeleteSourceFile(viewer, file) && (
+                  <DeleteDocumentAttachmentButton
+                    documentId={documentId}
+                    attachmentId={file.id}
+                  />
+                )}
+              </div>
+            </div>
+          ))
+        ) : (
+          <EmptyBlock text="Chưa có file gốc." />
+        )}
+      </div>
+
+      <DocumentAttachmentUploadForm documentId={documentId} />
     </div>
   );
 }
@@ -520,6 +610,12 @@ function AssignmentFilesList({
 
 function isAssignmentOpen(assignment: DocumentAssignment) {
   return assignment.status !== "COMPLETED" && assignment.status !== "CANCELLED";
+}
+
+function canDeleteSourceFile(viewer: DeleteViewer | null, file: DocumentAttachment) {
+  if (!viewer) return false;
+  if (viewer.role === "ADMIN" || viewer.role === "TBP") return true;
+  return viewer.userId === file.uploadedByUserId;
 }
 
 function canUploadAssignmentFile(viewer: DeleteViewer | null, assignment: DocumentAssignment) {

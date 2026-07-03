@@ -2,7 +2,7 @@ import type { SavedFile } from "@/lib/upload";
 import { getPool, sql } from "@/lib/db";
 import { deleteDriveFileByPath } from "@/lib/google-drive";
 import type { CreateDocumentInput, UpdateDocumentInput } from "@/schemas/document.schema";
-import type { DocumentAssignment, DocumentAssignmentFile, DocumentDetail, DocumentListItem, DocumentLog, DocumentVersion, SessionUser } from "@/types/document";
+import type { DocumentAssignment, DocumentAssignmentFile, DocumentAttachment, DocumentDetail, DocumentListItem, DocumentLog, DocumentVersion, ModuleKind, SessionUser } from "@/types/document";
 
 function dateValue(value: unknown) {
   return value instanceof Date ? value.toISOString() : value ? new Date(String(value)).toISOString() : null;
@@ -105,6 +105,22 @@ function mapAssignmentFile(row: Record<string, unknown>): DocumentAssignmentFile
     uploadedAt: dateValue(row.UploadedAt) || "",
   };
 }
+
+function mapAttachment(row: Record<string, unknown>): DocumentAttachment {
+  return {
+    id: Number(row.Id),
+    documentId: Number(row.DocumentId),
+    fileName: String(row.FileName),
+    fileUrl: String(row.FileUrl),
+    filePath: String(row.FilePath),
+    fileSize: num(row.FileSize),
+    fileType: text(row.FileType),
+    note: text(row.Note),
+    uploadedByUserId: Number(row.UploadedByUserId),
+    uploadedByName: text(row.UploadedByName),
+    uploadedAt: dateValue(row.UploadedAt) || "",
+  };
+}
 function mapLog(row: Record<string, unknown>): DocumentLog {
   return {
     id: Number(row.Id),
@@ -133,6 +149,7 @@ export async function getDocument(id: number): Promise<DocumentDetail | null> {
   const header = await pool.request().input("Id", sql.Int, id).execute("doc.sp_Document_GetHeader");
   if (!header.recordset?.[0]) return null;
   const versions = await pool.request().input("Id", sql.Int, id).execute("doc.sp_Document_GetVersions");
+  const attachments = await pool.request().input("Id", sql.Int, id).execute("doc.sp_Document_GetAttachments");
   const assignments = await pool.request().input("Id", sql.Int, id).execute("doc.sp_Document_GetAssignments");
   const assignmentFiles = await pool.request().input("Id", sql.Int, id).execute("doc.sp_Document_GetAssignmentFiles");
   const logs = await pool.request().input("Id", sql.Int, id).execute("doc.sp_Document_GetLogs");
@@ -147,6 +164,7 @@ export async function getDocument(id: number): Promise<DocumentDetail | null> {
   return {
     ...mapList(header.recordset[0] as Record<string, unknown>),
     versions: ((versions.recordset || []) as Record<string, unknown>[]).map(mapVersion),
+    attachments: ((attachments.recordset || []) as Record<string, unknown>[]).map(mapAttachment),
     assignments: ((assignments.recordset || []) as Record<string, unknown>[]).map((row) => {
       const assignment = mapAssignment(row);
       return {
@@ -158,7 +176,32 @@ export async function getDocument(id: number): Promise<DocumentDetail | null> {
   };
 }
 
-export async function createDocument(input: CreateDocumentInput, file: SavedFile, user: SessionUser) {
+async function addDocumentAttachment(documentId: number, file: SavedFile, note: string | null, user: SessionUser) {
+  const pool = await getPool();
+  await pool.request()
+    .input("DocumentId", sql.Int, documentId)
+    .input("FileName", sql.NVarChar(260), file.fileName)
+    .input("FileUrl", sql.NVarChar(1000), file.fileUrl)
+    .input("FilePath", sql.NVarChar(1000), file.filePath)
+    .input("FileSize", sql.Int, file.fileSize)
+    .input("FileType", sql.NVarChar(120), file.fileType)
+    .input("Note", sql.NVarChar(1000), note || null)
+    .input("UploadedByUserId", sql.Int, user.userId)
+    .execute("doc.sp_DocumentAttachment_Add");
+}
+
+export async function uploadDocumentAttachments(documentId: number, files: SavedFile[], note: string | null, user: SessionUser) {
+  if (files.length === 0) throw new Error("File là bắt buộc.");
+
+  for (const file of files) {
+    await addDocumentAttachment(documentId, file, note, user);
+  }
+}
+
+export async function createDocument(input: CreateDocumentInput, files: SavedFile[], user: SessionUser, moduleKind: ModuleKind) {
+  const file = files[0];
+  if (!file) throw new Error("File là bắt buộc.");
+
   const pool = await getPool();
   const rs = await pool.request()
     .input("DocumentTypeId", sql.Int, input.documentTypeId)
@@ -176,7 +219,15 @@ export async function createDocument(input: CreateDocumentInput, file: SavedFile
     .input("FileType", sql.NVarChar(120), file.fileType)
     .input("CreatedByUserId", sql.Int, user.userId)
     .execute("doc.sp_Document_Create");
-  return Number(rs.recordset?.[0]?.Id);
+  const documentId = Number(rs.recordset?.[0]?.Id);
+
+  if (moduleKind === "ASSIGNMENT_DOCUMENT") {
+    for (const attachment of files) {
+      await addDocumentAttachment(documentId, attachment, input.changeNote || null, user);
+    }
+  }
+
+  return documentId;
 }
 
 export async function uploadNewVersion(documentId: number, versionNo: string, file: SavedFile, changeNote: string | null, user: SessionUser) {
@@ -227,14 +278,28 @@ export async function deleteDocument(id: number, user: SessionUser) {
     .input("UserId", sql.Int, user.userId)
     .input("IsPrivileged", sql.Bit, isPrivileged(user) ? 1 : 0)
     .execute("doc.sp_Document_Delete_GetFiles");
+  const attachments = await pool.request()
+    .input("Id", sql.Int, id)
+    .execute("doc.sp_Document_GetAttachments");
 
-  await deleteDriveFiles((files.recordset || []) as DeleteFileRow[]);
+  await deleteDriveFiles([
+    ...((files.recordset || []) as DeleteFileRow[]),
+    ...((attachments.recordset || []) as DeleteFileRow[]),
+  ]);
 
   await pool.request()
     .input("DocumentId", sql.Int, id)
     .input("DeletedByUserId", sql.Int, user.userId)
     .input("IsPrivileged", sql.Bit, isPrivileged(user) ? 1 : 0)
     .execute("doc.sp_Document_Delete");
+  await pool.request()
+    .input("DocumentId", sql.Int, id)
+    .input("DeletedByUserId", sql.Int, user.userId)
+    .query(`
+      UPDATE doc.DocumentAttachments
+      SET DeletedAt = COALESCE(DeletedAt, SYSDATETIME()), DeletedByUserId = @DeletedByUserId
+      WHERE DocumentId = @DocumentId AND DeletedAt IS NULL
+    `);
 }
 
 export async function deleteDocumentVersion(documentId: number, versionId: number, user: SessionUser) {
@@ -293,4 +358,23 @@ export async function deleteAssignmentFile(assignmentId: number, fileId: number,
     .input("DeletedByUserId", sql.Int, user.userId)
     .input("IsSupport", sql.Bit, user.role === "ADMIN" || user.role === "TBP" ? 1 : 0)
     .execute("doc.sp_AssignmentFile_Delete");
+}
+
+export async function deleteDocumentAttachment(documentId: number, attachmentId: number, user: SessionUser) {
+  const pool = await getPool();
+  const files = await pool.request()
+    .input("DocumentId", sql.Int, documentId)
+    .input("AttachmentId", sql.Int, attachmentId)
+    .input("UserId", sql.Int, user.userId)
+    .input("IsSupport", sql.Bit, user.role === "ADMIN" || user.role === "TBP" ? 1 : 0)
+    .execute("doc.sp_DocumentAttachment_Delete_GetFile");
+
+  await deleteDriveFiles((files.recordset || []) as DeleteFileRow[]);
+
+  await pool.request()
+    .input("DocumentId", sql.Int, documentId)
+    .input("AttachmentId", sql.Int, attachmentId)
+    .input("DeletedByUserId", sql.Int, user.userId)
+    .input("IsSupport", sql.Bit, user.role === "ADMIN" || user.role === "TBP" ? 1 : 0)
+    .execute("doc.sp_DocumentAttachment_Delete");
 }

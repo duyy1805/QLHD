@@ -465,6 +465,202 @@ export function DeleteVersionButton({
   );
 }
 
+export function DeleteDocumentAttachmentButton({
+  documentId,
+  attachmentId,
+}: {
+  documentId: number;
+  attachmentId: number;
+}) {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  async function handleDelete() {
+    setLoading(true);
+
+    try {
+      const res = await fetch(`/api/documents/${documentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "deleteAttachment", attachmentId }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        toast.error(data?.message || "Không thể xoá file gốc");
+        return;
+      }
+
+      toast.success("Đã xoá file gốc");
+      router.refresh();
+    } catch {
+      toast.error("Có lỗi xảy ra khi xoá file gốc");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={loading}
+          className="shrink-0 rounded-xl text-red-600 hover:text-red-700"
+          title="Xoá file gốc"
+        >
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Trash2 className="h-4 w-4" />
+          )}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Xoá file gốc?</AlertDialogTitle>
+          <AlertDialogDescription>
+            File này trên Google Drive sẽ bị xoá thật. Bản ghi được xoá mềm
+            trong database.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={loading}>Huỷ</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={loading}
+            onClick={handleDelete}
+          >
+            Xoá
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+export function DocumentAttachmentUploadForm({
+  documentId,
+}: {
+  documentId: number;
+}) {
+  const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+
+  function clearSelectedFiles() {
+    setSelectedFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  return (
+    <form
+      className="border-t border-slate-100 bg-slate-50/60 px-5 py-4"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const formData = new FormData(form);
+
+        setLoading(true);
+        try {
+          const res = await fetch(`/api/documents/${documentId}`, {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            const data = await res.json().catch(() => null);
+            toast.error(data?.message || "Không thể upload file gốc");
+            return;
+          }
+
+          toast.success("Đã upload file gốc");
+          form.reset();
+          setSelectedFiles([]);
+          router.refresh();
+        } catch {
+          toast.error("Có lỗi xảy ra khi upload file gốc");
+        } finally {
+          setLoading(false);
+        }
+      }}
+    >
+      <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Thêm file thông báo
+          </label>
+          <Input
+            ref={fileInputRef}
+            name="file"
+            type="file"
+            multiple
+            required
+            disabled={loading}
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+            onChange={(event) =>
+              setSelectedFiles(Array.from(event.target.files || []))
+            }
+            className="h-10 rounded-xl border-slate-200 bg-white text-sm"
+          />
+        </div>
+
+        <Button
+          type="submit"
+          disabled={loading}
+          className="h-10 rounded-xl px-4 text-sm font-semibold"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Đang upload...
+            </>
+          ) : (
+            <>
+              <FileUp className="mr-2 h-4 w-4" />
+              Upload
+            </>
+          )}
+        </Button>
+      </div>
+
+      {selectedFiles.length > 0 && (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Paperclip className="h-4 w-4 shrink-0 text-blue-600" />
+            <span className="truncate text-sm font-medium text-slate-700">
+              {selectedFiles.length === 1
+                ? selectedFiles[0].name
+                : `${selectedFiles.length} file đã chọn`}
+            </span>
+            <span className="shrink-0 text-xs text-slate-400">
+              {formatFileSize(selectedFiles.reduce((total, file) => total + file.size, 0))}
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={clearSelectedFiles}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            title="Bỏ chọn file"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      <Textarea
+        name="note"
+        disabled={loading}
+        placeholder="Ghi chú cho file thông báo"
+        className="mt-3 min-h-20 rounded-xl border-slate-200 bg-white text-sm"
+      />
+    </form>
+  );
+}
+
 export function AssignmentFileUploadForm({
   assignmentId,
 }: {
@@ -473,10 +669,10 @@ export function AssignmentFileUploadForm({
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [loading, setLoading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
   function clearSelectedFile() {
-    setSelectedFile(null);
+    setSelectedFiles([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -503,7 +699,7 @@ export function AssignmentFileUploadForm({
 
           toast.success("Đã upload file xử lý");
           form.reset();
-          setSelectedFile(null);
+          setSelectedFiles([]);
           router.refresh();
         } catch {
           toast.error("Có lỗi xảy ra khi upload file xử lý");
@@ -521,11 +717,12 @@ export function AssignmentFileUploadForm({
             ref={fileInputRef}
             name="file"
             type="file"
+            multiple
             required
             disabled={loading}
             accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
             onChange={(event) =>
-              setSelectedFile(event.target.files?.[0] || null)
+              setSelectedFiles(Array.from(event.target.files || []))
             }
             className="h-10 rounded-xl border-slate-200 bg-white text-sm"
           />
@@ -550,15 +747,17 @@ export function AssignmentFileUploadForm({
         </Button>
       </div>
 
-      {selectedFile && (
+      {selectedFiles.length > 0 && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
             <Paperclip className="h-4 w-4 shrink-0 text-blue-600" />
             <span className="truncate text-sm font-medium text-slate-700">
-              {selectedFile.name}
+              {selectedFiles.length === 1
+                ? selectedFiles[0].name
+                : `${selectedFiles.length} file đã chọn`}
             </span>
             <span className="shrink-0 text-xs text-slate-400">
-              {formatFileSize(selectedFile.size)}
+              {formatFileSize(selectedFiles.reduce((total, file) => total + file.size, 0))}
             </span>
           </div>
           <button

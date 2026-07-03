@@ -46,6 +46,7 @@ export type DocumentListItem = {
 
 export type DocumentDetail = DocumentListItem & {
   versions: DocumentVersion[];
+  attachments: DocumentAttachment[];
   assignments: DocumentAssignment[];
   logs: DocumentLog[];
 };
@@ -60,6 +61,20 @@ export type DocumentVersion = {
   fileType: string | null;
   changeNote: string | null;
   isCurrent: boolean;
+  uploadedByUserId: number;
+  uploadedByName: string | null;
+  uploadedAt: string;
+};
+
+export type DocumentAttachment = {
+  id: number;
+  documentId: number;
+  fileName: string;
+  fileUrl: string;
+  filePath: string;
+  fileSize: number | null;
+  fileType: string | null;
+  note: string | null;
   uploadedByUserId: number;
   uploadedByName: string | null;
   uploadedAt: string;

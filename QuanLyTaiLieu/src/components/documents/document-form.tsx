@@ -161,7 +161,7 @@ export function DocumentForm({
             </Field>
 
             <Field label="File" required icon={<UploadCloud />}>
-              <FileUploadInput name="file" required />
+              <FileUploadInput name="file" required multiple={isAssignment} />
             </Field>
           </div>
 
@@ -308,9 +308,11 @@ function Field({
 function FileUploadInput({
   name,
   required,
+  multiple,
 }: {
   name: string;
   required?: boolean;
+  multiple?: boolean;
 }) {
   const [fileName, setFileName] = useState("");
 
@@ -320,10 +322,15 @@ function FileUploadInput({
         name={name}
         type="file"
         required={required}
+        multiple={multiple}
         className="sr-only"
         onChange={(event) => {
-          const file = event.target.files?.[0];
-          setFileName(file?.name || "");
+          const files = Array.from(event.target.files || []);
+          setFileName(
+            files.length > 1
+              ? `${files.length} file: ${files.map((file) => file.name).join(", ")}`
+              : files[0]?.name || "",
+          );
         }}
       />
 

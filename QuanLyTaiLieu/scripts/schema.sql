@@ -57,6 +57,27 @@ BEGIN
     CREATE INDEX IX_doc_DocumentVersions_Current ON doc.DocumentVersions(DocumentId, IsCurrent);
 END;
 
+IF OBJECT_ID(N'doc.DocumentAttachments', N'U') IS NULL
+BEGIN
+    CREATE TABLE doc.DocumentAttachments (
+        Id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_doc_DocumentAttachments PRIMARY KEY,
+        DocumentId INT NOT NULL,
+        FileName NVARCHAR(260) NOT NULL,
+        FileUrl NVARCHAR(1000) NOT NULL,
+        FilePath NVARCHAR(1000) NOT NULL,
+        FileSize INT NULL,
+        FileType NVARCHAR(120) NULL,
+        Note NVARCHAR(1000) NULL,
+        UploadedByUserId INT NOT NULL,
+        UploadedAt DATETIME2 NOT NULL CONSTRAINT DF_doc_DocumentAttachments_UploadedAt DEFAULT (SYSDATETIME()),
+        DeletedAt DATETIME2 NULL,
+        DeletedByUserId INT NULL,
+        CONSTRAINT FK_doc_DocumentAttachments_Documents FOREIGN KEY (DocumentId) REFERENCES doc.Documents(Id)
+    );
+    CREATE INDEX IX_doc_DocumentAttachments_Document ON doc.DocumentAttachments(DocumentId, DeletedAt);
+    CREATE INDEX IX_doc_DocumentAttachments_UploadedBy ON doc.DocumentAttachments(UploadedByUserId);
+END;
+
 IF OBJECT_ID(N'doc.DocumentAssignments', N'U') IS NULL
 BEGIN
     CREATE TABLE doc.DocumentAssignments (
@@ -243,9 +264,9 @@ BEGIN
       d.Title, d.DocumentNo, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
       CreatedByName = COALESCE(NULLIF(u.TenDayDu, N''), NULLIF(u.TenDangNhap, N''), CONVERT(NVARCHAR(20), d.CreatedByUserId)),
       CurrentVersionNo = cv.VersionNo,
-      CurrentFileUrl = cv.FileUrl,
-      CurrentFileName = cv.FileName,
-      CurrentFileType = cv.FileType,
+      CurrentFileUrl = CASE WHEN dt.ModuleKind = N'ASSIGNMENT_DOCUMENT' THEN ca.FileUrl ELSE cv.FileUrl END,
+      CurrentFileName = CASE WHEN dt.ModuleKind = N'ASSIGNMENT_DOCUMENT' THEN ca.FileName ELSE cv.FileName END,
+      CurrentFileType = CASE WHEN dt.ModuleKind = N'ASSIGNMENT_DOCUMENT' THEN ca.FileType ELSE cv.FileType END,
       AssignmentCount = COUNT(a.Id),
       CompletedAssignmentCount = SUM(CASE WHEN a.Status = N'COMPLETED' THEN 1 ELSE 0 END),
       NearestDueDate = MIN(CASE WHEN a.Status <> N'COMPLETED' THEN a.DueDate ELSE NULL END)
@@ -253,11 +274,17 @@ BEGIN
     JOIN doc.DocumentTypes dt ON dt.Id = d.DocumentTypeId
     LEFT JOIN Tag_System.dbo.TaiKhoanDangNhap u ON u.ID_TaiKhoanDangNhap = d.CreatedByUserId
     LEFT JOIN doc.DocumentVersions cv ON cv.DocumentId = d.Id AND cv.IsCurrent = 1
+    OUTER APPLY (
+      SELECT TOP 1 FileUrl, FileName, FileType
+      FROM doc.DocumentAttachments
+      WHERE DocumentId = d.Id AND DeletedAt IS NULL
+      ORDER BY UploadedAt DESC, Id DESC
+    ) ca
     LEFT JOIN doc.DocumentAssignments a ON a.DocumentId = d.Id
     WHERE (@TypeCode IS NULL OR dt.Code = UPPER(@TypeCode))
       AND (@Status IS NULL OR d.Status = @Status)
       AND (@Search IS NULL OR d.Title LIKE N'%' + @Search + N'%' OR d.DocumentNo LIKE N'%' + @Search + N'%')
-    GROUP BY d.Id, d.DocumentTypeId, dt.Code, dt.Name, dt.ModuleKind, d.Title, d.DocumentNo, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt, u.TenDayDu, u.TenDangNhap, cv.VersionNo, cv.FileUrl
+    GROUP BY d.Id, d.DocumentTypeId, dt.Code, dt.Name, dt.ModuleKind, d.Title, d.DocumentNo, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt, u.TenDayDu, u.TenDangNhap, cv.VersionNo, cv.FileUrl, cv.FileName, cv.FileType, ca.FileUrl, ca.FileName, ca.FileType
     ORDER BY d.CreatedAt DESC;
 END;
 GO
@@ -271,9 +298,9 @@ BEGIN
       d.Title, d.DocumentNo, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
       CreatedByName = COALESCE(NULLIF(u.TenDayDu, N''), NULLIF(u.TenDangNhap, N''), CONVERT(NVARCHAR(20), d.CreatedByUserId)),
       CurrentVersionNo = cv.VersionNo,
-      CurrentFileUrl = cv.FileUrl,
-      CurrentFileName = cv.FileName,
-      CurrentFileType = cv.FileType,
+      CurrentFileUrl = CASE WHEN dt.ModuleKind = N'ASSIGNMENT_DOCUMENT' THEN ca.FileUrl ELSE cv.FileUrl END,
+      CurrentFileName = CASE WHEN dt.ModuleKind = N'ASSIGNMENT_DOCUMENT' THEN ca.FileName ELSE cv.FileName END,
+      CurrentFileType = CASE WHEN dt.ModuleKind = N'ASSIGNMENT_DOCUMENT' THEN ca.FileType ELSE cv.FileType END,
       AssignmentCount = COUNT(a.Id),
       CompletedAssignmentCount = SUM(CASE WHEN a.Status = N'COMPLETED' THEN 1 ELSE 0 END),
       NearestDueDate = MIN(CASE WHEN a.Status <> N'COMPLETED' THEN a.DueDate ELSE NULL END)
@@ -281,9 +308,15 @@ BEGIN
     JOIN doc.DocumentTypes dt ON dt.Id = d.DocumentTypeId
     LEFT JOIN Tag_System.dbo.TaiKhoanDangNhap u ON u.ID_TaiKhoanDangNhap = d.CreatedByUserId
     LEFT JOIN doc.DocumentVersions cv ON cv.DocumentId = d.Id AND cv.IsCurrent = 1
+    OUTER APPLY (
+      SELECT TOP 1 FileUrl, FileName, FileType
+      FROM doc.DocumentAttachments
+      WHERE DocumentId = d.Id AND DeletedAt IS NULL
+      ORDER BY UploadedAt DESC, Id DESC
+    ) ca
     LEFT JOIN doc.DocumentAssignments a ON a.DocumentId = d.Id
     WHERE d.Id = @Id
-    GROUP BY d.Id, d.DocumentTypeId, dt.Code, dt.Name, dt.ModuleKind, d.Title, d.DocumentNo, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt, u.TenDayDu, u.TenDangNhap, cv.VersionNo, cv.FileUrl;
+    GROUP BY d.Id, d.DocumentTypeId, dt.Code, dt.Name, dt.ModuleKind, d.Title, d.DocumentNo, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt, u.TenDayDu, u.TenDangNhap, cv.VersionNo, cv.FileUrl, cv.FileName, cv.FileType, ca.FileUrl, ca.FileName, ca.FileType;
 END;
 GO
 CREATE OR ALTER PROCEDURE doc.sp_Document_GetVersions
@@ -296,6 +329,19 @@ BEGIN
     LEFT JOIN Tag_System.dbo.TaiKhoanDangNhap u ON u.ID_TaiKhoanDangNhap = v.UploadedByUserId
     WHERE v.DocumentId = @Id
     ORDER BY v.UploadedAt DESC;
+END;
+GO
+CREATE OR ALTER PROCEDURE doc.sp_Document_GetAttachments
+    @Id INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT a.*, UploadedByName = COALESCE(NULLIF(u.TenDayDu, N''), NULLIF(u.TenDangNhap, N''), CONVERT(NVARCHAR(20), a.UploadedByUserId))
+    FROM doc.DocumentAttachments a
+    LEFT JOIN Tag_System.dbo.TaiKhoanDangNhap u ON u.ID_TaiKhoanDangNhap = a.UploadedByUserId
+    WHERE a.DocumentId = @Id
+      AND a.DeletedAt IS NULL
+    ORDER BY a.UploadedAt DESC, a.Id DESC;
 END;
 GO
 CREATE OR ALTER PROCEDURE doc.sp_Document_GetAssignments
@@ -412,6 +458,88 @@ BEGIN
     WHERE Id = @Id;
     INSERT INTO doc.DocumentLogs (DocumentId, Action, NewValue, CreatedByUserId)
     VALUES (@Id, N'UPDATE_DOCUMENT', JSON_QUERY((SELECT @Title AS title, @DocumentNo AS documentNo, @Status AS status FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)), @UpdatedByUserId);
+END;
+GO
+CREATE OR ALTER PROCEDURE doc.sp_DocumentAttachment_Add
+    @DocumentId INT,
+    @FileName NVARCHAR(260),
+    @FileUrl NVARCHAR(1000),
+    @FilePath NVARCHAR(1000),
+    @FileSize INT = NULL,
+    @FileType NVARCHAR(120) = NULL,
+    @Note NVARCHAR(1000) = NULL,
+    @UploadedByUserId INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    IF NOT EXISTS (SELECT 1 FROM doc.Documents WHERE Id = @DocumentId)
+      THROW 73401, N'Không tìm thấy tài liệu.', 1;
+
+    BEGIN TRANSACTION;
+    INSERT INTO doc.DocumentAttachments (DocumentId, FileName, FileUrl, FilePath, FileSize, FileType, Note, UploadedByUserId)
+    VALUES (@DocumentId, @FileName, @FileUrl, @FilePath, @FileSize, @FileType, @Note, @UploadedByUserId);
+
+    INSERT INTO doc.DocumentLogs (DocumentId, Action, NewValue, CreatedByUserId)
+    VALUES (@DocumentId, N'UPLOAD_DOCUMENT_ATTACHMENT', JSON_QUERY((SELECT @FileName AS fileName, @Note AS note FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)), @UploadedByUserId);
+    COMMIT TRANSACTION;
+END;
+GO
+CREATE OR ALTER PROCEDURE doc.sp_DocumentAttachment_Delete_GetFile
+    @DocumentId INT,
+    @AttachmentId INT,
+    @UserId INT,
+    @IsSupport BIT = 0
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @FilePath NVARCHAR(1000), @UploadedByUserId INT;
+    SELECT @FilePath = FilePath, @UploadedByUserId = UploadedByUserId
+    FROM doc.DocumentAttachments
+    WHERE Id = @AttachmentId
+      AND DocumentId = @DocumentId
+      AND DeletedAt IS NULL;
+
+    IF @UploadedByUserId IS NULL THROW 73411, N'Không tìm thấy file gốc.', 1;
+    IF NOT (@IsSupport = 1 OR @UploadedByUserId = @UserId)
+      THROW 73412, N'Bạn không có quyền xoá file gốc này.', 1;
+
+    SELECT Id = @AttachmentId, FilePath = @FilePath;
+END;
+GO
+CREATE OR ALTER PROCEDURE doc.sp_DocumentAttachment_Delete
+    @DocumentId INT,
+    @AttachmentId INT,
+    @DeletedByUserId INT,
+    @IsSupport BIT = 0
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @FileName NVARCHAR(260), @UploadedByUserId INT;
+    SELECT @FileName = FileName, @UploadedByUserId = UploadedByUserId
+    FROM doc.DocumentAttachments
+    WHERE Id = @AttachmentId
+      AND DocumentId = @DocumentId
+      AND DeletedAt IS NULL;
+
+    IF @UploadedByUserId IS NULL THROW 73421, N'Không tìm thấy file gốc.', 1;
+    IF NOT (@IsSupport = 1 OR @UploadedByUserId = @DeletedByUserId)
+      THROW 73422, N'Bạn không có quyền xoá file gốc này.', 1;
+
+    BEGIN TRANSACTION;
+    UPDATE doc.DocumentAttachments
+    SET DeletedAt = SYSDATETIME(), DeletedByUserId = @DeletedByUserId
+    WHERE Id = @AttachmentId
+      AND DocumentId = @DocumentId
+      AND DeletedAt IS NULL;
+
+    INSERT INTO doc.DocumentLogs (DocumentId, Action, NewValue, CreatedByUserId)
+    VALUES (@DocumentId, N'DELETE_DOCUMENT_ATTACHMENT', JSON_QUERY((SELECT @AttachmentId AS attachmentId, @FileName AS fileName FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)), @DeletedByUserId);
+    COMMIT TRANSACTION;
 END;
 GO
 CREATE OR ALTER PROCEDURE doc.sp_Dashboard_Stats
