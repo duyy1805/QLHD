@@ -578,4 +578,591 @@ router.post('/phieuxuat/phu-lieu/:idPhieuXuat/kien/batch-chitiet', async (req, r
     }
 });
 
+function isValidDateString(value) {
+    if (typeof value !== 'string') return false;
+
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) return false;
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+
+    const date = new Date(Date.UTC(year, month - 1, day));
+
+    return (
+        date.getUTCFullYear() === year &&
+        date.getUTCMonth() === month - 1 &&
+        date.getUTCDate() === day
+    );
+}
+
+/**
+ * GET /kehoachsanxuat
+ *
+ * Lấy danh sách kế hoạch sản xuất từ ERP.
+ * Stored procedure không có tham số đầu vào.
+ */
+router.get('/kehoachsanxuat', async (req, res) => {
+    try {
+        const pool = await testpoolPromise;
+
+        const result = await pool.request()
+            .execute('TAG_QLSX.dbo.NangSuat_Get_KeHoachSanXuat_Ngay');
+
+        const keHoachSanXuat = result.recordset || [];
+
+        return res.status(200).json({
+            ok: true,
+            count: keHoachSanXuat.length,
+            keHoachSanXuat
+        });
+    } catch (error) {
+        console.error('[GET /kehoachsanxuat] error:', error);
+
+        return res.status(500).json({
+            ok: false,
+            message: error.message || 'Không thể lấy kế hoạch sản xuất.'
+        });
+    }
+});
+
+/**
+ * POST /tiendosanxuat-mocgio
+ *
+ * Cập nhật tổng sản lượng của một mốc giờ.
+ *
+ * Lưu ý:
+ * SoLuong_SanPham là tổng sản lượng hiện tại của mốc giờ,
+ * không phải số lượng tăng thêm.
+ */
+router.post('/tiendosanxuat-mocgio', async (req, res) => {
+    try {
+        let {
+            ID_KeHoachSanXuat,
+            ID_DonHang_SanPham,
+            ID_DonHang_LoSanXuat,
+            NgayNhap,
+            ID_MocGio,
+            SoLuong_SanPham
+        } = req.body || {};
+
+        // Chuẩn hóa các trường số
+        ID_KeHoachSanXuat = Number(ID_KeHoachSanXuat);
+        ID_DonHang_SanPham = Number(ID_DonHang_SanPham);
+        ID_DonHang_LoSanXuat = Number(ID_DonHang_LoSanXuat);
+        ID_MocGio = Number(ID_MocGio);
+        SoLuong_SanPham = Number(SoLuong_SanPham);
+
+        if (
+            !Number.isInteger(ID_KeHoachSanXuat) ||
+            ID_KeHoachSanXuat <= 0
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message: 'ID_KeHoachSanXuat không hợp lệ.'
+            });
+        }
+
+        if (
+            !Number.isInteger(ID_DonHang_SanPham) ||
+            ID_DonHang_SanPham <= 0
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message: 'ID_DonHang_SanPham không hợp lệ.'
+            });
+        }
+
+        if (
+            !Number.isInteger(ID_DonHang_LoSanXuat) ||
+            ID_DonHang_LoSanXuat <= 0
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message: 'ID_DonHang_LoSanXuat không hợp lệ.'
+            });
+        }
+
+        if (
+            !Number.isInteger(ID_MocGio) ||
+            ID_MocGio < 0 ||
+            ID_MocGio > 255
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message: 'ID_MocGio không hợp lệ, giá trị phải từ 0 đến 255.'
+            });
+        }
+
+        if (
+            !Number.isFinite(SoLuong_SanPham) ||
+            SoLuong_SanPham < 0
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message: 'SoLuong_SanPham không hợp lệ hoặc nhỏ hơn 0.'
+            });
+        }
+
+        // DECIMAL(18,2) chỉ cho phép tối đa 2 chữ số thập phân
+        if (!Number.isInteger(SoLuong_SanPham * 100)) {
+            return res.status(400).json({
+                ok: false,
+                message: 'SoLuong_SanPham chỉ được có tối đa 2 chữ số thập phân.'
+            });
+        }
+
+        if (!isValidDateString(NgayNhap)) {
+            return res.status(400).json({
+                ok: false,
+                message: 'NgayNhap không hợp lệ, định dạng yêu cầu là yyyy-MM-dd.'
+            });
+        }
+
+        const pool = await testpoolPromise;
+
+        const result = await pool.request()
+            .input('ID_KeHoachSanXuat', sql.Int, ID_KeHoachSanXuat)
+            .input('ID_DonHang_SanPham', sql.Int, ID_DonHang_SanPham)
+            .input('ID_DonHang_LoSanXuat', sql.Int, ID_DonHang_LoSanXuat)
+            .input('NgayNhap', sql.Date, NgayNhap)
+            .input('ID_MocGio', sql.TinyInt, ID_MocGio)
+            .input('SoLuong_SanPham', sql.Decimal(18, 2), SoLuong_SanPham)
+            .execute('TAG_QLSX.dbo.NangSuat_TienDoSanSuat_MocGio_CNPN');
+
+        return res.status(200).json({
+            ok: true,
+            message: 'Cập nhật tiến độ sản xuất theo mốc giờ thành công.',
+            data: {
+                ID_KeHoachSanXuat,
+                ID_DonHang_SanPham,
+                ID_DonHang_LoSanXuat,
+                NgayNhap,
+                ID_MocGio,
+                SoLuong_SanPham
+            },
+            rowsAffected: result.rowsAffected || []
+        });
+    } catch (error) {
+        console.error('[POST /tiendosanxuat-mocgio] error:', error);
+
+        return res.status(500).json({
+            ok: false,
+            message:
+                error.message ||
+                'Không thể cập nhật tiến độ sản xuất theo mốc giờ.'
+        });
+    }
+});
+
+router.post(
+    '/thongtin-tiendosanxuat-mocgio',
+    async (req, res) => {
+        try {
+            let {
+                ID_KeHoachSanXuat,
+                ID_DonHang_SanPham,
+                ID_DonHang_LoSanXuat,
+                NgayNhap
+            } = req.body || {};
+
+            ID_KeHoachSanXuat = Number(
+                ID_KeHoachSanXuat
+            );
+
+            ID_DonHang_SanPham = Number(
+                ID_DonHang_SanPham
+            );
+
+            ID_DonHang_LoSanXuat = Number(
+                ID_DonHang_LoSanXuat
+            );
+
+            if (
+                !Number.isInteger(ID_KeHoachSanXuat) ||
+                ID_KeHoachSanXuat <= 0
+            ) {
+                return res.status(400).json({
+                    ok: false,
+                    message:
+                        'ID_KeHoachSanXuat không hợp lệ.'
+                });
+            }
+
+            if (
+                !Number.isInteger(ID_DonHang_SanPham) ||
+                ID_DonHang_SanPham <= 0
+            ) {
+                return res.status(400).json({
+                    ok: false,
+                    message:
+                        'ID_DonHang_SanPham không hợp lệ.'
+                });
+            }
+
+            if (
+                !Number.isInteger(ID_DonHang_LoSanXuat) ||
+                ID_DonHang_LoSanXuat <= 0
+            ) {
+                return res.status(400).json({
+                    ok: false,
+                    message:
+                        'ID_DonHang_LoSanXuat không hợp lệ.'
+                });
+            }
+
+            if (
+                typeof NgayNhap !== 'string' ||
+                !/^\d{4}-\d{2}-\d{2}$/.test(NgayNhap)
+            ) {
+                return res.status(400).json({
+                    ok: false,
+                    message:
+                        'NgayNhap phải có định dạng yyyy-MM-dd.'
+                });
+            }
+
+            const pool = await testpoolPromise;
+
+            const result = await pool.request()
+                .input(
+                    'ID_KeHoachSanXuat',
+                    sql.Int,
+                    ID_KeHoachSanXuat
+                )
+                .input(
+                    'ID_DonHang_SanPham',
+                    sql.Int,
+                    ID_DonHang_SanPham
+                )
+                .input(
+                    'ID_DonHang_LoSanXuat',
+                    sql.Int,
+                    ID_DonHang_LoSanXuat
+                )
+                .input(
+                    'NgayNhap',
+                    sql.Date,
+                    NgayNhap
+                )
+                .execute(
+                    'TAG_QLSX.dbo.NangSuat_Get_TienDoSanXuat_MocGio'
+                );
+
+            const danhSachMocGio =
+                result.recordsets?.[0] || [];
+
+            const thongTinTong =
+                result.recordsets?.[1]?.[0] || {
+                    TongSoLuong_SanPham: 0
+                };
+
+            return res.status(200).json({
+                ok: true,
+                data: {
+                    ID_KeHoachSanXuat,
+                    ID_DonHang_SanPham,
+                    ID_DonHang_LoSanXuat,
+                    NgayNhap,
+
+                    TongSoLuong_SanPham:
+                        thongTinTong.TongSoLuong_SanPham,
+
+                    danhSachMocGio
+                }
+            });
+        } catch (error) {
+            console.error(
+                '[POST /thongtin-tiendosanxuat-mocgio] error:',
+                error
+            );
+
+            return res.status(500).json({
+                ok: false,
+                message:
+                    error.message ||
+                    'Không thể lấy tiến độ sản xuất.'
+            });
+        }
+    }
+);
+
+router.post('/chatluong-mocgio', async (req, res) => {
+    try {
+        let {
+            ID_KeHoachSanXuat,
+            ID_DonHang_SanPham,
+            ID_DonHang_LoSanXuat,
+            NgayNhap,
+            ID_MocGio,
+            SoLuong_Dat,
+            SoLuong_KhongDat,
+            DanhSachLoi
+        } = req.body || {};
+
+        DanhSachLoi = Array.isArray(DanhSachLoi)
+            ? DanhSachLoi
+            : [];
+
+        ID_KeHoachSanXuat =
+            Number(ID_KeHoachSanXuat);
+
+        ID_DonHang_SanPham =
+            Number(ID_DonHang_SanPham);
+
+        ID_DonHang_LoSanXuat =
+            Number(ID_DonHang_LoSanXuat);
+
+        ID_MocGio = Number(ID_MocGio);
+        SoLuong_Dat = Number(SoLuong_Dat);
+        SoLuong_KhongDat = Number(SoLuong_KhongDat);
+
+        if (
+            !Number.isInteger(ID_KeHoachSanXuat) ||
+            ID_KeHoachSanXuat <= 0
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message:
+                    'ID_KeHoachSanXuat không hợp lệ.'
+            });
+        }
+
+        if (
+            !Number.isInteger(ID_DonHang_SanPham) ||
+            ID_DonHang_SanPham <= 0
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message:
+                    'ID_DonHang_SanPham không hợp lệ.'
+            });
+        }
+
+        if (
+            !Number.isInteger(ID_DonHang_LoSanXuat) ||
+            ID_DonHang_LoSanXuat <= 0
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message:
+                    'ID_DonHang_LoSanXuat không hợp lệ.'
+            });
+        }
+
+        if (
+            !Number.isInteger(ID_MocGio) ||
+            ID_MocGio <= 0 ||
+            ID_MocGio > 255
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message: 'ID_MocGio không hợp lệ.'
+            });
+        }
+
+        if (
+            typeof NgayNhap !== 'string' ||
+            !/^\d{4}-\d{2}-\d{2}$/.test(NgayNhap)
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message:
+                    'NgayNhap phải có định dạng yyyy-MM-dd.'
+            });
+        }
+
+        if (
+            !Number.isFinite(SoLuong_Dat) ||
+            SoLuong_Dat < 0
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message: 'SoLuong_Dat không hợp lệ.'
+            });
+        }
+
+        if (
+            !Number.isFinite(SoLuong_KhongDat) ||
+            SoLuong_KhongDat < 0
+        ) {
+            return res.status(400).json({
+                ok: false,
+                message:
+                    'SoLuong_KhongDat không hợp lệ.'
+            });
+        }
+
+        const maLoiDaCo = new Set();
+
+        for (
+            let index = 0;
+            index < DanhSachLoi.length;
+            index++
+        ) {
+            const loi = DanhSachLoi[index];
+
+            if (
+                typeof loi.MaLoi !== 'string' ||
+                loi.MaLoi.trim() === ''
+            ) {
+                return res.status(400).json({
+                    ok: false,
+                    message:
+                        `DanhSachLoi[${index}].MaLoi không hợp lệ.`
+                });
+            }
+
+            if (
+                typeof loi.TenLoi !== 'string' ||
+                loi.TenLoi.trim() === ''
+            ) {
+                return res.status(400).json({
+                    ok: false,
+                    message:
+                        `DanhSachLoi[${index}].TenLoi không hợp lệ.`
+                });
+            }
+
+            const maLoi = loi.MaLoi.trim();
+
+            if (maLoiDaCo.has(maLoi)) {
+                return res.status(400).json({
+                    ok: false,
+                    message:
+                        `Mã lỗi ${maLoi} bị trùng trong DanhSachLoi.`
+                });
+            }
+
+            maLoiDaCo.add(maLoi);
+
+            loi.MaLoi = maLoi;
+            loi.TenLoi = loi.TenLoi.trim();
+            loi.SoLuong_Loi =
+                Number(loi.SoLuong_Loi);
+
+            if (
+                !Number.isFinite(loi.SoLuong_Loi) ||
+                loi.SoLuong_Loi < 0
+            ) {
+                return res.status(400).json({
+                    ok: false,
+                    message:
+                        `DanhSachLoi[${index}].SoLuong_Loi không hợp lệ.`
+                });
+            }
+
+            if (
+                loi.ThoiGian_CapNhat &&
+                Number.isNaN(
+                    Date.parse(loi.ThoiGian_CapNhat)
+                )
+            ) {
+                return res.status(400).json({
+                    ok: false,
+                    message:
+                        `DanhSachLoi[${index}].ThoiGian_CapNhat không hợp lệ.`
+                });
+            }
+        }
+
+        const pool = await testpoolPromise;
+
+        const result = await pool.request()
+            .input(
+                'ID_KeHoachSanXuat',
+                sql.Int,
+                ID_KeHoachSanXuat
+            )
+            .input(
+                'ID_DonHang_SanPham',
+                sql.Int,
+                ID_DonHang_SanPham
+            )
+            .input(
+                'ID_DonHang_LoSanXuat',
+                sql.Int,
+                ID_DonHang_LoSanXuat
+            )
+            .input(
+                'NgayNhap',
+                sql.Date,
+                NgayNhap
+            )
+            .input(
+                'ID_MocGio',
+                sql.TinyInt,
+                ID_MocGio
+            )
+            .input(
+                'SoLuong_Dat',
+                sql.Decimal(18, 2),
+                SoLuong_Dat
+            )
+            .input(
+                'SoLuong_KhongDat',
+                sql.Decimal(18, 2),
+                SoLuong_KhongDat
+            )
+            .input(
+                'DanhSachLoi',
+                sql.NVarChar(sql.MAX),
+                JSON.stringify(DanhSachLoi)
+            )
+            .execute(
+                'TAG_QLSX.dbo.NangSuat_Update_ChatLuong_MocGio'
+            );
+
+        const ketQua = result.recordsets?.[0]?.[0];
+        const danhSachLoiDaLuu =
+            result.recordsets?.[1] || [];
+
+        if (!ketQua) {
+            return res.status(500).json({
+                ok: false,
+                message:
+                    'Stored procedure không trả kết quả.'
+            });
+        }
+
+        if (!ketQua.Success) {
+            return res.status(400).json({
+                ok: false,
+                message: ketQua.Message
+            });
+        }
+
+        return res.status(200).json({
+            ok: true,
+            message: ketQua.Message,
+            data: {
+                ID_KeHoachSanXuat:
+                    ketQua.ID_KeHoachSanXuat,
+                ID_DonHang_SanPham:
+                    ketQua.ID_DonHang_SanPham,
+                ID_DonHang_LoSanXuat:
+                    ketQua.ID_DonHang_LoSanXuat,
+                Ngay: ketQua.Ngay,
+                ID_MocGio: ketQua.ID_MocGio,
+                SoLuong_Dat: ketQua.SoLuong_Dat,
+                SoLuong_KhongDat:
+                    ketQua.SoLuong_KhongDat,
+                DanhSachLoi: danhSachLoiDaLuu
+            }
+        });
+    } catch (error) {
+        console.error(
+            '[POST /chatluong-mocgio] error:',
+            error
+        );
+
+        return res.status(500).json({
+            ok: false,
+            message:
+                error.message ||
+                'Không thể cập nhật chất lượng và lỗi.'
+        });
+    }
+});
 module.exports = router

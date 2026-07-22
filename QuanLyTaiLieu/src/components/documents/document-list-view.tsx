@@ -10,6 +10,12 @@ import {
 import { DocumentFilterBar } from "@/components/documents/document-filter-bar";
 import { DocumentFileDialog } from "@/components/documents/document-file-dialog";
 import { DeleteDocumentButton } from "@/components/documents/actions";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { formatDate } from "@/lib/utils";
 import type { AppRole, DocumentListItem, DocumentType } from "@/types/document";
 
@@ -102,8 +108,13 @@ export function DocumentListView({
           </div>
         </div>
 
-        <div className="overflow-hidden">
-          <table className="w-full table-fixed text-sm">
+        <div className="overflow-x-auto">
+          <TooltipProvider>
+          <table
+            className={`w-full table-fixed text-sm ${
+              isVersioned ? "min-w-[1120px]" : "min-w-[1500px]"
+            }`}
+          >
             <colgroup>
               {isVersioned ? (
                 <>
@@ -186,6 +197,7 @@ export function DocumentListView({
               )}
             </tbody>
           </table>
+          </TooltipProvider>
         </div>
       </div>
     </div>
@@ -202,9 +214,14 @@ function CellText({ value, className = "" }: CellTextProps) {
   const cellClassName = `block min-w-0 max-w-full truncate ${className}`.trim();
 
   return (
-    <span className={cellClassName} title={displayValue}>
-      {displayValue}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cellClassName} tabIndex={0}>
+          {displayValue}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{displayValue}</TooltipContent>
+    </Tooltip>
   );
 }
 function DocumentTableRow({
@@ -235,13 +252,17 @@ function DocumentTableRow({
   return (
     <tr className="transition hover:bg-slate-50">
       <td className="px-4 py-4">
-        <Link
-          href={`/documents/${typeCode}/${document.id}`}
-          className="block min-w-0 max-w-full truncate font-semibold text-foreground transition hover:text-blue-700"
-          title={document.title}
-        >
-          {document.title}
-        </Link>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link
+              href={`/documents/${typeCode}/${document.id}`}
+              className="block min-w-0 max-w-full whitespace-normal break-words font-semibold leading-5 text-foreground transition hover:text-blue-700"
+            >
+              {document.title}
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent>{document.title}</TooltipContent>
+        </Tooltip>
       </td>
 
       <td className="px-4 py-4">
@@ -267,9 +288,17 @@ function DocumentTableRow({
 
       {isVersioned ? (
         <td className="px-4 py-4">
-          <span className="inline-flex items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
-            {document.currentVersionNo || "-"}
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="inline-flex items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700"
+                tabIndex={0}
+              >
+                {document.currentVersionNo || "-"}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{document.currentVersionNo || "-"}</TooltipContent>
+          </Tooltip>
         </td>
       ) : (
         <>
@@ -281,24 +310,31 @@ function DocumentTableRow({
           </td>
 
           <td className="px-4 py-4">
-            <div className="min-w-32">
-              <div className="mb-1 flex items-center justify-between text-xs">
-                <span className="text-slate-500">
-                  {completedCount}/{assignmentCount}
-                </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="min-w-32" tabIndex={0}>
+                  <div className="mb-1 flex items-center justify-between text-xs">
+                    <span className="text-slate-500">
+                      {completedCount}/{assignmentCount}
+                    </span>
 
-                <span className="font-semibold text-slate-700">
-                  {progress}%
-                </span>
-              </div>
+                    <span className="font-semibold text-slate-700">
+                      {progress}%
+                    </span>
+                  </div>
 
-              <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                <div
-                  className="h-full rounded-full bg-emerald-500"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full bg-emerald-500"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                {completedCount}/{assignmentCount} hoàn thành ({progress}%)
+              </TooltipContent>
+            </Tooltip>
           </td>
 
           <td className="px-4 py-4 text-slate-700">

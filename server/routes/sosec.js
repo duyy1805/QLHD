@@ -344,7 +344,7 @@ router.put("/expense-reviewers/:maLoaiChiPhi", verifyToken, async (req, res) => 
         await transaction.commit();
         res.json({ maLoaiChiPhi, userIds });
     } catch (err) {
-        try { await transaction.rollback(); } catch {}
+        try { await transaction.rollback(); } catch { }
         return httpError(res, err, "Không lưu được người phụ trách.");
     }
 });
@@ -721,7 +721,7 @@ router.post("/phieu", async (req, res) => {
         const normalizedLoaiSec = loaiSec === "NgoaiTe" ? "NgoaiTe" : "VND";
         const normalizedLoaiTien = normalizedLoaiSec === "VND" ? "VND" : String(maLoaiTien || "").trim().toUpperCase();
         const normalizedLoaiChiPhi = normalizedLoaiSec === "NgoaiTe" ? "Khac" : maLoaiChiPhi;
-        if (!["TienDien", "TienGiaCong", "Khac"].includes(normalizedLoaiChiPhi)) {
+        if (!["TienDien", "TienGiaCong", "Khac", "TienXDCB"].includes(normalizedLoaiChiPhi)) {
             return res.status(400).json({ message: "Vui long chon loai chi phi hop le." });
         }
         if (normalizedLoaiSec === "NgoaiTe" && (!normalizedLoaiTien || normalizedLoaiTien === "VND")) {

@@ -236,5 +236,66 @@ Content-Type: application/json
   "ID_GiamDinhVT": 128709
 }
 
+###
+# Lấy danh sách kế hoạch sản xuất
+GET https://nodeapi.z76.vn/khotmtest/kehoachsanxuat
+Accept: application/json
+
+###
+# Cập nhật tổng sản lượng tại một mốc giờ
+# Lấy các ID hợp lệ từ kết quả API kehoachsanxuat ở trên.
+# SoLuong_SanPham là tổng sản lượng hiện tại, không phải số lượng tăng thêm.
+POST https://nodeapi.z76.vn/khotmtest/tiendosanxuat-mocgio
+Content-Type: application/json
+Accept: application/json
+
+{
+  "ID_KeHoachSanXuat": 1,
+  "ID_DonHang_SanPham": 1,
+  "ID_DonHang_LoSanXuat": 1,
+  "NgayNhap": "2026-07-20",
+  "ID_MocGio": 1,
+  "SoLuong_SanPham": 100
+}
 
 
+###
+POST https://nodeapi.z76.vn/khotmtest/thongtin-tiendosanxuat-mocgio
+Content-Type: application/json
+Accept: application/json
+
+{
+  "ID_KeHoachSanXuat": 1,
+  "ID_DonHang_SanPham": 1,
+  "ID_DonHang_LoSanXuat": 1,
+  "NgayNhap": "2026-07-20"
+}
+
+###
+POST https://nodeapi.z76.vn/khotmtest/chatluong-mocgio
+Content-Type: application/json
+Accept: application/json
+
+{
+  "ID_KeHoachSanXuat": 1,
+  "ID_DonHang_SanPham": 1,
+  "ID_DonHang_LoSanXuat": 1,
+  "NgayNhap": "2026-07-20",
+  "ID_MocGio": 1,
+  "SoLuong_Dat": 90,
+  "SoLuong_KhongDat": 10,
+  "DanhSachLoi": [
+    {
+      "MaLoi": "L001",
+      "TenLoi": "Lỗi đường may",
+      "SoLuong_Loi": 6,
+      "ThoiGian_CapNhat": "2026-07-20T08:30:00"
+    },
+    {
+      "MaLoi": "L002",
+      "TenLoi": "Bẩn sản phẩm",
+      "SoLuong_Loi": 4,
+      "ThoiGian_CapNhat": "2026-07-20T08:30:00"
+    }
+  ]
+}
