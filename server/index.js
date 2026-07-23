@@ -24,7 +24,28 @@ const erp_plp = require('./routes/ERP/erp_plp');
 const thuthapRouter = require('./routes/thuthap.routes');
 const app = express();
 app.use(express.json());
-app.use(cors());
+const configuredOrigins = String(process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+const isAllowedOrigin = (origin) => {
+    if (!origin) return true;
+    if (configuredOrigins.includes(origin)) return true;
+    try {
+        const url = new URL(origin);
+        const isLocal = ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
+        const isZ76 = url.protocol === 'https:' && (url.hostname === 'z76.vn' || url.hostname.endsWith('.z76.vn'));
+        return isLocal || isZ76;
+    } catch {
+        return false;
+    }
+};
+app.use(cors({
+    origin(origin, callback) {
+        callback(isAllowedOrigin(origin) ? null : new Error('Origin is not allowed by CORS'), isAllowedOrigin(origin));
+    },
+    credentials: true,
+}));
 
 // Định nghĩa route
 

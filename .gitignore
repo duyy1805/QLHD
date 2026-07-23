@@ -18,6 +18,7 @@ QuanLyTaiLieu/.vercel/
 *.log
 
 *.env
+server/client_secret_*.json
 
 node_modules
 .next
@@ -28,3 +29,4 @@ logs
 *.bak
 *.zip
 *.sql
+!server/migrations/20260722_erp_otp.sql

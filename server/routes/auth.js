@@ -4,6 +4,12 @@ const argon2 = require('argon2')
 const jwt = require('jsonwebtoken')
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const { poolPromise } = require('../db');
+const {
+	erpOtpLogin,
+	verifyOtp,
+	resendOtp,
+	logoutTrustedDevice,
+} = require('../utils/erpOtpAuth');
 
 
 router.get('/users', async (req, res) => {
@@ -101,6 +107,8 @@ router.post('/register', async (req, res) => {
 // @desc Login user
 // @access Public
 router.post('/login', async (req, res) => {
+	if (req.body?.authFlow === 'erp-otp') return erpOtpLogin(req, res);
+
 	const { username, password } = req.body;
 
 	// Simple validation
@@ -240,5 +248,10 @@ router.post('/verify-token', (req, res) => {
 		res.status(200).json({ success: true, message: 'Token is valid' });
 	});
 });
+
+router.post('/otp/verify', verifyOtp);
+router.post('/otp/resend', resendOtp);
+router.post('/otp/logout', logoutTrustedDevice);
+
 module.exports = router
 
