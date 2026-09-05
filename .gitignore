@@ -29,4 +29,3 @@ logs
 *.bak
 *.zip
 *.sql
-!server/migrations/20260722_erp_otp.sql
