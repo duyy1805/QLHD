@@ -6,7 +6,99 @@ const { verifyToken, verifyAdmin } = require('../../middleware/auth');
 const { tagpoolPromise } = require('../../db2');
 const sql = require('mssql');
 const checkApiKey = require('../../middleware/apiKey');
+const XLSX = require('xlsx');
 
+function normalizeOptionalString(value, maxLength) {
+    if (value === undefined || value === null) return null;
+
+    const normalized = String(value).trim();
+    if (!normalized) return null;
+
+    return normalized.slice(0, maxLength);
+}
+
+async function getDanhMucVatTuNhaCungCap(nhaCungCap, maVatTu) {
+    const pool = await tagpoolPromise;
+
+    return pool.request()
+        .input('NhaCungCap', sql.NVarChar(255), nhaCungCap)
+        .input('MaVatTu', sql.NVarChar(30), maVatTu)
+        .execute('dbo.Lay_DanhMuc_VatTu_NhaCungCap');
+}
+
+/**
+ * GET /erp/danh-muc-vat-tu-nha-cung-cap
+ *
+ * Query:
+ * - nhaCungCap: lọc gần đúng theo tên nhà cung cấp
+ * - maVatTu: lọc gần đúng theo mã vật tư
+ */
+router.get('/danh-muc-vat-tu-nha-cung-cap', async (req, res) => {
+    try {
+        const nhaCungCap = normalizeOptionalString(req.query.nhaCungCap, 255);
+        const maVatTu = normalizeOptionalString(req.query.maVatTu, 30);
+        const result = await getDanhMucVatTuNhaCungCap(nhaCungCap, maVatTu);
+        const data = result.recordset || [];
+
+        return res.status(200).json({
+            ok: true,
+            count: data.length,
+            filters: { nhaCungCap, maVatTu },
+            data
+        });
+    } catch (error) {
+        console.error('[GET /danh-muc-vat-tu-nha-cung-cap] error:', error);
+        return res.status(500).json({
+            ok: false,
+            message: error.message || 'Không thể lấy danh mục vật tư - nhà cung cấp.'
+        });
+    }
+});
+
+router.get('/danh-muc-vat-tu-nha-cung-cap/export.xlsx', async (req, res) => {
+    try {
+        const nhaCungCap = normalizeOptionalString(req.query.nhaCungCap, 255);
+        const maVatTu = normalizeOptionalString(req.query.maVatTu, 30);
+        const result = await getDanhMucVatTuNhaCungCap(nhaCungCap, maVatTu);
+        const data = result.recordset || [];
+        const worksheet = XLSX.utils.json_to_sheet(data);
+
+        worksheet['!cols'] = Object.keys(data[0] || {}).map((column) => ({
+            wch: Math.min(
+                45,
+                Math.max(
+                    column.length + 2,
+                    ...data.slice(0, 500).map((row) => String(row[column] ?? '').length + 2)
+                )
+            )
+        }));
+
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Vật tư - NCC');
+        const buffer = XLSX.write(workbook, {
+            type: 'buffer',
+            bookType: 'xlsx',
+            cellDates: true
+        });
+        const date = new Date().toISOString().slice(0, 10);
+
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="danh-muc-vat-tu-nha-cung-cap-${date}.xlsx"`
+        );
+        return res.send(buffer);
+    } catch (error) {
+        console.error('[GET /danh-muc-vat-tu-nha-cung-cap/export.xlsx] error:', error);
+        return res.status(500).json({
+            ok: false,
+            message: error.message || 'Không thể xuất danh mục vật tư - nhà cung cấp.'
+        });
+    }
+});
 
 router.post('/dinhmucvattu', checkApiKey, async (req, res) => {
     try {
@@ -44,7 +136,7 @@ router.post('/dinhmucvattu', checkApiKey, async (req, res) => {
         const result = await pool.request()
             // .input('ItemCode', sql.NVarChar(50), ItemCode)   // đúng độ dài như stored
             .input('ID_DonHang', sql.Int, ID_DonHang)
-            .execute('dbo.DonHang_VatTu_DinhMuc_ChiTiet');
+            .execute('dbo.DonHang_VatTu_DinhMuc_ChiTiet2');
 
         const dinhmucvattu = result.recordset || []; // recordset đầu tiên
         return res.json({ ok: true, count: dinhmucvattu.length, dinhmucvattu });
@@ -204,6 +296,92 @@ function isValidDateString(value) {
     );
 }
 
+function parseBooleanQuery(value, defaultValue = false) {
+    if (value === undefined || value === null || value === '') return defaultValue;
+
+    const normalized = String(value).trim().toLowerCase();
+    if (['true', '1', 'yes', 'x'].includes(normalized)) return true;
+    if (['false', '0', 'no'].includes(normalized)) return false;
+
+    return null;
+}
+
+/**
+ * GET /erp/phieu-nhap-btp
+ *
+ * Query:
+ * - tuNgay, denNgay: bắt buộc, định dạng yyyy-MM-dd (tính cả ngày đến)
+ * - idKho: không bắt buộc; ví dụ Kho BTP.M có ID 5
+ * - baoGomChuaGhiThe: true/false, mặc định false
+ */
+router.get('/phieu-nhap-btp', async (req, res) => {
+    try {
+        const tuNgay = String(req.query.tuNgay || '').trim();
+        const denNgay = String(req.query.denNgay || '').trim();
+        const baoGomChuaGhiThe = parseBooleanQuery(req.query.baoGomChuaGhiThe);
+
+        if (!isValidDateString(tuNgay) || !isValidDateString(denNgay)) {
+            return res.status(400).json({
+                ok: false,
+                message: 'tuNgay và denNgay là bắt buộc, định dạng yyyy-MM-dd.'
+            });
+        }
+
+        if (tuNgay > denNgay) {
+            return res.status(400).json({
+                ok: false,
+                message: 'tuNgay không được lớn hơn denNgay.'
+            });
+        }
+
+        if (baoGomChuaGhiThe === null) {
+            return res.status(400).json({
+                ok: false,
+                message: 'baoGomChuaGhiThe chỉ nhận true/false hoặc 1/0.'
+            });
+        }
+
+        let idKho = null;
+        if (req.query.idKho !== undefined && String(req.query.idKho).trim() !== '') {
+            idKho = Number(req.query.idKho);
+            if (!Number.isInteger(idKho) || idKho <= 0 || idKho > 32767) {
+                return res.status(400).json({
+                    ok: false,
+                    message: 'idKho không hợp lệ.'
+                });
+            }
+        }
+
+        const pool = await tagpoolPromise;
+        const result = await pool.request()
+            .input('TuNgay', sql.Date, tuNgay)
+            .input('DenNgay', sql.Date, denNgay)
+            .input('ID_Kho', sql.SmallInt, idKho)
+            .input('BaoGomChuaGhiThe', sql.Bit, baoGomChuaGhiThe)
+            .execute('dbo.pr_ERP_PhieuNhapBTP_DanhSach');
+
+        const data = result.recordset || [];
+
+        return res.status(200).json({
+            ok: true,
+            count: data.length,
+            filters: {
+                tuNgay,
+                denNgay,
+                idKho,
+                baoGomChuaGhiThe
+            },
+            data
+        });
+    } catch (error) {
+        console.error('[GET /phieu-nhap-btp] error:', error);
+        return res.status(500).json({
+            ok: false,
+            message: error.message || 'Không thể lấy danh sách phiếu nhập BTP.'
+        });
+    }
+});
+
 /**
  * GET /kehoachsanxuat
  *
@@ -212,10 +390,18 @@ function isValidDateString(value) {
  */
 router.get('/kehoachsanxuat', async (req, res) => {
     try {
+        const { Ten_DonVi } = req.query;
+
+        const tenDonVi =
+            typeof Ten_DonVi === 'string' && Ten_DonVi.trim() !== ''
+                ? Ten_DonVi.trim()
+                : null;
+
         const pool = await tagpoolPromise;
 
         const result = await pool.request()
-            .execute('dbo.NangSuat_Get_KeHoachSanXuat_Ngay');
+            .input('Ten_DonVi', sql.NVarChar(255), tenDonVi)
+            .execute('TAG_QLSX.dbo.NangSuat_KeHoachNgay_CNPN');
 
         const keHoachSanXuat = result.recordset || [];
 
@@ -224,6 +410,7 @@ router.get('/kehoachsanxuat', async (req, res) => {
             count: keHoachSanXuat.length,
             keHoachSanXuat
         });
+
     } catch (error) {
         console.error('[GET /kehoachsanxuat] error:', error);
 

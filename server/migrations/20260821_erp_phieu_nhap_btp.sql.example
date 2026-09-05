@@ -1,0 +1,67 @@
+CREATE OR ALTER PROCEDURE dbo.pr_ERP_PhieuNhapBTP_DanhSach
+    @TuNgay DATE,
+    @DenNgay DATE,
+    @ID_Kho SMALLINT = NULL,
+    @BaoGomChuaGhiThe BIT = 0
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF @TuNgay IS NULL OR @DenNgay IS NULL
+        THROW 50001, N'Từ ngày và đến ngày là bắt buộc.', 1;
+
+    IF @TuNgay > @DenNgay
+        THROW 50002, N'Từ ngày không được lớn hơn đến ngày.', 1;
+
+    SELECT
+        pn.So_PhieuNhapBTP AS soPhieuNhap,
+        pn.Ngay_NhapBTP AS ngay,
+        qt.Ten_QuyTrinhSanXuat AS loaiBtp,
+        kho.Ten_Kho AS khoNhap,
+        dh.Ma_DonHang AS maDonHang,
+        lo.So_LoSanXuat AS loSanXuat,
+        dhsp.Ten_SanPham AS tenSanPham,
+        COALESCE(dhqt.ItemCode, dhsp.ItemCode) AS itemCode,
+        dvt.Ten_DonViTinh AS donViTinh,
+        ct.SoLuong_NhapKho AS soLuongNhapKho
+    FROM dbo.PhieuNhapBTP AS pn
+    INNER JOIN dbo.PhieuNhapBTP_ChiTiet AS ct
+        ON ct.ID_PhieuNhapBTP = pn.ID_PhieuNhapBTP
+    INNER JOIN dbo.DM_QuyTrinhSanXuat AS qt
+        ON qt.ID_QuyTrinhSanXuat = pn.ID_QuyTrinhSanXuat
+    INNER JOIN dbo.DM_Kho AS kho
+        ON kho.ID_Kho = pn.ID_KhoNhap
+    LEFT JOIN dbo.DonHang AS dh
+        ON dh.ID_DonHang = ct.ID_DonHang
+    LEFT JOIN dbo.DonHang_LoSanXuat AS lo
+        ON lo.ID_DonHang_LoSanXuat = ct.ID_DonHang_LoSanXuat
+    LEFT JOIN dbo.DonHang_SanPham AS dhsp
+        ON dhsp.ID_DonHang_SanPham = ct.ID_DonHang_SanPham
+    LEFT JOIN dbo.DonHang_QuyTrinhSanXuat AS dhqt
+        ON dhqt.ID_DonHang = ct.ID_DonHang
+        AND dhqt.ID_QuyTrinhSanXuat = pn.ID_QuyTrinhSanXuat
+    LEFT JOIN dbo.DM_DonViTinh AS dvt
+        ON dvt.ID_DonViTinh = COALESCE(
+            dhqt.ID_DonViTinh,
+            qt.ID_DonViTinh,
+            dhsp.ID_DonViTinh
+        )
+    WHERE pn.TonTai = 1
+        AND pn.Ngay_NhapBTP >= @TuNgay
+        AND pn.Ngay_NhapBTP < DATEADD(DAY, 1, @DenNgay)
+        AND (@ID_Kho IS NULL OR pn.ID_KhoNhap = @ID_Kho)
+        AND (@BaoGomChuaGhiThe = 1 OR pn.TrangThai >= 5)
+    ORDER BY
+        pn.Ngay_NhapBTP,
+        pn.So_PhieuNhapBTP,
+        dh.Ma_DonHang,
+        lo.So_LoSanXuat,
+        dhsp.ItemCode;
+END;
+
+-- Ví dụ lấy đúng khoảng ngày và Kho BTP.M trong ảnh:
+-- EXEC dbo.pr_ERP_PhieuNhapBTP_DanhSach
+--     @TuNgay = '2026-08-17',
+--     @DenNgay = '2026-08-22',
+--     @ID_Kho = 5,
+--     @BaoGomChuaGhiThe = 1;

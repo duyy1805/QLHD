@@ -7,6 +7,7 @@ const path = require('path');
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const { hrpoolPromise } = require('../db1');
 const sql = require('mssql');
+const { deriveLeaveWorkflowState } = require('../utils/leaveWorkflowStatus');
 
 
 async function generateApplyLeaveID(pool) {
@@ -146,9 +147,33 @@ router.get('/apply-leaves/:employeeId', async (req, res) => {
             .input('EmployeeID', sql.VarChar(20), employeeId)
             .execute('HR.SP_HR_GetApplyLeavesByEmployeeID');
 
+        const processResult = await pool.request()
+            .input('EmployeeID', sql.VarChar(20), employeeId)
+            .query(`
+                SELECT p.RowGuid, p.RecordGuid, p.JobTitleName, p.SortOrder
+                FROM HR.ApplyLeaveProcess p
+                INNER JOIN HR.ApplyLeaves al ON al.RowGuid = p.RecordGuid
+                WHERE al.EmployeeID = @EmployeeID
+            `);
+
+        const processByRecord = processResult.recordset.reduce((groups, process) => {
+            const recordGuid = String(process.RecordGuid).toLowerCase();
+            if (!groups.has(recordGuid)) groups.set(recordGuid, []);
+            groups.get(recordGuid).push(process);
+            return groups;
+        }, new Map());
+
+        const data = result.recordset.map((leave) => ({
+            ...leave,
+            ...deriveLeaveWorkflowState(
+                leave.Status,
+                processByRecord.get(String(leave.RowGuid).toLowerCase()) || []
+            ),
+        }));
+
         res.json({
             success: true,
-            data: result.recordset
+            data
         });
     } catch (err) {
         console.error('Lỗi lấy danh sách phiếu nghỉ phép:', err);
@@ -160,15 +185,46 @@ router.get('/apply-leaves/:employeeId', async (req, res) => {
 });
 
 router.post('/approve-leave', async (req, res) => {
-    const { RowGuid, LoginName, Comment } = req.body;
+    const { RowGuid, ProcessRowGuid, SortOrder, LoginName, Comment } = req.body;
 
-    if (!RowGuid || !LoginName) {
-        return res.status(400).json({ success: false, message: 'Thiếu RowGuid hoặc LoginName' });
+    if (!RowGuid || !ProcessRowGuid || !LoginName || !Number.isInteger(Number(SortOrder))) {
+        return res.status(400).json({
+            success: false,
+            message: 'Thiếu RowGuid, ProcessRowGuid, SortOrder hoặc LoginName'
+        });
     }
 
+    let transaction;
     try {
         const pool = await hrpoolPromise;
-        const request = pool.request();
+        transaction = new sql.Transaction(pool);
+        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+
+        const currentProcess = await new sql.Request(transaction)
+            .input('RowGuid', sql.UniqueIdentifier, RowGuid)
+            .input('ProcessRowGuid', sql.UniqueIdentifier, ProcessRowGuid)
+            .input('LoginName', sql.NVarChar(50), LoginName)
+            .input('SortOrder', sql.Int, Number(SortOrder))
+            .query(`
+                SELECT p.RowGuid
+                FROM HR.ApplyLeaveProcess p WITH (UPDLOCK, HOLDLOCK)
+                WHERE p.RowGuid = @ProcessRowGuid
+                  AND p.RecordGuid = @RowGuid
+                  AND p.LoginName = @LoginName
+                  AND p.SortOrder = @SortOrder
+                  AND p.JobTitleName = 'W'
+            `);
+
+        if (currentProcess.recordset.length === 0) {
+            await transaction.rollback();
+            transaction = null;
+            return res.status(409).json({
+                success: false,
+                message: 'Phiếu hoặc bước duyệt này đã được xử lý. Vui lòng tải lại danh sách.'
+            });
+        }
+
+        const request = new sql.Request(transaction);
 
         request.input('Database', sql.NVarChar(255), 'Z76_HR');
         request.input('scheme', sql.NVarChar(255), 'HR');
@@ -178,10 +234,31 @@ router.post('/approve-leave', async (req, res) => {
         request.input('LoginName', sql.NVarChar(50), LoginName);
         request.input('Comment', sql.NVarChar(500), Comment || 'duyệt');
 
-        await request.execute('[HR].[SP_ESHR_Workflows_Approve1]');
+        const approveResult = await request.execute('[HR].[SP_ESHR_Workflows_Approve1]');
+        const procedureResult = approveResult.recordset?.[0];
 
-        res.json({ success: true, message: 'Phiếu đã được gửi duyệt thành công.' });
+        if (procedureResult?.Error) {
+            await transaction.rollback();
+            transaction = null;
+            return res.status(400).json({ success: false, message: procedureResult.Error });
+        }
+
+        await transaction.commit();
+        transaction = null;
+
+        res.json({
+            success: true,
+            workflowCompleted: procedureResult?.Status === '1',
+            message: 'Phiếu đã được gửi duyệt thành công.'
+        });
     } catch (err) {
+        if (transaction) {
+            try {
+                await transaction.rollback();
+            } catch (rollbackError) {
+                console.error('Lỗi rollback giao dịch duyệt phiếu:', rollbackError);
+            }
+        }
         console.error('Lỗi khi duyệt phiếu:', err);
         res.status(500).json({ success: false, message: err.message });
     }

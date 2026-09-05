@@ -142,7 +142,7 @@ async function sendOtpEmail(to, otp) {
     const accessToken = typeof accessTokenResult === 'string' ? accessTokenResult : accessTokenResult?.token;
     if (!accessToken) throw new Error('Unable to obtain Gmail access token');
 
-    const subject = 'Mã OTP đăng nhập Z76 Finance';
+    const subject = 'Mã OTP đăng nhập Z76 thanhtoan';
     const body = [
         'Mã OTP đăng nhập của bạn là:',
         '',
@@ -152,7 +152,7 @@ async function sendOtpEmail(to, otp) {
         'Nếu bạn không thực hiện đăng nhập, hãy bỏ qua email này.',
     ].join('\r\n');
     const message = [
-        `From: Z76 Finance <${sender}>`,
+        `From: Z76 ThanhToan <${sender}>`,
         `To: ${to}`,
         `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
         'MIME-Version: 1.0',
@@ -191,19 +191,46 @@ async function findOtpAccount(pool, userId, normalizedUsername) {
     return result.recordset[0] || null;
 }
 
-async function isTrustedDevice(pool, req, userId) {
+async function isTrustedDevice(pool, req, userId, logContext = {}) {
     const token = parseCookies(req.headers.cookie)[TRUSTED_COOKIE];
-    if (!token) return false;
-    const result = await pool.request()
+    if (!token) {
+        authLog('info', 'trusted_device_rejected', { ...logContext, userId: String(userId), reason: 'cookie_missing' });
+        return false;
+    }
+
+    const lookup = await pool.request()
         .input('UserId', sql.NVarChar(128), String(userId))
         .input('TokenHash', sql.Char(64), hmac(`trusted:${token}`))
+        .query(`
+            SELECT TOP (1) Id, ExpiresAt, RevokedAt
+            FROM dbo.AuthTrustedDevice
+            WHERE UserId = @UserId AND TokenHash = @TokenHash
+        `);
+    const device = lookup.recordset[0];
+    if (!device) {
+        authLog('info', 'trusted_device_rejected', { ...logContext, userId: String(userId), reason: 'token_not_found' });
+        return false;
+    }
+    if (device.RevokedAt) {
+        authLog('info', 'trusted_device_rejected', { ...logContext, userId: String(userId), reason: 'revoked' });
+        return false;
+    }
+    if (new Date(device.ExpiresAt).getTime() <= Date.now()) {
+        authLog('info', 'trusted_device_rejected', { ...logContext, userId: String(userId), reason: 'expired' });
+        return false;
+    }
+
+    const result = await pool.request()
+        .input('Id', sql.UniqueIdentifier, device.Id)
         .query(`
             UPDATE dbo.AuthTrustedDevice
             SET LastUsedAt = SYSUTCDATETIME()
             OUTPUT inserted.Id
-            WHERE UserId = @UserId AND TokenHash = @TokenHash
-              AND RevokedAt IS NULL AND ExpiresAt > SYSUTCDATETIME()
+            WHERE Id = @Id AND RevokedAt IS NULL AND ExpiresAt > SYSUTCDATETIME()
         `);
+    if (!result.recordset.length) {
+        authLog('info', 'trusted_device_rejected', { ...logContext, userId: String(userId), reason: 'no_longer_valid' });
+    }
     return result.recordset.length > 0;
 }
 
@@ -323,7 +350,7 @@ async function erpOtpLogin(req, res) {
             authLog('error', 'otp_email_missing', { ...logContext, userId: effectiveUserId });
             return res.status(503).json({ message: 'Tài khoản chưa được cấu hình email nhận OTP.', requestId });
         }
-        if (await isTrustedDevice(pool, req, effectiveUserId)) {
+        if (await isTrustedDevice(pool, req, effectiveUserId, logContext)) {
             authLog('info', 'trusted_device_accepted', { ...logContext, userId: effectiveUserId });
             return res.json({ ...loginData, status: 'authenticated', requestId });
         }
@@ -461,6 +488,11 @@ async function verifyOtp(req, res) {
                          DATEADD(SECOND, ${TRUSTED_DEVICE_SECONDS}, SYSUTCDATETIME()), NULL)
                 `);
             res.setHeader('Set-Cookie', trustedCookie(rawToken));
+            authLog('info', 'trusted_device_issued', {
+                challengeId,
+                userId: String(challenge.UserId),
+                expiresIn: TRUSTED_DEVICE_SECONDS,
+            });
         }
 
         return res.json({ ...decryptJson(challenge.EncryptedLoginPayload), status: 'authenticated' });
