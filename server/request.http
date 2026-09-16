@@ -315,3 +315,11 @@ Accept: application/json
 ###
 GET https://nodeapi.z76.vn/erp/kehoachsanxuat?Ten_DonVi=Phân%20xưởng%20may%20CSPT
 Accept: application/json
+
+###
+GET https://nodeapi.z76.vn/khotm/btp/phieunhap/266791
+Accept: application/json
+
+###
+GET https://nodeapi.z76.vn/khotm/btp/phieuxuat/341136
+Accept: application/json

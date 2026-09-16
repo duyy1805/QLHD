@@ -47,9 +47,13 @@ const importUpload = multer({
     limits: { fileSize: 10 * 1024 * 1024, files: 1 },
 });
 
-const IMPORT_TEMPLATE_VERSION = 'MISA-21COL-V2';
+const IMPORT_TEMPLATE_VERSION = 'MISA-22COL-V3';
+const LEGACY_IMPORT_TEMPLATE_VERSION = 'MISA-21COL-V2';
 const UNCLASSIFIED_INVOICE_TYPE = 'ChuaPhanLoai';
-const IMPORT_HEADERS = [
+const IMPORT_INVOICE_TYPE = 'XuatKhau';
+const IMPORT_REVENUE_TYPE = 'XuatKhau';
+const IMPORT_TAX_RATE = 0;
+const LEGACY_IMPORT_HEADERS = [
     'Số thứ tự hóa đơn (*)',
     'Ngày hóa đơn',
     'Tên đơn vị mua hàng',
@@ -71,6 +75,11 @@ const IMPORT_HEADERS = [
     'Đơn giá',
     'Thành tiền',
     'Thành tiền quy đổi',
+];
+const IMPORT_HEADERS = [
+    ...LEGACY_IMPORT_HEADERS.slice(0, 2),
+    'Thời hạn thanh toán',
+    ...LEGACY_IMPORT_HEADERS.slice(2),
 ];
 
 function decodeMultipartFileName(fileName) {
@@ -158,6 +167,20 @@ function isBlankCell(value) {
     return value === null || value === undefined || String(value).trim() === '';
 }
 
+function trimTrailingBlankCells(row) {
+    const trimmed = [...(row || [])];
+    while (trimmed.length && isBlankCell(trimmed[trimmed.length - 1])) trimmed.pop();
+    return trimmed;
+}
+
+function isInvoiceTotalRow(row) {
+    if (!isBlankCell(row?.[0])) return false;
+    const labels = [row?.[14], row?.[15]]
+        .map(normalizeExcelHeader)
+        .filter(Boolean);
+    return labels.some((label) => ["tong", "tong cong", "cong"].includes(label));
+}
+
 function parseExcelNumber(value) {
     if (isBlankCell(value)) return null;
     if (typeof value === 'number') return Number.isFinite(value) ? value : NaN;
@@ -228,19 +251,31 @@ function parseInvoiceImportWorkbook(buffer) {
             rowCount: matrix.length - 1,
         };
     }
-    const actualHeaders = matrix[0] || [];
+    const actualHeaders = trimTrailingBlankCells(matrix[0]);
     const expectedHeaders = IMPORT_HEADERS.map(normalizeExcelHeader);
+    const legacyExpectedHeaders = LEGACY_IMPORT_HEADERS.map(normalizeExcelHeader);
+    const knownHeaders = new Set(expectedHeaders);
     const normalizedActual = actualHeaders.map(normalizeExcelHeader);
-
-    if (normalizedActual.length !== IMPORT_HEADERS.length || expectedHeaders.some((header, index) => normalizedActual[index] !== header)) {
-        expectedHeaders.forEach((header, index) => {
-            if (normalizedActual[index] !== header) {
-                errors.push({ row: 1, column: index + 1, message: `Cột ${index + 1} phải là “${IMPORT_HEADERS[index]}”.` });
-            }
-        });
-        if (normalizedActual.length > IMPORT_HEADERS.length) {
-            errors.push({ row: 1, column: IMPORT_HEADERS.length + 1, message: 'Mẫu import không được có cột ngoài 21 cột chuẩn.' });
+    const headerIndexes = new Map();
+    normalizedActual.forEach((header, index) => {
+        if (!header) return;
+        if (headerIndexes.has(header) && knownHeaders.has(header)) {
+            errors.push({ row: 1, column: index + 1, message: `Tiêu đề “${actualHeaders[index]}” bị trùng với cột ${headerIndexes.get(header) + 1}.` });
+            return;
         }
+        if (!headerIndexes.has(header)) headerIndexes.set(header, index);
+    });
+    const paymentDeadlineHeader = normalizeExcelHeader('Thời hạn thanh toán');
+    const missingLegacyHeaders = legacyExpectedHeaders.filter((header) => !headerIndexes.has(header));
+    const usesCurrentTemplate = headerIndexes.has(paymentDeadlineHeader);
+    const usesLegacyTemplate = !usesCurrentTemplate;
+    const sourceColumnNumber = (legacyColumnIndex) => (headerIndexes.get(legacyExpectedHeaders[legacyColumnIndex]) ?? legacyColumnIndex) + 1;
+
+    missingLegacyHeaders.forEach((header) => {
+        const legacyIndex = legacyExpectedHeaders.indexOf(header);
+        errors.push({ row: 1, column: legacyIndex + 1, message: `Thiếu cột bắt buộc “${LEGACY_IMPORT_HEADERS[legacyIndex]}”.` });
+    });
+    if (errors.length) {
         return { checksum, sheetName, invoices: [], errors, warnings, rowCount: Math.max(matrix.length - 1, 0) };
     }
 
@@ -248,9 +283,14 @@ function parseInvoiceImportWorkbook(buffer) {
     let lastInvoiceOrder = null;
     const numericColumns = [10, 11, 12, 13, 17, 18, 19, 20];
 
-    matrix.slice(1).forEach((row, rowOffset) => {
+    matrix.slice(1).forEach((sourceRow, rowOffset) => {
         const excelRow = rowOffset + 2;
-        if (row.every(isBlankCell)) return;
+        sourceRow = trimTrailingBlankCells(sourceRow);
+        if (sourceRow.every(isBlankCell)) return;
+        const paymentDeadlineCell = usesCurrentTemplate ? sourceRow[headerIndexes.get(paymentDeadlineHeader)] : null;
+        const row = LEGACY_IMPORT_HEADERS.map((_, index) => sourceRow[headerIndexes.get(legacyExpectedHeaders[index])]);
+
+        if (isInvoiceTotalRow(row)) return;
 
         let invoiceOrder = parseExcelNumber(row[0]);
         if (invoiceOrder === null) invoiceOrder = lastInvoiceOrder;
@@ -265,7 +305,7 @@ function parseInvoiceImportWorkbook(buffer) {
             const parsed = parseExcelNumber(row[columnIndex]);
             parsedNumbers[columnIndex] = parsed;
             if (Number.isNaN(parsed)) {
-                errors.push({ row: excelRow, column: columnIndex + 1, message: `Giá trị tại cột “${IMPORT_HEADERS[columnIndex]}” không phải là số hợp lệ.` });
+                errors.push({ row: excelRow, column: sourceColumnNumber(columnIndex), message: `Giá trị tại cột “${LEGACY_IMPORT_HEADERS[columnIndex]}” không phải là số hợp lệ.` });
             }
         });
 
@@ -273,19 +313,26 @@ function parseInvoiceImportWorkbook(buffer) {
         if (invoiceDate === undefined) {
             errors.push({ row: excelRow, column: 2, message: 'Ngày hóa đơn không hợp lệ.' });
         }
+        const paymentDeadline = parseExcelDate(paymentDeadlineCell);
+        if (paymentDeadline === undefined) {
+            errors.push({ row: excelRow, column: 3, message: 'Thời hạn thanh toán không hợp lệ.' });
+        }
         if (isBlankCell(row[15])) {
-            errors.push({ row: excelRow, column: 16, message: 'Tên hàng hóa/dịch vụ không được để trống.' });
+            errors.push({ row: excelRow, column: sourceColumnNumber(15), message: 'Tên hàng hóa/dịch vụ không được để trống.' });
         }
         if (numericColumns.some((columnIndex) => Number.isNaN(parsedNumbers[columnIndex]))) return;
 
         let invoice = invoiceMap.get(invoiceOrder);
         if (!invoice) {
+            if (usesCurrentTemplate && !paymentDeadline) {
+                errors.push({ row: excelRow, column: 3, message: 'Thời hạn thanh toán không được để trống ở dòng đầu của hóa đơn.' });
+            }
             invoice = {
                 invoiceOrder,
                 startRow: excelRow,
                 endRow: excelRow,
-                maLoaiHoaDon: UNCLASSIFIED_INVOICE_TYPE,
-                loaiHinhDoanhThu: null,
+                maLoaiHoaDon: IMPORT_INVOICE_TYPE,
+                loaiHinhDoanhThu: IMPORT_REVENUE_TYPE,
                 tenNguoiMuaSnapshot: String(row[2] || '').trim(),
                 diaChiSnapshot: String(row[3] || '').trim(),
                 maSoThueSnapshot: String(row[4] || '').trim(),
@@ -293,12 +340,12 @@ function parseInvoiceImportWorkbook(buffer) {
                 nguoiLienHeSnapshot: String(row[6] || '').trim(),
                 emailSnapshot: String(row[7] || '').trim(),
                 ngayHoaDon: invoiceDate || null,
+                hanThanhToan: paymentDeadline || null,
                 hinhThucThanhToan: String(row[8] || '').trim(),
                 maLoaiTien: String(row[9] || 'VND').trim().toUpperCase() || 'VND',
                 tyGia: parsedNumbers[10] && parsedNumbers[10] > 0 ? parsedNumbers[10] : 1,
                 chiTiet: [],
                 warnings: [],
-                sourceTax: parsedNumbers[12],
             };
             invoiceMap.set(invoiceOrder, invoice);
         } else {
@@ -306,7 +353,7 @@ function parseInvoiceImportWorkbook(buffer) {
         }
 
         const lineNumber = invoice.chiTiet.length + 1;
-        const taxRate = parsedNumbers[11] ?? 0;
+        const taxRate = IMPORT_TAX_RATE;
         const quantity = parsedNumbers[17];
         const unitPrice = parsedNumbers[18];
         const calculatedAmount = (quantity ?? 1) * (unitPrice ?? 0);
@@ -333,24 +380,27 @@ function parseInvoiceImportWorkbook(buffer) {
         invoice.cheDoThue = taxRates.size > 1 ? 'NhieuThueSuat' : 'MotThueSuat';
         invoice.loaiNguoiMua = 'DoanhNghiep';
         invoice.khongCoMaSoThue = !invoice.maSoThueSnapshot && Boolean(invoice.maDvcqhnsSnapshot);
-        invoiceImportWarning(invoice, 'Cần bổ sung loại hóa đơn và loại hình doanh thu trước khi trình duyệt.');
         if (!invoice.tenNguoiMuaSnapshot) invoiceImportWarning(invoice, 'Thiếu tên đơn vị mua hàng.');
         if (!invoice.diaChiSnapshot) invoiceImportWarning(invoice, 'Thiếu địa chỉ người mua.');
-        if (!invoice.maSoThueSnapshot && !invoice.maDvcqhnsSnapshot) invoiceImportWarning(invoice, 'Thiếu mã số thuế hoặc MĐVCQHNS.');
         if (!invoice.ngayHoaDon) invoiceImportWarning(invoice, 'Thiếu ngày hóa đơn.');
+        if (!invoice.hanThanhToan) invoiceImportWarning(invoice, 'Thiếu thời hạn thanh toán.');
         if (!invoice.hinhThucThanhToan) invoiceImportWarning(invoice, 'Thiếu hình thức thanh toán.');
         if (invoice.chiTiet.some((line) => line.soLuong === null || line.donGia === null)) {
             invoiceImportWarning(invoice, 'Có dòng hàng thiếu số lượng hoặc đơn giá.');
-        }
-        const calculatedTax = invoice.chiTiet.reduce((total, line) => total + (line.soLuong ?? 1) * (line.donGia ?? 0) * Number(line.thueSuatGTGT || 0) / 100, 0);
-        if (invoice.sourceTax !== null && Math.abs(invoice.sourceTax - calculatedTax) > 0.01) {
-            invoiceImportWarning(invoice, 'Tổng tiền thuế trong file khác số liệu tính lại từ các dòng hàng.');
         }
         warnings.push(...invoice.warnings);
     }
 
     if (!invoices.length && !errors.length) errors.push({ message: 'File Excel không có dữ liệu hóa đơn.' });
-    return { checksum, sheetName, invoices, errors, warnings, rowCount: Math.max(matrix.length - 1, 0) };
+    return {
+        checksum,
+        sheetName,
+        invoices,
+        errors,
+        warnings,
+        rowCount: Math.max(matrix.length - 1, 0),
+        templateVersion: usesCurrentTemplate ? IMPORT_TEMPLATE_VERSION : LEGACY_IMPORT_TEMPLATE_VERSION,
+    };
 }
 
 function safeImportFileName(fileName) {
@@ -373,6 +423,53 @@ function getRequester(req) {
         userId: Number(req.body?.requesterUserId || req.query?.userId || fromToken.userId || req.userId) || null,
         idDonVi: Number(req.body?.requesterIdDonVi || req.query?.idDonVi || fromToken.idDonVi) || null,
     };
+}
+
+async function getInvoiceCreationPolicy(pool) {
+    const result = await pool.request().query(`
+        IF OBJECT_ID(N'dbo.HD_CauHinh', N'U') IS NULL
+        BEGIN
+            DECLARE @CurrentVietnamTime DATETIME2(0) = CONVERT(DATETIME2(0), SYSDATETIMEOFFSET() AT TIME ZONE 'SE Asia Standard Time');
+            SELECT Enabled = CONVERT(BIT, 0), CutoffTime = N'16:30', IsBlocked = CONVERT(BIT, 0), VietnamNow = @CurrentVietnamTime;
+        END
+        ELSE
+            EXEC sys.sp_executesql N'
+                DECLARE @Enabled BIT = CASE WHEN EXISTS (
+                    SELECT 1 FROM dbo.HD_CauHinh
+                    WHERE MaCauHinh = N''KhoaTaoHoaDonSau1630'' AND GiaTri = N''1''
+                ) THEN 1 ELSE 0 END;
+                DECLARE @VietnamNow DATETIME2(0) = CONVERT(DATETIME2(0), SYSDATETIMEOFFSET() AT TIME ZONE ''SE Asia Standard Time'');
+                SELECT Enabled = @Enabled, CutoffTime = N''16:30'',
+                    IsBlocked = CONVERT(BIT, CASE WHEN @Enabled = 1 AND CONVERT(TIME(0), @VietnamNow) >= ''16:30:00'' THEN 1 ELSE 0 END),
+                    VietnamNow = @VietnamNow;';
+    `);
+    const row = result.recordset?.[0] || {};
+    return {
+        enabled: Boolean(row.Enabled),
+        cutoffTime: row.CutoffTime || '16:30',
+        isBlocked: Boolean(row.IsBlocked),
+        vietnamNow: row.VietnamNow,
+    };
+}
+
+async function assertInvoiceCreationAllowed(pool) {
+    const policy = await getInvoiceCreationPolicy(pool);
+    if (!policy.isBlocked) return policy;
+    const error = new Error('Đã quá 16:30. Hệ thống đang khóa tạo mới và import hóa đơn.');
+    error.statusCode = 403;
+    throw error;
+}
+
+async function assertInvoiceAdmin(pool, userId) {
+    const result = await pool.request()
+        .input('UserId', sql.Int, userId)
+        .query(`SELECT IsAdmin = CONVERT(BIT, CASE WHEN dbo.HD_fn_UserCoQuyen(@UserId, N'HD_Admin') = 1
+            OR dbo.HD_fn_UserCoQuyen(@UserId, N'Admin') = 1 THEN 1 ELSE 0 END);`);
+    if (!result.recordset?.[0]?.IsAdmin) {
+        const error = new Error('Chỉ Admin được thay đổi cấu hình thời hạn tạo hóa đơn.');
+        error.statusCode = 403;
+        throw error;
+    }
 }
 
 async function getInvoicePermissionContext(pool, hoaDonId, requesterUserId) {
@@ -457,6 +554,8 @@ function mapHoaDon(row) {
         maLoaiHoaDon: invoiceType,
         tenLoaiHoaDon: invoiceType ? row.TenLoaiHoaDon : null,
         loaiHinhDoanhThu: row.LoaiHinhDoanhThu,
+        thongTinHoaDon: row.ThongTinHoaDon,
+        thongTinDonHang: row.ThongTinDonHang,
         cheDoThue: row.CheDoThue,
         trangThaiId: row.TrangThaiId,
         maTrangThai: row.MaTrangThai,
@@ -474,6 +573,7 @@ function mapHoaDon(row) {
         email: row.Email_Snapshot,
         dienThoai: row.DienThoai_Snapshot,
         ngayHoaDon: row.NgayHoaDon,
+        hanThanhToan: row.HanThanhToan,
         hinhThucThanhToan: row.HinhThucThanhToan,
         maLoaiTien: row.MaLoaiTien,
         tyGia: row.TyGia == null ? null : Number(row.TyGia),
@@ -500,7 +600,7 @@ function mapHoaDon(row) {
         nhomImportId: row.NhomImportId || null,
         maNhomImport: row.MaNhomImport || null,
         soThuTuTrongNhom: row.SoThuTuTrongNhom || null,
-        isImportIncomplete: row.MaLoaiHoaDon === UNCLASSIFIED_INVOICE_TYPE || !row.LoaiHinhDoanhThu,
+        isImportIncomplete: row.MaLoaiHoaDon === UNCLASSIFIED_INVOICE_TYPE || !row.LoaiHinhDoanhThu || !row.HanThanhToan,
     };
 }
 
@@ -512,6 +612,16 @@ function addCommonInvoiceInputs(request, requester) {
     return request
         .input('RequesterUserId', sql.Int, requester.userId)
         .input('RequesterIdDonVi', sql.Int, requester.idDonVi);
+}
+
+async function saveInvoiceSupplementalInfo(pool, hoaDonId, payload) {
+    if (!hoaDonId) return;
+    await pool.request()
+        .input('HoaDonId', sql.Int, hoaDonId)
+        .input('ThongTinHoaDon', sql.NVarChar(500), payload.thongTinHoaDon || null)
+        .input('ThongTinDonHang', sql.NVarChar(500), payload.thongTinDonHang || null)
+        .input('NguonNganSach', sql.NVarChar(500), payload.quocPhong?.nguonNganSach || null)
+        .execute('HD_sp_HoaDon_LuuThongTinBoSung');
 }
 
 async function findDuplicateImportGroup(pool, checksum, idDonVi) {
@@ -537,7 +647,8 @@ async function validateInvoiceReadyToSubmit(pool, hoaDonId) {
         .query(`
             SELECT TOP 1
                 h.MaLoaiHoaDon, h.LoaiHinhDoanhThu, h.NguoiMuaId,
-                h.TenNguoiMua_Snapshot, h.DiaChi_Snapshot, h.NgayHoaDon,
+                h.TenNguoiMua_Snapshot, h.DiaChi_Snapshot, h.NgayHoaDon, h.HanThanhToan,
+                qp.QuyetDinhGiaoNhiemVu, qp.SoHopDong, qp.NguonNganSach,
                 tt.MaTrangThai,
                 HasLine = CASE WHEN EXISTS (
                     SELECT 1 FROM dbo.HD_HoaDon_ChiTiet c
@@ -551,6 +662,7 @@ async function validateInvoiceReadyToSubmit(pool, hoaDonId) {
                 ) THEN 1 ELSE 0 END
             FROM dbo.HD_HoaDon h
             JOIN dbo.HD_TrangThai tt ON tt.TrangThaiId = h.TrangThaiId
+            LEFT JOIN dbo.HD_HoaDon_QuocPhong qp ON qp.HoaDonId = h.HoaDonId
             WHERE h.HoaDonId = @HoaDonId AND h.IsDeleted = 0;
         `);
     const invoice = result.recordset?.[0];
@@ -558,9 +670,21 @@ async function validateInvoiceReadyToSubmit(pool, hoaDonId) {
     if (invoice.MaTrangThai !== 'KhoiTao') return 'Hóa đơn không còn ở trạng thái nháp.';
     if (!invoice.MaLoaiHoaDon || invoice.MaLoaiHoaDon === UNCLASSIFIED_INVOICE_TYPE) return 'Chưa chọn loại hóa đơn.';
     if (!invoice.LoaiHinhDoanhThu) return 'Chưa chọn loại hình doanh thu.';
-    if (!invoice.NguoiMuaId || !String(invoice.TenNguoiMua_Snapshot || '').trim()) return 'Chưa hoàn thiện người mua.';
+    if (!String(invoice.TenNguoiMua_Snapshot || '').trim() || (invoice.MaLoaiHoaDon !== 'XuatKhau' && !invoice.NguoiMuaId)) {
+        return 'Chưa hoàn thiện người mua.';
+    }
     if (!String(invoice.DiaChi_Snapshot || '').trim()) return 'Chưa nhập địa chỉ người mua.';
     if (!invoice.NgayHoaDon) return 'Chưa nhập ngày hóa đơn.';
+    if (!invoice.HanThanhToan) return 'Chưa nhập thời hạn thanh toán.';
+    if (invoice.MaLoaiHoaDon === 'QuocPhong') {
+        if (!String(invoice.SoHopDong || '').trim()) return 'Chưa nhập số hợp đồng.';
+        if (invoice.LoaiHinhDoanhThu !== 'QuocPhongNhomII' && !String(invoice.QuyetDinhGiaoNhiemVu || '').trim()) {
+            return 'Chưa nhập quyết định giao nhiệm vụ.';
+        }
+        if (invoice.LoaiHinhDoanhThu === 'QuocPhongNhomI' && !String(invoice.NguonNganSach || '').trim()) {
+            return 'Chưa nhập nguồn ngân sách.';
+        }
+    }
     if (!invoice.HasLine) return 'Hóa đơn chưa có dòng hàng hóa/dịch vụ.';
     if (invoice.HasInvalidLine) return 'Có dòng hàng thiếu số lượng hoặc đơn giá hợp lệ.';
     return null;
@@ -649,6 +773,7 @@ async function listGroupInvoiceIdsForUser(pool, nhomImportId, requester, creator
 
 async function syncInvoiceBuyer(pool, payload, requesterUserId) {
     const loaiNguoiMua = payload.loaiNguoiMua === 'CaNhan' ? 'CaNhan' : 'DoanhNghiep';
+    const identifierOptional = payload.maLoaiHoaDon === 'XuatKhau';
     const maSoThue = loaiNguoiMua === 'DoanhNghiep'
         ? String(payload.maSoThueSnapshot || '').replace(/[\s.-]/g, '') || null
         : null;
@@ -665,7 +790,9 @@ async function syncInvoiceBuyer(pool, payload, requesterUserId) {
         ? 'Tên người mua hoặc tên đơn vị là bắt buộc.'
         : !diaChi
             ? 'Địa chỉ người mua là bắt buộc.'
-            : loaiNguoiMua === 'DoanhNghiep' && Boolean(maSoThue) === Boolean(maDvcqhns)
+            : loaiNguoiMua === 'DoanhNghiep' && (Boolean(maSoThue) && Boolean(maDvcqhns))
+                ? 'Tổ chức/doanh nghiệp chỉ được có một trong hai mã: MST hoặc MĐVCQHNS.'
+                : loaiNguoiMua === 'DoanhNghiep' && !identifierOptional && !maSoThue && !maDvcqhns
                 ? 'Tổ chức/doanh nghiệp phải có đúng một trong hai mã: MST hoặc MĐVCQHNS.'
                 : maSoThue && !/^\d{10}(?:\d{3})?$/.test(maSoThue)
                     ? 'Mã số thuế phải gồm 10 hoặc 13 chữ số.'
@@ -806,6 +933,42 @@ async function syncInvoiceTaxCodes(pool, hoaDonId, payload) {
 
 /* ========================= ROLE / LOOKUP ========================= */
 
+router.get('/cau-hinh/khoa-tao-sau-1630', async (req, res) => {
+    try {
+        const requester = getRequester(req);
+        if (!requester.userId) return res.status(400).json({ message: 'Thiếu requesterUserId.' });
+        const pool = await poolPromise;
+        res.json(await getInvoiceCreationPolicy(pool));
+    } catch (err) {
+        return httpError(res, err, 'Có lỗi khi lấy cấu hình thời hạn tạo hóa đơn.');
+    }
+});
+
+router.put('/cau-hinh/khoa-tao-sau-1630', async (req, res) => {
+    try {
+        const requester = getRequester(req);
+        if (!requester.userId) return res.status(400).json({ message: 'Thiếu requesterUserId.' });
+        const enabled = req.body?.enabled === true;
+        const pool = await poolPromise;
+        await assertInvoiceAdmin(pool, requester.userId);
+        await pool.request()
+            .input('Enabled', sql.Bit, enabled)
+            .input('RequesterUserId', sql.Int, requester.userId)
+            .query(`
+                MERGE dbo.HD_CauHinh AS target
+                USING (SELECT N'KhoaTaoHoaDonSau1630' AS MaCauHinh) AS source
+                ON target.MaCauHinh = source.MaCauHinh
+                WHEN MATCHED THEN UPDATE SET GiaTri = CASE WHEN @Enabled = 1 THEN N'1' ELSE N'0' END,
+                    NguoiCapNhatId = @RequesterUserId, NgayCapNhat = SYSDATETIME()
+                WHEN NOT MATCHED THEN INSERT (MaCauHinh, GiaTri, NguoiCapNhatId)
+                    VALUES (source.MaCauHinh, CASE WHEN @Enabled = 1 THEN N'1' ELSE N'0' END, @RequesterUserId);
+            `);
+        res.json(await getInvoiceCreationPolicy(pool));
+    } catch (err) {
+        return httpError(res, err, 'Có lỗi khi cập nhật cấu hình thời hạn tạo hóa đơn.');
+    }
+});
+
 router.get('/role/:userId', async (req, res) => {
     try {
         const userId = Number(req.params.userId);
@@ -833,9 +996,9 @@ router.get('/role/:userId', async (req, res) => {
         const invoiceTypeCodes = (rs.recordsets?.[1] || []).map((row) => row.MaLoaiHoaDon);
         const role =
             permissions.includes('HD_Admin') || permissions.includes('Admin') ? 'HD_Admin' :
-            permissions.includes('HD_XuatHoaDon') || invoiceTypeCodes.length ? 'HD_XuatHoaDon' :
-            permissions.includes('HD_TBP') || permissions.includes('TBP') ? 'HD_TBP' :
-            'NhanVien';
+                permissions.includes('HD_XuatHoaDon') || invoiceTypeCodes.length ? 'HD_XuatHoaDon' :
+                    permissions.includes('HD_TBP') || permissions.includes('TBP') ? 'HD_TBP' :
+                        'NhanVien';
 
         res.json({ role, permissions, invoiceTypeCodes });
     } catch (err) {
@@ -1146,6 +1309,7 @@ router.get('/hoa-don', async (req, res) => {
             .execute('HD_sp_HoaDon_DanhSach');
 
         const invoiceRows = rs.recordset || [];
+        const importedInvoiceIds = new Set();
         if (invoiceRows.length) {
             const groupRs = await pool.request()
                 .input('HoaDonIdsJson', sql.NVarChar(sql.MAX), JSON.stringify(invoiceRows.map((row) => row.HoaDonId)))
@@ -1153,7 +1317,7 @@ router.get('/hoa-don', async (req, res) => {
                     SELECT m.HoaDonId, n.NhomImportId, n.MaNhom,
                            SoThuTuTrongNhom = m.SoThuTuHoaDon
                     FROM dbo.HD_NhomImport_HoaDon m
-                    JOIN dbo.HD_NhomImport n ON n.NhomImportId = m.NhomImportId AND n.IsDeleted = 0
+                    JOIN dbo.HD_NhomImport n ON n.NhomImportId = m.NhomImportId
                     JOIN OPENJSON(@HoaDonIdsJson) ids
                       ON m.HoaDonId = TRY_CONVERT(INT, ids.[value]);
                 `);
@@ -1161,12 +1325,14 @@ router.get('/hoa-don', async (req, res) => {
             invoiceRows.forEach((row) => {
                 const group = groupByInvoice.get(Number(row.HoaDonId));
                 if (!group) return;
+                importedInvoiceIds.add(Number(row.HoaDonId));
                 row.NhomImportId = group.NhomImportId;
                 row.MaNhomImport = group.MaNhom;
                 row.SoThuTuTrongNhom = group.SoThuTuTrongNhom;
             });
         }
-        res.json(invoiceRows.map(mapHoaDon));
+        const standaloneInvoiceRows = invoiceRows.filter((row) => !importedInvoiceIds.has(Number(row.HoaDonId)));
+        res.json(standaloneInvoiceRows.map(mapHoaDon));
     } catch (err) {
         return httpError(res, err, 'Có lỗi khi lấy danh sách hóa đơn.');
     }
@@ -1186,6 +1352,11 @@ router.get('/hoa-don/:id', async (req, res) => {
             .execute('HD_sp_HoaDon_GetById');
 
         const headerRow = firstRecordset(rs, 0)[0];
+        const supplementalRs = await pool.request()
+            .input('HoaDonId', sql.Int, hoaDonId)
+            .execute('HD_sp_HoaDon_LayThongTinBoSung');
+        const supplemental = supplementalRs.recordset?.[0];
+        if (headerRow && supplemental) Object.assign(headerRow, supplemental);
         const groupRs = await pool.request()
             .input('HoaDonId', sql.Int, hoaDonId)
             .query(`
@@ -1217,10 +1388,13 @@ router.get('/hoa-don/:id', async (req, res) => {
             userNameMap = new Map((userRs.recordset || []).map((row) => [Number(row.ID_TaiKhoanDangNhap), row.TenNguoiDung]));
         }
 
+        const quocPhong = firstRecordset(rs, 2)[0] || null;
+        if (quocPhong && supplemental) quocPhong.NguonNganSach = supplemental.NguonNganSach;
+
         res.json({
             ...header,
             chiTiet: firstRecordset(rs, 1),
-            quocPhong: firstRecordset(rs, 2)[0] || null,
+            quocPhong,
             quocPhongChiTiet: firstRecordset(rs, 3),
             lichSuDuyet: lichSuDuyet.map((row) => ({
                 ...row,
@@ -1243,7 +1417,17 @@ router.post('/hoa-don', async (req, res) => {
             return res.status(400).json({ message: 'Thiếu requesterUserId hoặc requesterIdDonVi.' });
         }
 
+        const pool = await poolPromise;
+        await assertInvoiceCreationAllowed(pool);
         let payload = buildPayload(req.body);
+        if (payload.maLoaiHoaDon === 'TrongNuoc' && !payload.thongTinDonHang) {
+            return res.status(400).json({ message: 'Nhập thông tin đơn hàng/hợp đồng cho hóa đơn trong nước.' });
+        }
+        if ((payload.thongTinDonHang || '').length > 500) {
+            return res.status(400).json({ message: 'Thông tin đơn hàng/hợp đồng không được quá 500 ký tự.' });
+        }
+        const paymentDeadlineError = normalizeRequiredPaymentDeadline(payload);
+        if (paymentDeadlineError) return res.status(400).json({ message: paymentDeadlineError });
         const revenueTypes = ['KinhDoanhThuongMai', 'KinhTeNoiDia', 'QuocPhongNhomI', 'QuocPhongNhomII', 'XuatKhau'];
         if (!revenueTypes.includes(payload.loaiHinhDoanhThu)) {
             return res.status(400).json({ message: 'Loại hình doanh thu không hợp lệ.' });
@@ -1252,7 +1436,6 @@ router.post('/hoa-don', async (req, res) => {
         if (nationalDefenseError) {
             return res.status(400).json({ message: nationalDefenseError });
         }
-        const pool = await poolPromise;
         payload = await syncInvoiceBuyer(pool, payload, requester.userId);
         const rs = await addCommonInvoiceInputs(pool.request(), requester)
             .input('Payload', sql.NVarChar(sql.MAX), JSON.stringify(payload))
@@ -1266,10 +1449,11 @@ router.post('/hoa-don', async (req, res) => {
                 .input('MaDVCQHNS', sql.NVarChar(100), payload.maDvcqhnsSnapshot || null)
                 .query('UPDATE dbo.HD_HoaDon SET LoaiNguoiMua_Snapshot = @LoaiNguoiMua, MaDVCQHNS_Snapshot = @MaDVCQHNS, LoaiHinhDoanhThu = @LoaiHinhDoanhThu WHERE HoaDonId = @HoaDonId');
             await syncInvoiceTaxCodes(pool, createdId, payload);
+            await saveInvoiceSupplementalInfo(pool, createdId, payload);
         }
 
         res.status(201).json({
-            hoaDon: { ...mapHoaDon(firstRecordset(rs, 0)[0]), loaiNguoiMua: payload.loaiNguoiMua, maDvcqhns: payload.maDvcqhnsSnapshot || null, loaiHinhDoanhThu: payload.loaiHinhDoanhThu },
+            hoaDon: { ...mapHoaDon(firstRecordset(rs, 0)[0]), loaiNguoiMua: payload.loaiNguoiMua, maDvcqhns: payload.maDvcqhnsSnapshot || null, loaiHinhDoanhThu: payload.loaiHinhDoanhThu, thongTinHoaDon: payload.thongTinHoaDon, thongTinDonHang: payload.thongTinDonHang },
             chiTiet: firstRecordset(rs, 1),
         });
     } catch (err) {
@@ -1286,6 +1470,14 @@ router.put('/hoa-don/:id', async (req, res) => {
         }
 
         let payload = buildPayload(req.body);
+        if (payload.maLoaiHoaDon === 'TrongNuoc' && !payload.thongTinDonHang) {
+            return res.status(400).json({ message: 'Nhập thông tin đơn hàng/hợp đồng cho hóa đơn trong nước.' });
+        }
+        if ((payload.thongTinDonHang || '').length > 500) {
+            return res.status(400).json({ message: 'Thông tin đơn hàng/hợp đồng không được quá 500 ký tự.' });
+        }
+        const paymentDeadlineError = normalizeRequiredPaymentDeadline(payload);
+        if (paymentDeadlineError) return res.status(400).json({ message: paymentDeadlineError });
         const revenueTypes = ['KinhDoanhThuongMai', 'KinhTeNoiDia', 'QuocPhongNhomI', 'QuocPhongNhomII', 'XuatKhau'];
         if (!revenueTypes.includes(payload.loaiHinhDoanhThu)) {
             return res.status(400).json({ message: 'Loại hình doanh thu không hợp lệ.' });
@@ -1307,9 +1499,10 @@ router.put('/hoa-don/:id', async (req, res) => {
             .input('MaDVCQHNS', sql.NVarChar(100), payload.maDvcqhnsSnapshot || null)
             .query('UPDATE dbo.HD_HoaDon SET LoaiNguoiMua_Snapshot = @LoaiNguoiMua, MaDVCQHNS_Snapshot = @MaDVCQHNS, LoaiHinhDoanhThu = @LoaiHinhDoanhThu WHERE HoaDonId = @HoaDonId');
         await syncInvoiceTaxCodes(pool, hoaDonId, payload);
+        await saveInvoiceSupplementalInfo(pool, hoaDonId, payload);
 
         res.json({
-            hoaDon: { ...mapHoaDon(firstRecordset(rs, 0)[0]), loaiNguoiMua: payload.loaiNguoiMua, maDvcqhns: payload.maDvcqhnsSnapshot || null, loaiHinhDoanhThu: payload.loaiHinhDoanhThu },
+            hoaDon: { ...mapHoaDon(firstRecordset(rs, 0)[0]), loaiNguoiMua: payload.loaiNguoiMua, maDvcqhns: payload.maDvcqhnsSnapshot || null, loaiHinhDoanhThu: payload.loaiHinhDoanhThu, thongTinHoaDon: payload.thongTinHoaDon, thongTinDonHang: payload.thongTinDonHang },
             chiTiet: firstRecordset(rs, 1),
         });
     } catch (err) {
@@ -1447,6 +1640,10 @@ router.put('/hoa-don/:id/thong-tin-xuat', async (req, res) => {
             .input('RequesterUserId', sql.Int, requester.userId)
             .execute('HD_sp_HoaDon_CapNhatThongTinXuat');
 
+        if (payload.chiTiet.some((line) => line.maThueSuatGTGT != null)) {
+            await syncInvoiceTaxCodes(pool, hoaDonId, payload);
+        }
+
         res.json({
             hoaDon: mapHoaDon(firstRecordset(rs, 0)[0]),
             chiTiet: firstRecordset(rs, 1),
@@ -1464,13 +1661,36 @@ function buildPayload(body) {
     delete clone.idDonVi;
 
     clone.chiTiet = Array.isArray(clone.chiTiet) ? clone.chiTiet : [];
+    clone.thongTinHoaDon = String(clone.thongTinHoaDon || '').trim() || null;
+    clone.thongTinDonHang = String(clone.thongTinDonHang || '').trim() || null;
+    if (clone.maLoaiHoaDon === 'QuocPhong') {
+        clone.thongTinHoaDon = null;
+        clone.thongTinDonHang = null;
+    }
+    if (clone.quocPhong) {
+        clone.quocPhong = {
+            ...clone.quocPhong,
+            nguonNganSach: String(clone.quocPhong.nguonNganSach || '').trim() || null,
+        };
+    }
     return clone;
+}
+
+function normalizeRequiredPaymentDeadline(payload) {
+    if (!payload.hanThanhToan) return 'Thời hạn thanh toán là bắt buộc.';
+    const normalized = parseExcelDate(payload.hanThanhToan);
+    if (!normalized) return 'Thời hạn thanh toán không hợp lệ.';
+    payload.hanThanhToan = normalized;
+    return null;
 }
 
 function validateNationalDefenseRevenue(payload) {
     if (payload.maLoaiHoaDon !== 'QuocPhong') return null;
-    if (!String(payload.quocPhong?.quyetDinhGiaoNhiemVu || '').trim()) {
+    if (payload.loaiHinhDoanhThu !== 'QuocPhongNhomII' && !String(payload.quocPhong?.quyetDinhGiaoNhiemVu || '').trim()) {
         return 'Nhập quyết định giao nhiệm vụ.';
+    }
+    if (payload.loaiHinhDoanhThu === 'QuocPhongNhomI' && !String(payload.quocPhong?.nguonNganSach || '').trim()) {
+        return 'Nhập nguồn ngân sách.';
     }
     if (!String(payload.quocPhong?.soHopDong || '').trim()) {
         return 'Nhập số hợp đồng.';
@@ -1633,7 +1853,7 @@ router.post('/nhom-import/preview', importUpload.single('file'), async (req, res
         return res.json({
             ...preview,
             fileName: path.basename(decodeMultipartFileName(req.file.originalname)),
-            templateVersion: IMPORT_TEMPLATE_VERSION,
+            templateVersion: preview.templateVersion,
             duplicateGroup,
         });
     } catch (err) {
@@ -1655,12 +1875,13 @@ router.post('/nhom-import', importUpload.single('file'), async (req, res) => {
             return res.status(400).json({ message: 'Chỉ hỗ trợ file Excel .xlsx.' });
         }
 
+        const pool = await poolPromise;
+        await assertInvoiceCreationAllowed(pool);
         const parsed = parseInvoiceImportWorkbook(req.file.buffer);
         if (parsed.errors.length) {
             return res.status(400).json({ message: 'File Excel chưa hợp lệ.', errors: parsed.errors, warnings: parsed.warnings });
         }
 
-        const pool = await poolPromise;
         const duplicateGroup = await findDuplicateImportGroup(pool, parsed.checksum, requester.idDonVi);
         if (duplicateGroup) {
             return res.status(409).json({ message: 'File này đã được import trước đó.', duplicateGroup });
@@ -1699,7 +1920,7 @@ router.post('/nhom-import', importUpload.single('file'), async (req, res) => {
             .input('FileName', sql.NVarChar(255), originalFileName)
             .input('FilePath', sql.NVarChar(1000), storedFilePath)
             .input('FileChecksum', sql.Char(64), parsed.checksum)
-            .input('PhienBanMau', sql.NVarChar(50), IMPORT_TEMPLATE_VERSION)
+            .input('PhienBanMau', sql.NVarChar(50), parsed.templateVersion || IMPORT_TEMPLATE_VERSION)
             .input('SoHoaDon', sql.Int, parsed.invoices.length)
             .input('NguoiTaoId', sql.Int, requester.userId)
             .input('IdDonVi', sql.Int, requester.idDonVi)
@@ -1723,11 +1944,15 @@ router.post('/nhom-import', importUpload.single('file'), async (req, res) => {
             const payload = {
                 ...invoice,
                 ghiChu: `Import từ nhóm ${maNhom}`,
-                maLoaiHoaDon: UNCLASSIFIED_INVOICE_TYPE,
-                loaiHinhDoanhThu: null,
+                maLoaiHoaDon: IMPORT_INVOICE_TYPE,
+                loaiHinhDoanhThu: IMPORT_REVENUE_TYPE,
+                chiTiet: invoice.chiTiet.map((line) => ({
+                    ...line,
+                    thueSuatGTGT: IMPORT_TAX_RATE,
+                    maThueSuatGTGT: String(IMPORT_TAX_RATE),
+                })),
             };
             delete payload.warnings;
-            delete payload.sourceTax;
             delete payload.invoiceOrder;
             delete payload.startRow;
             delete payload.endRow;
@@ -1744,22 +1969,19 @@ router.post('/nhom-import', importUpload.single('file'), async (req, res) => {
                 .input('HoaDonId', sql.Int, hoaDonId)
                 .input('LoaiNguoiMua', sql.NVarChar(20), invoice.loaiNguoiMua)
                 .input('MaDVCQHNS', sql.NVarChar(100), invoice.maDvcqhnsSnapshot || null)
-                .input('ChiTietJson', sql.NVarChar(sql.MAX), JSON.stringify(invoice.chiTiet))
                 .query(`
                     UPDATE dbo.HD_HoaDon
-                    SET LoaiHinhDoanhThu = NULL,
+                    SET LoaiHinhDoanhThu = N'XuatKhau',
                         LoaiNguoiMua_Snapshot = @LoaiNguoiMua,
                         MaDVCQHNS_Snapshot = @MaDVCQHNS
                     WHERE HoaDonId = @HoaDonId;
 
                     UPDATE detail
-                    SET MaThueSuatGTGT = source.MaThueSuatGTGT
+                    SET MaThueSuatGTGT = N'0',
+                        ThueSuatGTGT = 0,
+                        TienThueGTGT = 0,
+                        TienThueQuyDoi = 0
                     FROM dbo.HD_HoaDon_ChiTiet detail
-                    JOIN OPENJSON(@ChiTietJson)
-                    WITH (
-                        SoDong INT '$.soDong',
-                        MaThueSuatGTGT NVARCHAR(10) '$.maThueSuatGTGT'
-                    ) source ON source.SoDong = detail.SoDong
                     WHERE detail.HoaDonId = @HoaDonId;
                 `);
 
@@ -2099,7 +2321,7 @@ router.post('/dot-xuat-file', async (req, res) => {
         const rs = await pool.request()
             .input('HoaDonIdsJson', sql.NVarChar(sql.MAX), JSON.stringify(hoaDonIds))
             .input('RequesterUserId', sql.Int, requester.userId)
-            .input('PhienBanMau', sql.NVarChar(50), req.body.phienBanMau || 'MISA-21COL-V2')
+            .input('PhienBanMau', sql.NVarChar(50), req.body.phienBanMau || IMPORT_TEMPLATE_VERSION)
             .input('GhiChu', sql.NVarChar(1000), req.body.ghiChu || null)
             .execute('HD_sp_DotXuatFile_Tao');
 
@@ -2146,6 +2368,7 @@ router.get('/dot-xuat-file/:id/export.xlsx', async (req, res) => {
         const headers = [
             'Số thứ tự hóa đơn (*)',
             'Ngày hóa đơn',
+            'Thời hạn thanh toán',
             'Tên đơn vị mua hàng',
             'Địa chỉ',
             'Mã số thuế',
