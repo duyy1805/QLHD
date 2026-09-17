@@ -15,6 +15,7 @@ const dautuanRouter = require('./routes/dautuan');
 const khotm = require('./routes/khotm');
 const khotmtest = require('./routes/khotmtest');
 const erp = require('./routes/ERP/erp');
+const erpTest = require('./routes/ERP/erp-test');
 const hoitruongRouter = require('./routes/hoitruong');
 const sosecRouter = require('./routes/sosec');
 const invoiceRouter = require('./routes/invoice');
@@ -62,6 +63,7 @@ app.use('/dautuan', dautuanRouter);
 app.use('/khotm', khotm);
 app.use('/khotmtest', khotmtest);
 app.use('/erp', erp);
+app.use('/erp-test', erpTest);
 app.use('/erp/tgsx', tgsxRouter);
 app.use('/erp_plp', erp_plp)
 

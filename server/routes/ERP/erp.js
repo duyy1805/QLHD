@@ -1,12 +1,13 @@
 const express = require('express')
-const router = express.Router()
 const argon2 = require('argon2')
 const jwt = require('jsonwebtoken')
 const { verifyToken, verifyAdmin } = require('../../middleware/auth');
-const { tagpoolPromise } = require('../../db2');
 const sql = require('mssql');
 const checkApiKey = require('../../middleware/apiKey');
 const XLSX = require('xlsx');
+
+function createErpRouter(tagpoolPromise) {
+const router = express.Router()
 
 function normalizeOptionalString(value, maxLength) {
     if (value === undefined || value === null) return null;
@@ -549,4 +550,645 @@ router.post('/tiendosanxuat-mocgio', async (req, res) => {
         });
     }
 });
-module.exports = router
+
+/**
+ * POST /erp/wms/inbound-callback
+ *
+ * WMS gọi API này sau khi hoàn tất xử lý phiếu nhập. Chỉ những kiện có
+ * status = COMPLETED mới được cập nhật vị trí trong ERP.
+ */
+router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
+    const body = req.body || {};
+    const orderID = typeof body.orderID === 'string' ? body.orderID.trim() : '';
+    const orderCode = typeof body.orderCode === 'string' ? body.orderCode.trim() : '';
+    const orderType = typeof body.orderType === 'string'
+        ? body.orderType.trim().toUpperCase()
+        : '';
+    const status = typeof body.status === 'string'
+        ? body.status.trim().toUpperCase()
+        : '';
+    const processedAt = typeof body.processedAt === 'string'
+        ? body.processedAt.trim()
+        : '';
+    const pallets = Array.isArray(body.pallets) ? body.pallets : null;
+
+    const idPhieuNhap = /^\d+$/.test(orderID) ? Number(orderID) : null;
+    const validStatuses = new Set(['COMPLETED', 'PARTIAL', 'FAILED']);
+
+    if (
+        !Number.isSafeInteger(idPhieuNhap) ||
+        idPhieuNhap <= 0 ||
+        idPhieuNhap > 2147483647 ||
+        !orderCode ||
+        orderType !== 'INBOUND' ||
+        !validStatuses.has(status) ||
+        !processedAt ||
+        !Number.isFinite(Date.parse(processedAt)) ||
+        !pallets
+    ) {
+        return res.status(400).json({
+            success: false,
+            orderID: orderID || null,
+            message: 'Invalid callback payload'
+        });
+    }
+
+    const normalizedPallets = [];
+    const palletIDs = new Set();
+
+    for (const pallet of pallets) {
+        const palletID = typeof pallet?.palletID === 'string'
+            ? pallet.palletID.trim()
+            : '';
+        const palletStatus = typeof pallet?.status === 'string'
+            ? pallet.status.trim().toUpperCase()
+            : '';
+        const locationID = pallet?.locationID == null
+            ? null
+            : Number(pallet.locationID);
+
+        if (
+            !palletID ||
+            palletIDs.has(palletID) ||
+            !['COMPLETED', 'FAILED'].includes(palletStatus) ||
+            (palletStatus === 'COMPLETED' &&
+                (!Number.isInteger(locationID) || locationID <= 0 || locationID > 2147483647))
+        ) {
+            return res.status(400).json({
+                success: false,
+                orderID,
+                message: 'Invalid callback payload'
+            });
+        }
+
+        palletIDs.add(palletID);
+        normalizedPallets.push({ palletID, status: palletStatus, locationID });
+    }
+
+    if (
+        (status === 'COMPLETED' &&
+            (normalizedPallets.length === 0 || normalizedPallets.some((p) => p.status !== 'COMPLETED'))) ||
+        (status === 'PARTIAL' &&
+            (!normalizedPallets.some((p) => p.status === 'COMPLETED') ||
+                !normalizedPallets.some((p) => p.status === 'FAILED'))) ||
+        (status === 'FAILED' && normalizedPallets.some((p) => p.status !== 'FAILED'))
+    ) {
+        return res.status(400).json({
+            success: false,
+            orderID,
+            message: 'Invalid callback payload'
+        });
+    }
+
+    let transaction;
+    let transactionFinished = false;
+
+    try {
+        const pool = await tagpoolPromise;
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        const orderResult = await new sql.Request(transaction)
+            .input('ID_PhieuNhapBTP', sql.Int, idPhieuNhap)
+            .input('So_PhieuNhapBTP', sql.NVarChar(255), orderCode)
+            .query(`
+                SELECT ID_PhieuNhapBTP
+                FROM dbo.PhieuNhapBTP WITH (UPDLOCK, HOLDLOCK)
+                WHERE ID_PhieuNhapBTP = @ID_PhieuNhapBTP
+                  AND So_PhieuNhapBTP = @So_PhieuNhapBTP
+                  AND TonTai = 1;
+            `);
+
+        if (orderResult.recordset.length !== 1) {
+            const error = new Error('Không tìm thấy phiếu nhập tương ứng');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        let updatedCount = 0;
+
+        for (const pallet of normalizedPallets) {
+            if (pallet.status !== 'COMPLETED') continue;
+
+            const palletResult = await new sql.Request(transaction)
+                .input('ID_PhieuNhapBTP', sql.Int, idPhieuNhap)
+                .input('QRCode', sql.NVarChar(255), pallet.palletID)
+                .query(`
+                    SELECT ID_TheKhoKienBTP, ID_ViTriKho
+                    FROM dbo.TheKhoKienBTP WITH (UPDLOCK, HOLDLOCK)
+                    WHERE ID_PhieuNhapBTP = @ID_PhieuNhapBTP
+                      AND QRCode = @QRCode
+                      AND TonTai = 1;
+                `);
+
+            if (palletResult.recordset.length !== 1) {
+                const error = new Error(
+                    `Không tìm thấy kiện ${pallet.palletID} thuộc phiếu nhập ${orderID}`
+                );
+                error.statusCode = 400;
+                throw error;
+            }
+
+            const packageRow = palletResult.recordset[0];
+
+            // WMS có thể gửi lại callback. Không cập nhật/lưu lịch sử lần nữa
+            // nếu kiện đã ở đúng vị trí.
+            if (Number(packageRow.ID_ViTriKho) === pallet.locationID) continue;
+
+            await new sql.Request(transaction)
+                .input('ID_TheKhoKienBTP', sql.Int, packageRow.ID_TheKhoKienBTP)
+                .input('ID_ViTriKho', sql.Int, pallet.locationID)
+                .input('ID_TaiKhoan', sql.Int, null)
+                .input('LoaiThaoTac', sql.VarChar(20), 'GAN_VI_TRI_NHAP')
+                .execute('dbo.App_BTP_CapNhatViTriKien');
+
+            updatedCount += 1;
+        }
+
+        await transaction.commit();
+        transactionFinished = true;
+
+        console.info('[POST /wms/inbound-callback] processed:', {
+            orderID,
+            status,
+            updatedCount,
+            processedAt
+        });
+
+        return res.status(200).json({
+            success: true,
+            orderID,
+            message: 'Callback received'
+        });
+    } catch (error) {
+        if (transaction && !transactionFinished) {
+            try {
+                await transaction.rollback();
+            } catch (rollbackError) {
+                console.error('[POST /wms/inbound-callback] rollback error:', rollbackError);
+            }
+        }
+
+        console.error('[POST /wms/inbound-callback] error:', error);
+
+        const sqlErrorNumber = error.number ?? error.originalError?.info?.number;
+        const statusCode = error.statusCode === 400 || [51041, 51042, 51043].includes(sqlErrorNumber)
+            ? 400
+            : 500;
+        return res.status(statusCode).json({
+            success: false,
+            orderID: orderID || null,
+            message: statusCode === 400 ? error.message : 'Internal Server Error'
+        });
+    }
+});
+
+/** Xem trước đúng payload ERP sẽ gửi tới POST /api/share/wmsOutbound. */
+router.get('/wms/outbound-orders/:id', checkApiKey, async (req, res) => {
+    const idPhieuXuat = Number(req.params.id);
+    if (!Number.isSafeInteger(idPhieuXuat) || idPhieuXuat <= 0 || idPhieuXuat > 2147483647) {
+        return res.status(400).json({ ok: false, message: 'ID phiếu xuất không hợp lệ' });
+    }
+
+    try {
+        const pool = await tagpoolPromise;
+        const result = await pool.request()
+            .input('ID_PhieuXuatBTP', sql.Int, idPhieuXuat)
+            .execute('dbo.App_BTP_PhieuXuat_ThongTinChiTiet');
+        const header = result.recordsets?.[0]?.[0];
+        const details = result.recordsets?.[1] || [];
+
+        if (!header) {
+            return res.status(404).json({ ok: false, message: 'Không tìm thấy phiếu xuất' });
+        }
+        if (!header.QrStatus) {
+            return res.status(409).json({ ok: false, message: 'Phiếu xuất chưa được xác nhận' });
+        }
+
+        const date = new Date(header.Ngay_Lap);
+        const items = details.map((row) => ({
+            itemCode: row.ItemCode == null ? '' : String(row.ItemCode).trim(),
+            itemName: row.Ten_SanPham == null ? '' : String(row.Ten_SanPham).trim(),
+            ...(row.So_LoSanXuat == null || String(row.So_LoSanXuat).trim() === ''
+                ? {}
+                : { lot: String(row.So_LoSanXuat).trim() }),
+            quantity: Number(row.SoLuong_XuatKho)
+        }));
+
+        if (
+            !header.So_PhieuXuatBTP ||
+            !Number.isFinite(date.getTime()) ||
+            items.length === 0 ||
+            items.some((item) => !item.itemCode || !item.itemName ||
+                !Number.isSafeInteger(item.quantity) || item.quantity <= 0)
+        ) {
+            return res.status(422).json({
+                ok: false,
+                message: 'Dữ liệu phiếu xuất chưa đủ hoặc không đúng định dạng WMS'
+            });
+        }
+
+        return res.json({
+            ok: true,
+            data: {
+                orderID: String(idPhieuXuat),
+                orderCode: String(header.So_PhieuXuatBTP),
+                orderType: 'OUTBOUND',
+                date: date.toISOString(),
+                items
+            }
+        });
+    } catch (error) {
+        console.error('[GET /wms/outbound-orders/:id] error:', error);
+        return res.status(500).json({ ok: false, message: 'Không thể tạo dữ liệu phiếu xuất WMS' });
+    }
+});
+
+router.post('/wms/outbound-callback', checkApiKey, async (req, res) => {
+    const body = req.body || {};
+    const orderID = typeof body.orderID === 'string' ? body.orderID.trim() : '';
+    const idPhieuXuat = /^\d+$/.test(orderID) ? Number(orderID) : null;
+    const orderCode = typeof body.orderCode === 'string' ? body.orderCode.trim() : '';
+    const status = typeof body.status === 'string' ? body.status.trim() : '';
+    const items = body.items;
+    const badPayload = () => res.status(400).json({
+        success: false, orderID: orderID || null, message: 'Invalid callback payload'
+    });
+
+    if (!Number.isSafeInteger(idPhieuXuat) || idPhieuXuat <= 0 || idPhieuXuat > 2147483647 ||
+        !orderCode || body.orderType !== 'OUTBOUND' ||
+        !['COMPLETED', 'PARTIAL', 'FAILED'].includes(status) ||
+        typeof body.processedAt !== 'string' || !Number.isFinite(Date.parse(body.processedAt)) ||
+        !Array.isArray(items) || items.length === 0) {
+        return badPayload();
+    }
+
+    const normalizedItems = [];
+    let hasExported = false;
+    let hasShortfall = false;
+
+    for (const item of items) {
+        const itemCode = typeof item?.itemCode === 'string' ? item.itemCode.trim() : '';
+        const lot = item?.lot == null ? null : String(item.lot).trim() || null;
+        const requestedQuantity = item?.requestedQuantity;
+        const exportedQuantity = item?.exportedQuantity;
+        if (!itemCode || !Number.isSafeInteger(requestedQuantity) || requestedQuantity <= 0 ||
+            !Number.isSafeInteger(exportedQuantity) || exportedQuantity < 0 ||
+            exportedQuantity > requestedQuantity || !Array.isArray(item.pallets)) {
+            return badPayload();
+        }
+
+        const palletIDs = new Set();
+        let palletTotal = 0;
+        const pallets = [];
+        for (const pallet of item.pallets) {
+            const palletID = typeof pallet?.palletID === 'string' ? pallet.palletID.trim() : '';
+            const quantity = pallet?.quantity;
+            if (!palletID || palletIDs.has(palletID) ||
+                !Number.isSafeInteger(quantity) || quantity <= 0) return badPayload();
+            palletIDs.add(palletID);
+            palletTotal += quantity;
+            pallets.push({ palletID, quantity });
+        }
+        if (palletTotal !== exportedQuantity) return badPayload();
+        if (exportedQuantity > 0) hasExported = true;
+        if (exportedQuantity < requestedQuantity) hasShortfall = true;
+        normalizedItems.push({ itemCode, lot, requestedQuantity, pallets });
+    }
+
+    if ((status === 'COMPLETED' && hasShortfall) ||
+        (status === 'PARTIAL' && (!hasExported || !hasShortfall)) ||
+        (status === 'FAILED' && hasExported)) return badPayload();
+
+    let transaction;
+    let finished = false;
+    const callbackError = (statusCode, message) => {
+        const error = new Error(message);
+        error.statusCode = statusCode;
+        return error;
+    };
+
+    try {
+        const pool = await tagpoolPromise;
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        const order = await new sql.Request(transaction)
+            .input('OrderID', sql.Int, idPhieuXuat)
+            .query(`SELECT So_PhieuXuatBTP, QrStatus FROM dbo.PhieuXuatBTP WITH (UPDLOCK, HOLDLOCK)
+                    WHERE ID_PhieuXuatBTP = @OrderID AND TonTai = 1;`);
+        if (!order.recordset.length) throw callbackError(404, 'Order or pallet not found');
+        if (order.recordset[0].So_PhieuXuatBTP !== orderCode) {
+            throw callbackError(400, 'Invalid callback payload');
+        }
+        if (!order.recordset[0].QrStatus) {
+            throw callbackError(400, 'Phiếu xuất chưa được xác nhận');
+        }
+
+        const detailResult = await new sql.Request(transaction)
+            .input('ID_PhieuXuatBTP', sql.Int, idPhieuXuat)
+            .execute('dbo.App_BTP_PhieuXuat_ThongTinChiTiet');
+        const details = detailResult.recordsets?.[1] || [];
+        if (details.length !== normalizedItems.length) {
+            throw callbackError(400, 'Invalid callback payload');
+        }
+
+        const usedDetailIndexes = new Set();
+        const links = [];
+        for (const item of normalizedItems) {
+            const candidates = details.map((row, index) => ({ row, index }))
+                .filter(({ row, index }) => !usedDetailIndexes.has(index) &&
+                    String(row.ItemCode || '').trim() === item.itemCode &&
+                    (item.lot === null || String(row.So_LoSanXuat || '').trim() === item.lot));
+            if (candidates.length !== 1 ||
+                Number(candidates[0].row.SoLuong_XuatKho) !== item.requestedQuantity) {
+                throw callbackError(400, 'Invalid callback payload');
+            }
+            const { row: detail, index } = candidates[0];
+            usedDetailIndexes.add(index);
+
+            for (const pallet of item.pallets) {
+                const packageDetail = await new sql.Request(transaction)
+                    .input('QRCode', sql.NVarChar(255), pallet.palletID)
+                    .input('ItemCode', sql.NVarChar(255), item.itemCode)
+                    .input('Lot', sql.NVarChar(50), item.lot)
+                    .query(`
+                        SELECT d.ID_TheKhoKienBTP_ChiTiet
+                        FROM dbo.TheKhoKienBTP AS k WITH (UPDLOCK, HOLDLOCK)
+                        JOIN dbo.TheKhoKienBTP_ChiTiet AS d WITH (UPDLOCK, HOLDLOCK)
+                          ON d.ID_TheKhoKienBTP = k.ID_TheKhoKienBTP
+                        WHERE k.QRCode = @QRCode AND k.TonTai = 1
+                          AND d.TonTai = 1 AND d.ItemCode = @ItemCode
+                          AND (@Lot IS NULL OR d.DauTuan = @Lot);
+                    `);
+                if (packageDetail.recordset.length !== 1) {
+                    throw callbackError(404, 'Order or pallet not found');
+                }
+                links.push({
+                    orderID: Number(detail.ID_DonHang) || 0,
+                    lotID: Number(detail.ID_DonHang_LoSanXuat) || 0,
+                    productID: Number(detail.ID_DonHang_SanPham) || 0,
+                    packageDetailID: packageDetail.recordset[0].ID_TheKhoKienBTP_ChiTiet,
+                    quantity: pallet.quantity
+                });
+            }
+        }
+
+        const existingResult = await new sql.Request(transaction)
+            .input('OrderID', sql.Int, idPhieuXuat)
+            .query(`SELECT ID_DonHang, ID_DonHang_LoSanXuat, ID_DonHang_SanPham,
+                           ID_TheKhoKienBTP_ChiTiet, SoLuong_XuatKho
+                    FROM dbo.PhieuXuatBTP_ChiTiet_TheKhoKien WITH (UPDLOCK, HOLDLOCK)
+                    WHERE ID_PhieuXuatBTP = @OrderID;`);
+        const linkKey = (x) => [x.orderID, x.lotID, x.productID,
+            x.packageDetailID, x.quantity].join('|');
+        const incomingKeys = links.map(linkKey).sort();
+        const existingKeys = existingResult.recordset.map((row) => linkKey({
+            orderID: row.ID_DonHang,
+            lotID: row.ID_DonHang_LoSanXuat,
+            productID: row.ID_DonHang_SanPham,
+            packageDetailID: row.ID_TheKhoKienBTP_ChiTiet,
+            quantity: Number(row.SoLuong_XuatKho)
+        })).sort();
+
+        if (JSON.stringify(incomingKeys) !== JSON.stringify(existingKeys)) {
+            await new sql.Request(transaction)
+                .input('OrderID', sql.Int, idPhieuXuat)
+                .query(`DELETE FROM dbo.PhieuXuatBTP_ChiTiet_TheKhoKien
+                        WHERE ID_PhieuXuatBTP = @OrderID;`);
+            for (const link of links) {
+                await new sql.Request(transaction)
+                    .input('OrderID', sql.Int, idPhieuXuat)
+                    .input('ID_DonHang', sql.Int, link.orderID)
+                    .input('ID_DonHang_LoSanXuat', sql.Int, link.lotID)
+                    .input('ID_DonHang_SanPham', sql.Int, link.productID)
+                    .input('ID_TheKhoKienBTP_ChiTiet', sql.Int, link.packageDetailID)
+                    .input('SoLuong_XuatKho', sql.Decimal(18, 2), link.quantity)
+                    .query(`INSERT INTO dbo.PhieuXuatBTP_ChiTiet_TheKhoKien
+                            (ID_PhieuXuatBTP, ID_DonHang, ID_DonHang_LoSanXuat,
+                             ID_DonHang_SanPham, ID_TheKhoKienBTP_ChiTiet, SoLuong_XuatKho)
+                            VALUES (@OrderID, @ID_DonHang, @ID_DonHang_LoSanXuat,
+                                    @ID_DonHang_SanPham, @ID_TheKhoKienBTP_ChiTiet,
+                                    @SoLuong_XuatKho);`);
+            }
+        }
+
+        await transaction.commit();
+        finished = true;
+        return res.status(200).json({
+            success: true, orderID, message: 'Callback received'
+        });
+    } catch (error) {
+        if (transaction && !finished) {
+            try { await transaction.rollback(); }
+            catch (rollbackError) {
+                console.error('[POST /wms/outbound-callback] rollback error:', rollbackError);
+            }
+        }
+        console.error('[POST /wms/outbound-callback] error:', error);
+        const statusCode = error.statusCode || 500;
+        return res.status(statusCode).json({
+            success: false,
+            orderID: orderID || null,
+            message: statusCode === 500 ? 'Internal Server Error' : error.message
+        });
+    }
+});
+
+router.get('/wms/inbound-orders/:id',  async (req, res) => {
+    try {
+        const idPhieuNhap = Number(req.params.id);
+
+        if (!Number.isInteger(idPhieuNhap) || idPhieuNhap <= 0) {
+            return res.status(400).json({
+                ok: false,
+                message: 'ID phiếu nhập không hợp lệ'
+            });
+        }
+
+        const pool = await tagpoolPromise;
+
+        const result = await pool.request()
+            .input('ID_PhieuNhapBTP', sql.Int, idPhieuNhap)
+            .execute('dbo.App_PhieuNhapBTP_ThongTinChiTiet');
+
+        const header = result.recordsets?.[0]?.[0] || null;
+        const chiTietPhieu = result.recordsets?.[1] || [];
+        const thongTinKien = result.recordsets?.[2] || [];
+        const chiTietKien = result.recordsets?.[3] || [];
+
+        if (!header) {
+            return res.status(404).json({
+                ok: false,
+                message: 'Không tìm thấy phiếu nhập'
+            });
+        }
+
+        const palletMap = new Map();
+
+        for (const row of chiTietKien) {
+            const key = row.ID_TheKhoKienBTP;
+
+            if (!palletMap.has(key)) {
+                palletMap.set(key, {
+                    palletID: row.QrCode,
+                    items: []
+                });
+            }
+
+            palletMap.get(key).items.push({
+                itemCode: row.ItemCode,
+                itemName: row.Ten_SanPham,
+                Lot: row.DauTuan,
+                quantity: Number(row.SoLuongTon || 0)
+            });
+        }
+
+            return res.json({
+                ok: true,
+                data: {
+                    orderID: String(header.ID_PhieuNhapBTP),
+                    orderCode: header.So_PhieuNhapBTP,
+                    orderType: 'INBOUND',
+                    date: header.Ngay_NhapBTP,
+
+                    chiTietPhieu,
+                    thongTinKien,
+
+                    pallets: [...palletMap.values()]
+                }
+            });
+
+    } catch (error) {
+        console.error('[GET /wms/inbound-orders/:id] error:', error);
+
+        return res.status(500).json({
+            ok: false,
+            message: error.message || 'Lỗi không xác định'
+        });
+    }
+});
+
+// ==========================================
+// WMS - DANH SÁCH PHIẾU NHẬP BTP
+// ==========================================
+router.get('/wms/inbound-orders', async (req, res) => {
+    try {
+        const page = Math.max(Number(req.query.page) || 0, 0);
+
+        const pageSize = Math.min(
+            Math.max(Number(req.query.pageSize) || 100, 1),
+            500
+        );
+
+        const soPhieu = String(req.query.soPhieu || '').trim();
+
+        const skip = page * pageSize;
+
+        const pool = await tagpoolPromise;
+
+        const request = pool.request()
+            .input('SoPhieu', sql.NVarChar(100), soPhieu)
+            .input('Skip', sql.Int, skip)
+            .input('Take', sql.Int, pageSize);
+
+        const result = await request.query(`
+            SELECT
+                a.ID_PhieuNhapBTP AS orderID,
+                a.So_PhieuNhapBTP AS orderCode,
+                a.Ngay_NhapBTP AS date,
+
+                a.ID_KhoNhap AS warehouseID,
+                kn.Ten_Kho AS warehouseName,
+
+                a.ID_HinhThucNhapBTP AS inboundTypeID,
+                ht.Ten_HinhThucNhapBTP AS inboundType,
+
+                a.QrStatus AS qrStatus,
+
+                CASE
+                    WHEN a.ID_DonVi = 32
+                        THEN RIGHT(bp.Ten_BoPhan, 30)
+
+                    WHEN a.ID_DonVi IS NULL
+                         AND a.ID_BoPhan IS NULL
+                        THEN RIGHT(ncc.Ten_NhaCungCap, 30)
+
+                    ELSE dv.Ten_DonVi
+                END AS customer,
+
+                dh.Ma_DonHang AS orderReference
+
+            FROM dbo.PhieuNhapBTP a
+
+            INNER JOIN (
+                SELECT
+                    ID_PhieuNhapBTP,
+                    MAX(ID_DonHang) AS ID_DonHang
+                FROM dbo.PhieuNhapBTP_ChiTiet
+                GROUP BY ID_PhieuNhapBTP
+            ) tendon
+                ON tendon.ID_PhieuNhapBTP = a.ID_PhieuNhapBTP
+
+            LEFT JOIN dbo.DonHang dh
+                ON dh.ID_DonHang = tendon.ID_DonHang
+
+            INNER JOIN dbo.DM_Kho kn
+                ON kn.ID_Kho = a.ID_KhoNhap
+
+            LEFT JOIN dbo.DM_HinhThucNhapBTP ht
+                ON ht.ID_HinhThucNhapBTP = a.ID_HinhThucNhapBTP
+
+            LEFT JOIN TAG_System.dbo.DM_DonVi dv
+                ON dv.ID_DonVi = a.ID_DonVi
+
+            LEFT JOIN TAG_System.dbo.DM_BoPhan bp
+                ON bp.ID_BoPhan = a.ID_BoPhan
+
+            LEFT JOIN dbo.DM_NhaCungCap ncc
+                ON ncc.ID_NhaCungCap = a.ID_NhaCungCap
+
+            WHERE
+                a.TrangThai NOT IN (4, 5)
+                AND a.TonTai = 1
+                AND a.ID_HinhThucNhapBTP <> 8
+                AND a.ID_KhoNhap NOT IN (12, 13, 15)
+
+                AND (
+                    @SoPhieu = ''
+                    OR a.So_PhieuNhapBTP LIKE '%' + @SoPhieu + '%'
+                )
+
+            ORDER BY
+                a.Ngay_NhapBTP DESC
+
+            OFFSET @Skip ROWS
+            FETCH NEXT @Take ROWS ONLY;
+        `);
+
+        const data = result.recordset || [];
+
+        return res.json({
+            ok: true,
+            page,
+            pageSize,
+            count: data.length,
+            data
+        });
+
+    } catch (error) {
+        console.error('[GET /wms/inbound-orders] error:', error);
+
+        return res.status(500).json({
+            ok: false,
+            message: error.message || 'Lỗi không xác định'
+        });
+    }
+});
+
+return router
+}
+
+const { tagpoolPromise } = require('../../db2');
+module.exports = createErpRouter(tagpoolPromise)
+module.exports.createRouter = createErpRouter

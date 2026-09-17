@@ -317,9 +317,180 @@ GET https://nodeapi.z76.vn/erp/kehoachsanxuat?Ten_DonVi=Phân%20xưởng%20may%2
 Accept: application/json
 
 ###
-GET https://nodeapi.z76.vn/khotm/btp/phieunhap/266791
+GET https://nodeapi.z76.vn/khotmtest/btp/phieunhap/256974
 Accept: application/json
 
 ###
-GET https://nodeapi.z76.vn/khotm/btp/phieuxuat/341136
+GET https://nodeapi.z76.vn/khotmtest/btp/phieuxuat/327199
 Accept: application/json
+
+### 1. Lấy danh sách phiếu nhập BTP
+POST https://nodeapi.z76.vn/khotmtest/btp/phieunhap/tim-kiem
+Content-Type: application/json
+
+{
+  "idKho": [],
+  "trangThai": null,
+  "soPhieu": "",
+  "loaiPhieu": null,
+  "PageSize": 20,
+  "PageIndex": 0,
+  "IdTaiKhoanDangNhap": 1,
+  "LuongQT": 2
+}
+
+### 2. Lấy chi tiết phiếu nhập BTP
+GET https://nodeapi.z76.vn/khotmtest/btp/phieunhap/256974
+Content-Type: application/json
+
+###
+GET https://nodeapi.z76.vn/erp-test/wms/inbound-orders?page=0&pageSize=100&soPhieu=PNBTP-2026-07-1827
+Accept: application/json
+
+###
+GET https://nodeapi.z76.vn/erp-test/wms/inbound-orders/256974
+Accept: application/json
+
+@baseUrl = https://nodeapi.z76.vn
+@apiKey = {{$dotenv API_KEY}}
+
+### WMS callback - nhập kho hoàn tất
+POST {{baseUrl}}/erp-test/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "256974",
+  "orderCode": "PNBTP-2026-07-1827",
+  "orderType": "INBOUND",
+  "status": "COMPLETED",
+  "message": "Inbound completed",
+  "processedAt": "2026-09-16T10:30:00.000Z",
+  "pallets": [
+    {
+      "palletID": "BTP0000000173",
+      "status": "COMPLETED",
+      "locationID": 21924,
+      "locationCode": "DDD"
+    }
+  ]
+}
+
+
+### WMS callback - xuất kho thành công
+POST {{baseUrl}}/erp-test/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "327199",
+  "orderCode": "PXBTP-2026-07-2644",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "message": "Outbound completed",
+  "processedAt": "2026-09-16T10:30:00.000Z",
+  "items": [
+    {
+      "itemCode": "40217955.M",
+      "requestedQuantity": 3672,
+      "exportedQuantity": 3672,
+      "pallets": [
+        { "palletID": "BP0000556913", "quantity": 612 },
+        { "palletID": "BP0000556710", "quantity": 612 },
+        { "palletID": "BP0000556712", "quantity": 147 },
+        { "palletID": "BP0000556713", "quantity": 612 },
+        { "palletID": "BP0000556910", "quantity": 612 },
+        { "palletID": "BP0000556709", "quantity": 612 },
+        { "palletID": "BP0000556909", "quantity": 465 }
+      ]
+    }
+  ]
+}
+
+### WMS callback - nhập kho thất bại (200: không cập nhật vị trí)
+# Thay ID/mã phiếu bằng dữ liệu trên môi trường test.
+POST {{baseUrl}}/erp-test/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "REPLACE_WITH_TEST_ORDER_ID",
+  "orderCode": "REPLACE_WITH_TEST_ORDER_CODE",
+  "orderType": "INBOUND",
+  "status": "FAILED",
+  "message": "Inbound order processing failed",
+  "processedAt": "2026-09-16T10:40:00.000Z",
+  "pallets": [
+    {
+      "palletID": "REPLACE_WITH_TEST_PALLET_QR",
+      "status": "FAILED",
+      "locationID": null,
+      "locationCode": null,
+      "errorCode": "NO_AVAILABLE_LOCATION",
+      "message": "Không còn vị trí phù hợp"
+    }
+  ]
+}
+
+### WMS callback - nhập kho sai payload (400: thiếu locationID)
+POST {{baseUrl}}/erp-test/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "256974",
+  "orderCode": "PNBTP-2026-07-1827",
+  "orderType": "INBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-16T10:40:00.000Z",
+  "pallets": [
+    { "palletID": "BTP0000000173", "status": "COMPLETED", "locationID": null }
+  ]
+}
+
+### WMS callback - xuất kho thất bại (200: không có kiện thực xuất)
+# CHÚ Ý: FAILED sẽ xóa liên kết kiện xuất hiện có của phiếu. Chỉ dùng phiếu test.
+POST {{baseUrl}}/erp-test/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "REPLACE_WITH_TEST_ORDER_ID",
+  "orderCode": "REPLACE_WITH_TEST_ORDER_CODE",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "message": "Outbound order processing failed",
+  "processedAt": "2026-09-16T10:45:00.000Z",
+  "errorCode": "NO_AVAILABLE_PALLET",
+  "items": [
+    {
+      "itemCode": "REPLACE_WITH_TEST_ITEM_CODE",
+      "requestedQuantity": 460,
+      "exportedQuantity": 0,
+      "pallets": []
+    }
+  ]
+}
+
+### WMS callback - xuất kho sai payload (400: tổng kiện khác exportedQuantity)
+POST {{baseUrl}}/erp-test/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "327199",
+  "orderCode": "PXBTP-2026-07-2644",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-16T10:50:00.000Z",
+  "items": [
+    {
+      "itemCode": "40217955.M",
+      "requestedQuantity": 3672,
+      "exportedQuantity": 3672,
+      "pallets": [
+        { "palletID": "BP0000556913", "quantity": 300 }
+      ]
+    }
+  ]
+}
