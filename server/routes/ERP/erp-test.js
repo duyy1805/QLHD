@@ -17,5 +17,11 @@ if (!testConfigured || sameDatabase) {
     module.exports = router;
 } else {
     const { testpoolPromise } = require('../../dbtest');
-    module.exports = createRouter(testpoolPromise);
+    const checkApiKey = require('../../middleware/apiKey');
+    const { createCraneDemoCallback, createCraneDemoLocationCallback } = require('./crane-demo-callback');
+    const router = express.Router();
+    router.post('/wms/outbound-callback', checkApiKey, createCraneDemoCallback(testpoolPromise));
+    router.post('/wms/location-callback', checkApiKey, createCraneDemoLocationCallback(testpoolPromise));
+    router.use(createRouter(testpoolPromise));
+    module.exports = router;
 }

@@ -1,0 +1,44 @@
+-- Run on TAG_QTKD before setting CRANE_WAREHOUSE_ID / CRANE_TEMP_LOCATION_ID.
+IF DB_NAME() <> N'TAG_QTKD' THROW 51040, N'Wrong database', 1;
+GO
+CREATE TABLE dbo.CraneWmsOutbound (
+    ID_PhieuXuatBTP int NOT NULL PRIMARY KEY,
+    ID_Kho int NOT NULL,
+    OrderCode nvarchar(255) NOT NULL,
+    Status varchar(24) NOT NULL,
+    DispatchStatus varchar(24) NOT NULL CONSTRAINT DF_CraneDispatch DEFAULT 'PENDING',
+    DispatchAttempts int NOT NULL CONSTRAINT DF_CraneAttempts DEFAULT 0,
+    DispatchError nvarchar(1000) NULL,
+    RequestJson nvarchar(max) NOT NULL,
+    CallbackJson nvarchar(max) NULL,
+    CreatedAt datetime2 NOT NULL CONSTRAINT DF_CraneCreated DEFAULT SYSUTCDATETIME(),
+    UpdatedAt datetime2 NOT NULL CONSTRAINT DF_CraneUpdated DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT CK_CraneRequestJson CHECK (ISJSON(RequestJson) = 1),
+    CONSTRAINT CK_CraneCallbackJson CHECK (CallbackJson IS NULL OR ISJSON(CallbackJson) = 1)
+);
+GO
+CREATE TABLE dbo.CraneWmsOutboundPallet (
+    ID_PhieuXuatBTP int NOT NULL,
+    ID_TheKhoKienBTP int NOT NULL,
+    PalletID nvarchar(255) NOT NULL,
+    OriginalLocationID int NOT NULL,
+    InitialQuantity decimal(18,2) NOT NULL,
+    PlannedQuantity decimal(18,2) NOT NULL,
+    ActualQuantity decimal(18,2) NULL,
+    Status varchar(24) NOT NULL,
+    ReturnEventID nvarchar(255) NULL,
+    ReturnLocationID int NULL,
+    CONSTRAINT PK_CraneWmsOutboundPallet PRIMARY KEY (ID_PhieuXuatBTP, ID_TheKhoKienBTP),
+    CONSTRAINT FK_CraneWmsOutboundPallet_Order FOREIGN KEY (ID_PhieuXuatBTP)
+        REFERENCES dbo.CraneWmsOutbound(ID_PhieuXuatBTP),
+    CONSTRAINT CK_CranePalletQuantities CHECK (InitialQuantity > 0 AND PlannedQuantity > 0
+        AND PlannedQuantity <= InitialQuantity AND (ActualQuantity IS NULL OR
+        (ActualQuantity >= 0 AND ActualQuantity <= PlannedQuantity)))
+);
+GO
+CREATE UNIQUE INDEX UX_CraneWms_ActivePallet ON dbo.CraneWmsOutboundPallet(ID_TheKhoKienBTP)
+WHERE Status IN ('WAITING_WMS', 'FAILED_RETRY', 'WAITING_RETURN');
+GO
+CREATE UNIQUE INDEX UX_CraneWms_ReturnEvent ON dbo.CraneWmsOutboundPallet(ReturnEventID)
+WHERE ReturnEventID IS NOT NULL;
+GO

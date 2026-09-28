@@ -1,0 +1,1224 @@
+# ERP/WMS Z76 - API test
+# Cập nhật URL và dữ liệu test trước khi chạy.
+# Đặt API_KEY trong .env của HTTP client; không ghi khóa thật vào file request.
+
+@host = https://nodeapi.z76.vn
+@erpPrefix = erp-test
+@erpBaseUrl = {{host}}/{{erpPrefix}}
+@apiKey = {{$dotenv API_KEY}}
+
+@wmsBaseUrl = https://z76-local.vercel.app/api/share
+
+# App kho cầu trục gọi PUT này khi xác nhận nhập. Đổi sang khotm để dùng DB chính.
+@khoTmBaseUrl = http://localhost:5000/khotmtest
+
+# Dữ liệu test
+@inboundOrderId = 256974
+@inboundOrderCode = PNBTP-2026-07-1827
+@inboundPallet1 = BTP0000000173
+@inboundPallet2 = BTP0000000174
+@inboundPalletFailed = BTP0000000175
+
+@outboundOrderId = 327199
+@outboundOrderCode = PXBTP-2026-07-2644
+@outboundItemCode = 40217955.M
+@outboundItemName = San pham BTP
+@outboundLot = 4
+@outboundLot2 = 05
+@outboundRequestedQuantity = 3672
+@outboundLot1RequestedQuantity = 1000
+@outboundLot2RequestedQuantity = 2672
+@outboundPallet1 = BP0000556913
+@outboundPallet2 = BP0000556710
+@outboundPallet3 = BP0000556712
+@outboundPallet4 = BP0000556713
+@outboundPallet5 = BP0000556910
+@outboundPallet6 = BP0000556709
+@outboundPallet7 = BP0000556909
+
+@currentLocationId = 21924
+@targetLocationId = 21925
+@targetLocationCode = DDD
+@notFoundOrderId = 2147483647
+@notFoundPallet = PALLET-NOT-FOUND
+
+
+# A. API ERP
+
+### A01 - Danh sách phiếu nhập, trang đầu
+# Expected: 200; trả data, page, pageSize, count.
+GET {{erpBaseUrl}}/wms/inbound-orders?page=0&pageSize=100
+Accept: application/json
+
+### A02 - Danh sách phiếu nhập, lọc theo số phiếu
+# Expected: 200; chỉ trả các phiếu khớp soPhieu.
+GET {{erpBaseUrl}}/wms/inbound-orders?page=0&pageSize=20&soPhieu={{inboundOrderCode}}
+Accept: application/json
+
+### A03 - Danh sách phiếu nhập, kiểm tra giới hạn pageSize tối đa 500
+# Expected: 200; pageSize trong response là 500.
+GET {{erpBaseUrl}}/wms/inbound-orders?page=0&pageSize=9999
+Accept: application/json
+
+### A04 - Xem payload nhập kho theo ID
+# Expected: 200; kiểm tra pallets[].items[].Lot và quantity.
+GET {{erpBaseUrl}}/wms/inbound-orders/{{inboundOrderId}}
+Accept: application/json
+
+### A05 - ID phiếu nhập không hợp lệ
+# Expected: 400.
+GET {{erpBaseUrl}}/wms/inbound-orders/abc
+Accept: application/json
+
+### A06 - Không tìm thấy phiếu nhập
+# Expected: 404.
+GET {{erpBaseUrl}}/wms/inbound-orders/{{notFoundOrderId}}
+Accept: application/json
+
+### A07 - Xem payload xuất kho theo ID
+# Expected: 200; kiểm tra items[].lot có đúng LOT trong ERP.
+GET {{erpBaseUrl}}/wms/outbound-orders/{{outboundOrderId}}
+Accept: application/json
+x-api-key: {{apiKey}}
+
+### A08 - Payload xuất kho thiếu API key
+# Expected: 401.
+GET {{erpBaseUrl}}/wms/outbound-orders/{{outboundOrderId}}
+Accept: application/json
+
+### A09 - Payload xuất kho sai API key
+# Expected: 403.
+GET {{erpBaseUrl}}/wms/outbound-orders/{{outboundOrderId}}
+Accept: application/json
+x-api-key: INVALID_API_KEY
+
+### A10 - ID phiếu xuất không hợp lệ
+# Expected: 400.
+GET {{erpBaseUrl}}/wms/outbound-orders/abc
+Accept: application/json
+x-api-key: {{apiKey}}
+
+### A11 - Không tìm thấy phiếu xuất
+# Expected: 404.
+GET {{erpBaseUrl}}/wms/outbound-orders/{{notFoundOrderId}}
+Accept: application/json
+x-api-key: {{apiKey}}
+
+
+# B. ERP -> WMS
+
+### B00 - Xem kết quả tự gửi nhập kho sau khi xác nhận trên app
+# Chỉ dùng để kiểm tra/truyền lại; B01 bên dưới là POST WMS thủ công.
+GET {{khoTmBaseUrl}}/btp/phieunhap/{{inboundOrderId}}/wms-inbound
+x-api-key: {{apiKey}}
+
+### B00a - Gửi lại phiếu nhập đã lưu nếu lần gửi trước FAILED
+POST {{khoTmBaseUrl}}/btp/phieunhap/{{inboundOrderId}}/gui-lai-wms
+x-api-key: {{apiKey}}
+
+### B01 - POST /api/share/wmsInbound: ERP gửi phiếu nhập sang WMS
+# Theo Swagger z76-local: thay dữ liệu mẫu nếu muốn gửi phiếu nhập khác.
+# Expected: 202 nếu WMS tiếp nhận.
+POST {{wmsBaseUrl}}/wmsInbound
+Content-Type: application/json
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "date": "2026-09-23T08:00:00.000Z",
+  "pallets": [
+    {
+      "palletID": "{{inboundPallet1}}",
+      "items": [
+        {
+          "itemCode": "9018775",
+          "itemName": "Dimpa 65",
+          "Lot": "LSX002",
+          "quantity": 100
+        },
+        {
+          "itemCode": "90187853",
+          "itemName": "Dimpa 75",
+          "Lot": "LSX003",
+          "quantity": 50
+        }
+      ]
+    },
+    {
+      "palletID": "{{inboundPallet2}}",
+      "items": [
+        {
+          "itemCode": "9018775",
+          "itemName": "Dimpa 65",
+          "Lot": "LSX002",
+          "quantity": 80
+        }
+      ]
+    }
+  ]
+}
+
+### B02 - Gửi phiếu nhập sai payload: thiếu Lot
+# Expected: 400.
+POST {{wmsBaseUrl}}/wmsInbound
+Content-Type: application/json
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "date": "2026-09-23T08:00:00.000Z",
+  "pallets": [
+    {
+      "palletID": "{{inboundPallet1}}",
+      "items": [
+        {
+          "itemCode": "9018775",
+          "itemName": "Dimpa 65",
+          "quantity": 100
+        }
+      ]
+    }
+  ]
+}
+
+### B03 - POST /api/share/wmsOutbound: ERP gửi phiếu xuất sang WMS
+# Theo Swagger z76-local: items[].lot là tùy chọn; mẫu này có LOT.
+# Expected: 202 nếu WMS tiếp nhận.
+POST {{wmsBaseUrl}}/wmsOutbound
+Content-Type: application/json
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "date": "2026-09-23T08:30:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "itemName": "{{outboundItemName}}",
+      "lot": "{{outboundLot}}",
+      "quantity": {{outboundRequestedQuantity}}
+    }
+  ]
+}
+
+### B04 - Gửi phiếu xuất không có LOT
+POST {{wmsBaseUrl}}/wmsOutbound
+Content-Type: application/json
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "date": "2026-09-23T08:30:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "itemName": "{{outboundItemName}}",
+      "quantity": {{outboundRequestedQuantity}}
+    }
+  ]
+}
+
+### B05 - Đồng bộ tồn kho với WMS
+GET {{wmsBaseUrl}}/syncData
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "itemName": "{{outboundItemName}}",
+      "quantity": {{outboundRequestedQuantity}},
+      "lastUpdated": "2026-09-23T09:00:00.000Z"
+    }
+  ]
+}
+
+
+# C. WMS -> ERP - Callback nhập kho
+
+### C01 - Nhập kho hoàn tất toàn bộ
+# Expected: 200; success=true.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "status": "COMPLETED",
+  "message": "Inbound completed",
+  "processedAt": "2026-09-23T10:00:00.000Z",
+  "pallets": [
+    {
+      "palletID": "{{inboundPallet1}}",
+      "status": "COMPLETED",
+      "locationID": {{currentLocationId}},
+      "locationCode": "{{targetLocationCode}}"
+    }
+  ]
+}
+
+### C02 - Gửi lại callback nhập giống hệt để kiểm tra idempotent
+# Expected: 200; không tạo thêm lịch sử nếu kiện đã ở đúng vị trí.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "status": "COMPLETED",
+  "message": "Retry inbound completed",
+  "processedAt": "2026-09-23T10:01:00.000Z",
+  "pallets": [
+    {
+      "palletID": "{{inboundPallet1}}",
+      "status": "COMPLETED",
+      "locationID": {{currentLocationId}},
+      "locationCode": "{{targetLocationCode}}"
+    }
+  ]
+}
+
+### C03 - Nhập kho thành công một phần
+# Expected: 200; chỉ kiện COMPLETED được cập nhật vị trí.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "status": "PARTIAL",
+  "message": "One pallet completed, one pallet failed",
+  "processedAt": "2026-09-23T10:05:00.000Z",
+  "pallets": [
+    {
+      "palletID": "{{inboundPallet1}}",
+      "status": "COMPLETED",
+      "locationID": {{currentLocationId}},
+      "locationCode": "{{targetLocationCode}}"
+    },
+    {
+      "palletID": "{{inboundPalletFailed}}",
+      "status": "FAILED",
+      "locationID": null,
+      "locationCode": null,
+      "errorCode": "NO_AVAILABLE_LOCATION",
+      "message": "Không còn vị trí phù hợp"
+    }
+  ]
+}
+
+### C04 - Nhập kho thất bại toàn bộ
+# Expected: 200; không cập nhật vị trí.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "status": "FAILED",
+  "message": "Inbound order processing failed",
+  "processedAt": "2026-09-23T10:10:00.000Z",
+  "pallets": [
+    {
+      "palletID": "{{inboundPallet1}}",
+      "status": "FAILED",
+      "locationID": null,
+      "locationCode": null,
+      "errorCode": "NO_AVAILABLE_LOCATION",
+      "message": "Không xác định được vị trí nhập"
+    }
+  ]
+}
+
+### C05 - Thiếu API key
+# Expected: 401.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "status": "FAILED",
+  "processedAt": "2026-09-23T10:10:00.000Z",
+  "pallets": []
+}
+
+### C06 - Sai API key
+# Expected: 403.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: INVALID_API_KEY
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "status": "FAILED",
+  "processedAt": "2026-09-23T10:10:00.000Z",
+  "pallets": []
+}
+
+### C07 - COMPLETED nhưng thiếu locationID
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-23T10:15:00.000Z",
+  "pallets": [
+    {
+      "palletID": "{{inboundPallet1}}",
+      "status": "COMPLETED",
+      "locationID": null
+    }
+  ]
+}
+
+### C08 - PARTIAL nhưng không có cả COMPLETED và FAILED
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "status": "PARTIAL",
+  "processedAt": "2026-09-23T10:20:00.000Z",
+  "pallets": [
+    {
+      "palletID": "{{inboundPallet1}}",
+      "status": "COMPLETED",
+      "locationID": {{currentLocationId}}
+    }
+  ]
+}
+
+### C09 - Trùng palletID trong cùng callback
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-23T10:25:00.000Z",
+  "pallets": [
+    {
+      "palletID": "{{inboundPallet1}}",
+      "status": "COMPLETED",
+      "locationID": {{currentLocationId}}
+    },
+    {
+      "palletID": "{{inboundPallet1}}",
+      "status": "COMPLETED",
+      "locationID": {{currentLocationId}}
+    }
+  ]
+}
+
+### C10 - Sai orderType
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "processedAt": "2026-09-23T10:30:00.000Z",
+  "pallets": []
+}
+
+### C11 - processedAt không hợp lệ
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{inboundOrderId}}",
+  "orderCode": "{{inboundOrderCode}}",
+  "orderType": "INBOUND",
+  "status": "FAILED",
+  "processedAt": "not-a-date",
+  "pallets": []
+}
+
+### C12 - Không tìm thấy phiếu nhập
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/inbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{notFoundOrderId}}",
+  "orderCode": "PNBTP-NOT-FOUND",
+  "orderType": "INBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-23T10:35:00.000Z",
+  "pallets": [
+    {
+      "palletID": "{{notFoundPallet}}",
+      "status": "COMPLETED",
+      "locationID": {{currentLocationId}}
+    }
+  ]
+}
+
+
+# D. WMS -> ERP - Callback xuất kho
+
+### D01 - Xuất kho hoàn tất, có LOT
+# Expected: 200 nếu pallet, ItemCode, LOT và số lượng khớp DB.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "message": "Outbound completed",
+  "processedAt": "2026-09-23T11:00:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": {{outboundRequestedQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": 612
+        },
+        {
+          "palletID": "{{outboundPallet2}}",
+          "quantity": 612
+        },
+        {
+          "palletID": "{{outboundPallet3}}",
+          "quantity": 147
+        },
+        {
+          "palletID": "{{outboundPallet4}}",
+          "quantity": 612
+        },
+        {
+          "palletID": "{{outboundPallet5}}",
+          "quantity": 612
+        },
+        {
+          "palletID": "{{outboundPallet6}}",
+          "quantity": 612
+        },
+        {
+          "palletID": "{{outboundPallet7}}",
+          "quantity": 465
+        }
+      ]
+    }
+  ]
+}
+
+### D02 - Gửi lại callback xuất giống hệt để kiểm tra idempotent
+# Expected: 200; dữ liệu liên kết không bị nhân đôi.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "message": "Retry outbound completed",
+  "processedAt": "2026-09-23T11:01:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": {{outboundRequestedQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": 612
+        },
+        {
+          "palletID": "{{outboundPallet2}}",
+          "quantity": 612
+        },
+        {
+          "palletID": "{{outboundPallet3}}",
+          "quantity": 147
+        },
+        {
+          "palletID": "{{outboundPallet4}}",
+          "quantity": 612
+        },
+        {
+          "palletID": "{{outboundPallet5}}",
+          "quantity": 612
+        },
+        {
+          "palletID": "{{outboundPallet6}}",
+          "quantity": 612
+        },
+        {
+          "palletID": "{{outboundPallet7}}",
+          "quantity": 465
+        }
+      ]
+    }
+  ]
+}
+
+### D02B - Xuất kho COMPLETED khi cùng ItemCode có nhiều LOT
+# Expected: 200.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "message": "Outbound completed for multiple lots",
+  "processedAt": "2026-09-23T11:02:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundLot1RequestedQuantity}},
+      "exportedQuantity": {{outboundLot1RequestedQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": 600
+        },
+        {
+          "palletID": "{{outboundPallet2}}",
+          "quantity": 400
+        }
+      ]
+    },
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot2}}",
+      "requestedQuantity": {{outboundLot2RequestedQuantity}},
+      "exportedQuantity": {{outboundLot2RequestedQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet3}}",
+          "quantity": 1000
+        },
+        {
+          "palletID": "{{outboundPallet4}}",
+          "quantity": 1000
+        },
+        {
+          "palletID": "{{outboundPallet5}}",
+          "quantity": 672
+        }
+      ]
+    }
+  ]
+}
+
+### D03 - Xuất kho một phần, có LOT
+# Expected: 200 nếu số lượng và pallet khớp DB.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "PARTIAL",
+  "message": "Outbound partially completed",
+  "processedAt": "2026-09-23T11:05:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": 612,
+      "errorCode": "INSUFFICIENT_STOCK",
+      "message": "Không đủ tồn kho để xuất đủ số lượng yêu cầu",
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": 612
+        }
+      ]
+    }
+  ]
+}
+
+### D04 - Xuất kho thất bại toàn bộ
+# Chỉ chạy trên phiếu test.
+# Expected: 200.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "message": "Outbound order processing failed",
+  "processedAt": "2026-09-23T11:10:00.000Z",
+  "errorCode": "NO_AVAILABLE_PALLET",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": 0,
+      "pallets": []
+    }
+  ]
+}
+
+### D05 - Callback xuất thiếu LOT
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "processedAt": "2026-09-23T11:15:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": 0,
+      "pallets": []
+    }
+  ]
+}
+
+### D06 - Sai tổng quantity của pallets
+# Expected: 400 vì tổng pallet = 300 khác exportedQuantity.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-23T11:20:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": {{outboundRequestedQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": 300
+        }
+      ]
+    }
+  ]
+}
+
+### D07 - COMPLETED nhưng xuất thiếu số lượng
+# Expected: 400 vì status COMPLETED không được có shortfall.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-23T11:25:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": 1836,
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": 1836
+        }
+      ]
+    }
+  ]
+}
+
+### D08 - PARTIAL nhưng đã xuất đủ số lượng
+# Expected: 400 vì PARTIAL phải có shortfall.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "PARTIAL",
+  "processedAt": "2026-09-23T11:30:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": {{outboundRequestedQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": {{outboundRequestedQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### D09 - FAILED nhưng vẫn có số lượng thực xuất
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "processedAt": "2026-09-23T11:35:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": 100,
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": 100
+        }
+      ]
+    }
+  ]
+}
+
+### D10 - exportedQuantity lớn hơn requestedQuantity
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-23T11:40:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": 100,
+      "exportedQuantity": 101,
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": 101
+        }
+      ]
+    }
+  ]
+}
+
+### D11 - Trùng palletID trong một item
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-23T11:45:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": 200,
+      "exportedQuantity": 200,
+      "pallets": [
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": 100
+        },
+        {
+          "palletID": "{{outboundPallet1}}",
+          "quantity": 100
+        }
+      ]
+    }
+  ]
+}
+
+### D12 - LOT không khớp chi tiết phiếu
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "processedAt": "2026-09-23T11:50:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "LOT-NOT-MATCH",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": 0,
+      "pallets": []
+    }
+  ]
+}
+
+### D13 - Không tìm thấy pallet xuất
+# Expected: 404 nếu phiếu, item, LOT và requestedQuantity hợp lệ.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "PARTIAL",
+  "processedAt": "2026-09-23T11:55:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": 100,
+      "pallets": [
+        {
+          "palletID": "{{notFoundPallet}}",
+          "quantity": 100
+        }
+      ]
+    }
+  ]
+}
+
+### D14 - Không tìm thấy phiếu xuất
+# Expected: 404.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{notFoundOrderId}}",
+  "orderCode": "PXBTP-NOT-FOUND",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "processedAt": "2026-09-23T12:00:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": 0,
+      "pallets": []
+    }
+  ]
+}
+
+### D15 - Sai orderCode
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "PXBTP-WRONG-CODE",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "processedAt": "2026-09-23T12:05:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{outboundItemCode}}",
+      "lot": "{{outboundLot}}",
+      "requestedQuantity": {{outboundRequestedQuantity}},
+      "exportedQuantity": 0,
+      "pallets": []
+    }
+  ]
+}
+
+### D16 - Thiếu API key
+# Expected: 401.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "processedAt": "2026-09-23T12:10:00.000Z",
+  "items": []
+}
+
+### D17 - Sai API key
+# Expected: 403.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+x-api-key: INVALID_API_KEY
+
+{
+  "orderID": "{{outboundOrderId}}",
+  "orderCode": "{{outboundOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "processedAt": "2026-09-23T12:10:00.000Z",
+  "items": []
+}
+
+
+# E. WMS -> ERP - Callback điều chuyển vị trí
+
+### E01 - Điều chuyển kiện sang vị trí mới
+# Expected: 200; updated=true.
+POST {{erpBaseUrl}}/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "palletID": "{{inboundPallet1}}",
+  "previousLocationID": {{currentLocationId}},
+  "locationID": {{targetLocationId}},
+  "locationCode": "{{targetLocationCode}}"
+}
+
+### E02 - Gửi lại cùng vị trí để kiểm tra idempotent
+# Chạy sau E01. Expected: 200; updated=false.
+POST {{erpBaseUrl}}/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "palletID": "{{inboundPallet1}}",
+  "locationID": {{targetLocationId}},
+  "locationCode": "{{targetLocationCode}}"
+}
+
+### E03 - previousLocationID không khớp vị trí hiện tại
+# Chạy sau E01. Expected: 409.
+POST {{erpBaseUrl}}/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "palletID": "{{inboundPallet1}}",
+  "previousLocationID": {{currentLocationId}},
+  "locationID": 21926,
+  "locationCode": "LOCATION-21926"
+}
+
+### E04 - locationID bằng null
+# Expected: 400; không thay đổi vị trí.
+POST {{erpBaseUrl}}/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "palletID": "{{inboundPallet1}}",
+  "locationID": null,
+  "locationCode": "{{targetLocationCode}}"
+}
+
+### E05 - previousLocationID trùng locationID
+# Expected: 400.
+POST {{erpBaseUrl}}/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "palletID": "{{inboundPallet1}}",
+  "previousLocationID": {{targetLocationId}},
+  "locationID": {{targetLocationId}},
+  "locationCode": "{{targetLocationCode}}"
+}
+
+### E06 - Không tìm thấy pallet
+# Expected: 404.
+POST {{erpBaseUrl}}/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "palletID": "{{notFoundPallet}}",
+  "locationID": {{targetLocationId}},
+  "locationCode": "{{targetLocationCode}}"
+}
+
+### E07 - Thiếu API key
+# Expected: 401.
+POST {{erpBaseUrl}}/wms/location-callback
+Content-Type: application/json
+
+{
+  "palletID": "{{inboundPallet1}}",
+  "locationID": {{targetLocationId}},
+  "locationCode": "{{targetLocationCode}}"
+}
+
+### E08 - Sai API key
+# Expected: 403.
+POST {{erpBaseUrl}}/wms/location-callback
+Content-Type: application/json
+x-api-key: INVALID_API_KEY
+
+{
+  "palletID": "{{inboundPallet1}}",
+  "locationID": {{targetLocationId}},
+  "locationCode": "{{targetLocationCode}}"
+}
+
+
+# F. WMS -> ERP - Callback gộp/tách kiện
+
+### F01 - Gộp kiện thành công
+POST {{erpBaseUrl}}/wms/pallet-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "operationType": "MERGE",
+  "status": "COMPLETED",
+  "message": "Merge pallet completed",
+  "processedAt": "2026-09-23T13:00:00.000Z",
+  "targetPalletID": "{{inboundPallet1}}",
+  "mergedPalletID": "{{inboundPallet2}}",
+  "targetPallet": {
+    "locationID": {{targetLocationId}},
+    "locationCode": "{{targetLocationCode}}",
+    "items": [
+      {
+        "itemCode": "{{outboundItemCode}}",
+        "lot": "{{outboundLot}}",
+        "quantity": 250
+      }
+    ]
+  }
+}
+
+### F02 - Gộp kiện thất bại
+POST {{erpBaseUrl}}/wms/pallet-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "operationType": "MERGE",
+  "status": "FAILED",
+  "message": "Merge pallet failed",
+  "processedAt": "2026-09-23T13:05:00.000Z",
+  "errorCode": "PALLET_NOT_FOUND",
+  "targetPalletID": "{{inboundPallet1}}",
+  "mergedPalletID": "{{notFoundPallet}}"
+}
+
+### F03 - Tách kiện thành công
+POST {{erpBaseUrl}}/wms/pallet-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "operationType": "SPLIT",
+  "status": "COMPLETED",
+  "message": "Split pallet completed",
+  "processedAt": "2026-09-23T13:10:00.000Z",
+  "sourcePallet": {
+    "palletID": "{{inboundPallet1}}",
+    "locationID": {{currentLocationId}},
+    "locationCode": "SOURCE-LOCATION",
+    "items": [
+      {
+        "itemCode": "{{outboundItemCode}}",
+        "lot": "{{outboundLot}}",
+        "quantity": 150
+      }
+    ]
+  },
+  "newPallet": {
+    "palletID": "BTP-NEW-SPLIT-001",
+    "locationID": {{targetLocationId}},
+    "locationCode": "{{targetLocationCode}}",
+    "items": [
+      {
+        "itemCode": "{{outboundItemCode}}",
+        "lot": "{{outboundLot}}",
+        "quantity": 100
+      }
+    ]
+  }
+}
+
+### F04 - Tách kiện thất bại
+POST {{erpBaseUrl}}/wms/pallet-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "operationType": "SPLIT",
+  "status": "FAILED",
+  "message": "Split pallet failed",
+  "processedAt": "2026-09-23T13:15:00.000Z",
+  "errorCode": "INVALID_QUANTITY",
+  "sourcePalletID": "{{inboundPallet1}}"
+}

@@ -27,6 +27,16 @@ Content-Type: application/json
   "password": "dlc"
 }
 
+### New standalone ERP login with application and function permissions
+POST http://localhost:5000/auth/loginERP
+Content-Type: application/json
+x-api-key: {{$dotenv API_KEY}}
+
+{
+  "username": "duyhm",
+  "password": "12345678"
+}
+
 ###
 POST http://localhost:5000/auth/resetUUID
 Content-Type: application/json
@@ -354,6 +364,29 @@ Accept: application/json
 @baseUrl = https://nodeapi.z76.vn
 @apiKey = {{$dotenv API_KEY}}
 
+### WMS callback - điều chuyển vị trí kiện trên DB test
+# Đổi locationID sang ID vị trí đích thật để thử điều chuyển; gửi lại cùng payload sẽ trả updated=false.
+# previousLocationID là tùy chọn, dùng để phát hiện callback cũ đến sai thứ tự.
+POST http://localhost:5000/erp-test/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "palletID": "BTP0000000173",
+  "previousLocationID": 21924,
+  "locationID": 21925
+}
+
+### WMS callback - điều chuyển vị trí sai payload (400)
+POST http://localhost:5000/erp-test/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "palletID": "BTP0000000173",
+  "locationID": null
+}
+
 ### WMS callback - nhập kho hoàn tất
 POST {{baseUrl}}/erp-test/wms/inbound-callback
 Content-Type: application/json
@@ -494,3 +527,75 @@ x-api-key: {{apiKey}}
     }
   ]
 }
+
+### Cầu trục DEMO trên DB test - trạng thái trước callback
+# Phiếu PXBTP-2026-07-2468 đã xuất 35 từ BP0000488679.
+# Trước lần callback đầu tiên: 404 (chưa có kết quả WMS demo).
+# Chỉ chạy với backend local dùng DB_DATABASE_TEST; không đổi URL này sang /erp.
+# DB test cần các bảng CraneWmsOutbound và vị trí CT-TEMP-TEST
+# (script: D:/Code/KhoTM/database/scripts/add-crane-demo-temp-location.sql.example).
+GET http://localhost:5000/khotmtest/btp/cau-truc/orders/327023
+Accept: application/json
+
+### Cầu trục DEMO - giả lập WMS báo xuất thành công
+# x-api-key lấy từ API_KEY trong file .env của HTTP client.
+# demoMode=true chỉ có hiệu lực trên /erp-test; callback thật sau này không dùng cờ này.
+# Chạy một lần: xuất 35, còn 2365 sẽ chuyển từ CNK01 sang CT-TEMP-TEST (DB test).
+# Gửi lại cùng body: 200 với duplicate=true, không chuyển vị trí lần nữa.
+POST http://localhost:5000/erp-test/wms/outbound-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "demoMode": true,
+  "orderID": "327023",
+  "orderCode": "PXBTP-2026-07-2468",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-25T10:30:00.000Z",
+  "items": [
+    {
+      "itemCode": "5624254.CP",
+      "lot": "NO_WEEK_MARK",
+      "requestedQuantity": 35,
+      "exportedQuantity": 35,
+      "pallets": [
+        { "palletID": "BP0000488679", "quantity": 35 }
+      ]
+    }
+  ]
+}
+
+### Cầu trục DEMO - kiểm tra WMS và vị trí sau callback
+# Mong đợi: status=WAITING_RETURN, remainingQuantity=2365,
+# CurrentLocationCode=CT-TEMP-TEST. Tải lại phiếu trên app để xem.
+GET http://localhost:5000/khotmtest/btp/cau-truc/orders/327023
+Accept: application/json
+
+### Cầu trục DEMO - kiểm tra chi tiết phiếu xuất trên DB test
+GET http://localhost:5000/khotmtest/btp/phieuxuat/327023
+Accept: application/json
+
+### Cầu trục DEMO - giả lập WMS nhập lại kiện về vị trí cũ
+# Chỉ chạy sau callback xuất thành công ở trên (status=WAITING_RETURN).
+# 30302 = CT-TEMP-TEST, 30179 = CNK01 (vị trí trước khi xuất).
+# eventID là mã sự kiện duy nhất. Gửi lại cùng body trả updated=false.
+POST http://localhost:5000/erp-test/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "demoMode": true,
+  "reason": "RETURN_AFTER_PARTIAL_OUTBOUND",
+  "sourceOrderID": "327023",
+  "palletID": "BP0000488679",
+  "eventID": "WMS-RETURN-PXBTP-2026-07-2468-BP0000488679-001",
+  "previousLocationID": 30302,
+  "locationID": 30179
+}
+
+### Cầu trục DEMO - kiểm tra sau khi nhập lại
+# Mong đợi: status=COMPLETE, pallet status=RETURNED,
+# CurrentLocationCode=CNK01, remainingQuantity=2365.
+GET http://localhost:5000/khotmtest/btp/cau-truc/orders/327023
+Accept: application/json

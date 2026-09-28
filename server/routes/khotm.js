@@ -6,6 +6,9 @@ const { verifyToken, verifyAdmin } = require("../middleware/auth");
 const { tagpoolPromise } = require("../db2");
 // const { tagpoolPromise } = require('../dbtest');
 const sql = require("mssql");
+const craneWms = require('../utils/craneWms');
+const craneWmsInbound = require('../utils/craneWmsInbound');
+const checkApiKey = require('../middleware/apiKey');
 
 // Chi cap nhat QRCode. ID_ViTriKho duoc khoa va giu nguyen trong suot giao dich.
 const updateBtpPackageQrOnly = async (pool, idPackage, qrCode) => {
@@ -973,16 +976,28 @@ router.get('/btp/phieunhap/:id', async (req, res) => {
         const activeDetails = await pool.request()
             .input('ID_PhieuNhap_ActiveDetails', sql.Int, id)
             .query(`
-                SELECT ct.ID_TheKhoKienBTP_ChiTiet
+                SELECT ct.ID_TheKhoKienBTP_ChiTiet, ct.DauTuan
                 FROM TheKhoKienBTP_ChiTiet ct
                 INNER JOIN TheKhoKienBTP k ON k.ID_TheKhoKienBTP = ct.ID_TheKhoKienBTP
                 WHERE k.ID_PhieuNhapBTP = @ID_PhieuNhap_ActiveDetails
                   AND ISNULL(k.TonTai, 1) = 1 AND ISNULL(ct.TonTai, 1) = 1;
             `);
-        const activeIds = new Set((activeDetails.recordset || []).map((row) => Number(row.ID_TheKhoKienBTP_ChiTiet)));
+        const activeWeeks = new Map((activeDetails.recordset || [])
+            .map((row) => [Number(row.ID_TheKhoKienBTP_ChiTiet), row.DauTuan]));
         result.recordsets[3] = (result.recordsets[3] || [])
-            .filter((row) => activeIds.has(Number(row.ID_TheKhoKienBTP_ChiTiet)));
-        res.json(importDetailResponse(result.recordsets));
+            .filter((row) => activeWeeks.has(Number(row.ID_TheKhoKienBTP_ChiTiet)))
+            .map((row) => ({ ...row, DauTuan: activeWeeks.get(Number(row.ID_TheKhoKienBTP_ChiTiet)) }));
+        const response = importDetailResponse(result.recordsets);
+        const inbound = await pool.request().input('OrderID', sql.Int, id).query(`
+            IF OBJECT_ID(N'dbo.CraneWmsInbound', N'U') IS NOT NULL
+                SELECT ID_PhieuNhapBTP FROM dbo.CraneWmsInbound WHERE ID_PhieuNhapBTP=@OrderID`);
+        if (inbound.recordset?.length) {
+            const config = craneWms.getCraneConfig();
+            response.kiens = response.kiens.map(item => ({
+                ...item, wmsLocationPending: Boolean(config && Number(item.idViTriKho) === config.temporaryLocationID),
+            }));
+        }
+        res.json(response);
     } catch (error) {
         res.status(500).json({ message: 'Không tải được chi tiết phiếu nhập BTP', detail: error.message });
     }
@@ -1370,10 +1385,12 @@ router.post("/btp/phieunhap/gan-vi-tri", async (req, res) => {
 router.put('/btp/phieunhap/xac-nhan', async (req, res) => {
     try {
         const idPhieuNhap = toIntOrNull(req.body?.IdPhieuNhap);
+        const isCraneInbound = req.body?.craneMode === true;
         const packages = Array.isArray(req.body?.kiens) ? req.body.kiens : [];
         const details = packages.flatMap((item) => Array.isArray(item.bTPs) ? item.bTPs : []);
         if (!idPhieuNhap || !packages.length || !details.length) return res.status(400).json({ message: 'Phiếu nhập chưa có kiện hợp lệ' });
-        if (packages.some((item) => !item.qrCode || !toIntOrNull(item.idViTriKho))) return res.status(400).json({ message: 'Chưa gán hết vị trí và QRCode' });
+        if (packages.some((item) => !item.qrCode || (!isCraneInbound && !toIntOrNull(item.idViTriKho))))
+            return res.status(400).json({ message: isCraneInbound ? 'Chưa gán hết QRCode' : 'Chưa gán hết vị trí và QRCode' });
         if (packages.some((item) => !Array.isArray(item.bTPs) || !item.bTPs.length
             || item.bTPs.some((detail) => toNumber(detail.soLuongTon) <= 0))) {
             return res.status(400).json({ message: 'Mỗi kiện phải có ít nhất một dòng BTP với số lượng lớn hơn 0' });
@@ -1385,6 +1402,9 @@ router.put('/btp/phieunhap/xac-nhan', async (req, res) => {
         }
         const pool = await tagpoolPromise;
         await ensureImportEditable(pool.request(), idPhieuNhap);
+        const craneConfig = isCraneInbound ? craneWms.getCraneConfig() : null;
+        const warehouseID = isCraneInbound ? await craneWmsInbound.getWarehouseID(pool, idPhieuNhap) : null;
+        if (isCraneInbound && (!craneConfig || warehouseID !== craneConfig.warehouseID)) return res.status(400).json({ message: 'Phiếu nhập không thuộc kho cầu trục đã cấu hình' });
         const allowedResult = await pool.request()
             .input('ID_PhieuNhapBTP_Quantity', sql.Int, idPhieuNhap)
             .query(`
@@ -1460,6 +1480,8 @@ router.put('/btp/phieunhap/xac-nhan', async (req, res) => {
         await tx.begin();
         try {
             await ensureImportEditable(new sql.Request(tx), idPhieuNhap);
+            if (isCraneInbound) await craneWmsInbound.stagePackages(
+                tx, idPhieuNhap, warehouseID, craneConfig.temporaryLocationID, packages);
             const result = await new sql.Request(tx)
                 .input('TheKhoKienBTPChiTietNhapsTable', table)
                 .output('InsertResult', sql.NVarChar(50))
@@ -1485,7 +1507,18 @@ router.put('/btp/phieunhap/xac-nhan', async (req, res) => {
                     || Math.abs(toNumber(row.SoLuong) - toNumber(item.soLuongTon)) > 0.000001
                     || String(row.DauTuan || '').trim() !== String(item.dauTuan || '').trim();
             })) throw new Error('Thủ tục xác nhận không giữ đúng toàn bộ chi tiết BTP và dấu tuần của kiện');
+            if (isCraneInbound) await craneWmsInbound.enqueue(tx, idPhieuNhap, warehouseID);
             await tx.commit();
+            if (isCraneInbound) {
+                try {
+                    const wmsInbound = await craneWmsInbound.dispatch(pool, idPhieuNhap);
+                    return res.json({ ok: true, isSuccess: status, wmsInbound });
+                } catch (dispatchError) {
+                    console.error('[crane WMS inbound dispatch]', dispatchError);
+                    return res.json({ ok: true, isSuccess: status,
+                        wmsInbound: { DispatchStatus: 'FAILED', DispatchError: 'Không cập nhật được trạng thái gửi WMS; kiểm tra phiếu trước khi thử lại' } });
+                }
+            }
             res.json({ ok: true, isSuccess: status });
         } catch (error) {
             try { await tx.rollback(); } catch (_) { /* Thủ tục có thể đã tự rollback. */ }
@@ -1545,8 +1578,20 @@ router.post("/btp/phieuxuat/tim-kiem", async (req, res) => {
       .query(
         `SELECT * FROM dbo.SearchPhieuXuatBTP(@WarehouseId, @Status, @ReviewNumber, @Type, @Take, @Skip, @ID_TaiKhoanDangNhap);`,
       );
+    const rows = (result.recordset || []).map(mapExportSearchRow);
+    const craneConfig = craneWms.getCraneConfig();
+    if (craneConfig && rows.some(row => Number(row.idKhoXuat) === craneConfig.warehouseID)) {
+      const ids = rows.filter(row => Number(row.idKhoXuat) === craneConfig.warehouseID)
+        .map(row => toIntOrNull(row.id)).filter(Boolean);
+      if (ids.length) {
+        const stateRows = await pool.request().query(`SELECT ID_PhieuXuatBTP, Status
+          FROM dbo.CraneWmsOutbound WHERE ID_PhieuXuatBTP IN (${ids.join(',')})`);
+        const states = new Map(stateRows.recordset.map(row => [Number(row.ID_PhieuXuatBTP), row.Status]));
+        rows.forEach(row => { if (states.has(Number(row.id))) row.wmsStatus = states.get(Number(row.id)); });
+      }
+    }
     res.json({
-      data: (result.recordset || []).map(mapExportSearchRow),
+      data: rows,
       pageSize,
       pageIndex,
     });
@@ -1636,7 +1681,14 @@ router.get("/btp/phieuxuat/goi-y-kien", async (req, res) => {
       });
     }
 
-    res.json({ items: Array.from(packagesById.values()) });
+    let packages = Array.from(packagesById.values());
+    if (craneWms.getCraneConfig() && packages.length) {
+      const active = await pool.request().query(`SELECT PalletID FROM dbo.CraneWmsOutboundPallet
+        WHERE Status IN ('WAITING_WMS','FAILED_RETRY','WAITING_RETURN')`);
+      const locked = new Set(active.recordset.map(row => String(row.PalletID)));
+      packages = packages.filter(item => !locked.has(item.qrCode));
+    }
+    res.json({ items: packages });
   } catch (error) {
     res
       .status(500)
@@ -1723,6 +1775,8 @@ router.get(
       if (!header)
         return res.status(404).json({ message: "Không tìm thấy kiện phù hợp" });
       const qrCode = header.QRCode ?? header.QrCode;
+      if (craneWms.getCraneConfig() && await craneWms.findActivePallet(pool, String(qrCode)))
+        return res.status(409).json({ message: 'Pallet đang chờ WMS hoặc chờ nhập lại' });
       const details = (result.recordsets?.[1] || []).map((row) => ({
         ...row,
         idTheKhoKienBTPChiTiet: row.ID_TheKhoKienBTP_ChiTiet,
@@ -1855,6 +1909,18 @@ router.put("/btp/phieuxuat/xac-nhan", async (req, res) => {
         .status(400)
         .json({ message: "Số lượng xuất lớn hơn trên ERP" });
     }
+    const craneConfig = craneWms.getCraneConfig();
+    if (craneConfig) {
+      const warehouse = await pool.request()
+        .input('OrderID', sql.Int, idPhieuXuat)
+        .query('SELECT ID_KhoXuat FROM dbo.PhieuXuatBTP WHERE ID_PhieuXuatBTP=@OrderID AND TonTai=1');
+      if (Number(warehouse.recordset[0]?.ID_KhoXuat) === craneConfig.warehouseID) {
+        await craneWms.confirmCraneOutbound(pool, idPhieuXuat, picks);
+        try { await craneWms.dispatchMock(pool, idPhieuXuat); }
+        catch (dispatchError) { console.error('[crane WMS mock dispatch]', dispatchError); }
+        return res.json({ ok: true, isSuccess: 'success', wmsStatus: 'WAITING_WMS' });
+      }
+    }
     const result = await pool
       .request()
       .input("ChiTietKienBTPsTable", table)
@@ -1870,8 +1936,96 @@ router.put("/btp/phieuxuat/xac-nhan", async (req, res) => {
         .json({ message: status || "Xác nhận phiếu xuất thất bại" });
     res.json({ ok: true, isSuccess: status });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    res.status(error.statusCode || 400).json({ message: error.message });
   }
+});
+
+router.get('/btp/phieunhap/:id/wms-inbound', checkApiKey, async (req, res) => {
+  const orderID = craneWms.positiveId(req.params.id);
+  if (!orderID) return res.status(400).json({ message: 'ID phiếu nhập không hợp lệ' });
+  try {
+    const row = await craneWmsInbound.status(await tagpoolPromise, orderID);
+    if (!row) return res.status(404).json({ message: 'Phiếu nhập chưa có yêu cầu WMS' });
+    return res.json({ ok: true, wmsInbound: row });
+  } catch (error) {
+    return res.status(500).json({ message: 'Không tải được trạng thái gửi WMS' });
+  }
+});
+
+router.post('/btp/phieunhap/:id/gui-lai-wms', checkApiKey, async (req, res) => {
+  const orderID = craneWms.positiveId(req.params.id);
+  if (!orderID) return res.status(400).json({ message: 'ID phiếu nhập không hợp lệ' });
+  try {
+    const pool = await tagpoolPromise;
+    if (!await craneWmsInbound.status(pool, orderID)) return res.status(404).json({ message: 'Phiếu nhập chưa có yêu cầu WMS' });
+    return res.json({ ok: true, wmsInbound: await craneWmsInbound.dispatch(pool, orderID) });
+  } catch (error) {
+    console.error('[crane WMS inbound retry]', error);
+    return res.status(500).json({ message: 'Không gửi lại được yêu cầu WMS' });
+  }
+});
+
+router.get('/btp/cau-truc/config', (_req, res) => {
+  try {
+    const config = craneWms.getCraneConfig();
+    res.json({ enabled: Boolean(config), warehouseID: config?.warehouseID || null,
+      temporaryLocationID: config?.temporaryLocationID || null, mode: config?.mode || null });
+  } catch (error) { res.status(500).json({ message: error.message }); }
+});
+
+router.get('/btp/cau-truc/orders/:id', async (req, res) => {
+  const id = craneWms.positiveId(req.params.id);
+  if (!id) return res.status(400).json({ message: 'Phiếu không hợp lệ' });
+  try {
+    const pool = await tagpoolPromise;
+    const order = await craneWms.findCraneOrder(pool, id);
+    if (!order) return res.status(404).json({ message: 'Chưa có yêu cầu WMS cho phiếu' });
+    const pallets = await pool.request().input('OrderID', sql.Int, id)
+      .query(`SELECT PalletID, InitialQuantity, PlannedQuantity, ActualQuantity,
+                     OriginalLocationID, ReturnLocationID, Status
+              FROM dbo.CraneWmsOutboundPallet WHERE ID_PhieuXuatBTP=@OrderID`);
+    return res.json({ orderID: id, orderCode: order.OrderCode, status: order.Status,
+      dispatchStatus: order.DispatchStatus, dispatchAttempts: order.DispatchAttempts,
+      dispatchError: order.DispatchError,
+      pallets: pallets.recordset.map(p => ({ ...p,
+        remainingQuantity: Number(p.InitialQuantity) - Number(p.ActualQuantity ?? p.PlannedQuantity) })) });
+  } catch (error) { return res.status(500).json({ message: error.message }); }
+});
+
+router.post('/btp/cau-truc/orders/:id/retry-mock', async (req, res) => {
+  const id = craneWms.positiveId(req.params.id);
+  if (!id) return res.status(400).json({ message: 'Phiếu không hợp lệ' });
+  try {
+    const pool = await tagpoolPromise;
+    const order = await craneWms.findCraneOrder(pool, id);
+    if (!order) return res.status(404).json({ message: 'Chưa có yêu cầu WMS' });
+    if (!['WAITING_WMS', 'FAILED_RETRY'].includes(order.Status))
+      return res.status(409).json({ message: 'Phiếu đã có kết quả xuất WMS' });
+    await pool.request().input('OrderID', sql.Int, id)
+      .query(`UPDATE dbo.CraneWmsOutbound SET DispatchStatus='PENDING',
+              UpdatedAt=SYSUTCDATETIME() WHERE ID_PhieuXuatBTP=@OrderID`);
+    await craneWms.dispatchMock(pool, id);
+    return res.json({ ok: true, dispatchStatus: 'MOCKED' });
+  } catch (error) { return res.status(500).json({ message: error.message }); }
+});
+
+router.get('/btp/cau-truc/summary', async (_req, res) => {
+  try {
+    const config = craneWms.getCraneConfig();
+    if (!config) return res.json({ enabled: false, waitingWms: 0, waitingWmsQuantity: 0, waitingReturn: 0, waitingReturnQuantity: 0 });
+    const pool = await tagpoolPromise;
+    const result = await pool.request().input('WarehouseID', sql.Int, config.warehouseID)
+      .query(`SELECT SUM(CASE WHEN p.Status IN ('WAITING_WMS','FAILED_RETRY') THEN 1 ELSE 0 END) AS waitingWms,
+                     SUM(CASE WHEN p.Status IN ('WAITING_WMS','FAILED_RETRY') THEN p.PlannedQuantity ELSE 0 END) AS waitingWmsQuantity,
+                     SUM(CASE WHEN p.Status='WAITING_RETURN' THEN 1 ELSE 0 END) AS waitingReturn,
+                     SUM(CASE WHEN p.Status='WAITING_RETURN' THEN p.InitialQuantity-p.ActualQuantity ELSE 0 END) AS waitingReturnQuantity
+              FROM dbo.CraneWmsOutboundPallet p JOIN dbo.CraneWmsOutbound o
+                ON o.ID_PhieuXuatBTP=p.ID_PhieuXuatBTP WHERE o.ID_Kho=@WarehouseID`);
+    return res.json({ enabled: true, waitingWms: Number(result.recordset[0]?.waitingWms || 0),
+      waitingWmsQuantity: Number(result.recordset[0]?.waitingWmsQuantity || 0),
+      waitingReturn: Number(result.recordset[0]?.waitingReturn || 0),
+      waitingReturnQuantity: Number(result.recordset[0]?.waitingReturnQuantity || 0) });
+  } catch (error) { return res.status(500).json({ message: error.message }); }
 });
 
 router.get("/btp/baocao/vi-tri", async (req, res) => {

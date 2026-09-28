@@ -1,0 +1,22 @@
+-- Run separately on DB test and DB production before enabling crane inbound dispatch.
+IF OBJECT_ID(N'dbo.CraneWmsInbound', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.CraneWmsInbound (
+        ID_PhieuNhapBTP INT NOT NULL PRIMARY KEY,
+        ID_Kho INT NOT NULL,
+        RequestJson NVARCHAR(MAX) NOT NULL,
+        DispatchStatus VARCHAR(12) NOT NULL
+            CONSTRAINT DF_CraneWmsInbound_Status DEFAULT 'PENDING',
+        DispatchAttempts INT NOT NULL
+            CONSTRAINT DF_CraneWmsInbound_Attempts DEFAULT 0,
+        ResponseStatus INT NULL,
+        DispatchError NVARCHAR(1000) NULL,
+        SentAt DATETIME2 NULL,
+        CreatedAt DATETIME2 NOT NULL
+            CONSTRAINT DF_CraneWmsInbound_Created DEFAULT SYSUTCDATETIME(),
+        UpdatedAt DATETIME2 NOT NULL
+            CONSTRAINT DF_CraneWmsInbound_Updated DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT CK_CraneWmsInbound_Status
+            CHECK (DispatchStatus IN ('PENDING','SENDING','SENT','FAILED'))
+    );
+END;

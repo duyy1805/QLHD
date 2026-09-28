@@ -2,9 +2,7 @@ import axios from "axios";
 
 async function run() {
     const ids = [
-        74503,
-        74778,
-        74779
+        42013
     ];
 
     const API_URL = "http://125.212.207.52:1422/ERP";
@@ -19,7 +17,7 @@ async function run() {
             {
                 params: {
                     ID_Phieu: id,
-                    LoaiPhieu: 1,
+                    LoaiPhieu: 3,
                     TrangThai: 1
                 },
                 headers: {

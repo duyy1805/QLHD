@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken')
 const { verifyToken, verifyAdmin } = require('../../middleware/auth');
 const sql = require('mssql');
 const checkApiKey = require('../../middleware/apiKey');
+const craneWms = require('../../utils/craneWms');
 const XLSX = require('xlsx');
 
 function createErpRouter(tagpoolPromise) {
@@ -743,6 +744,165 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
     }
 });
 
+/** WMS thông báo vị trí mới của kiện sau khi điều chuyển trong kho. */
+router.post('/wms/location-callback', checkApiKey, async (req, res) => {
+    const body = req.body || {};
+    const palletID = typeof body.palletID === 'string' ? body.palletID.trim() : '';
+    const parseLocationID = (value) =>
+        typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value.trim()))
+            ? Number(value)
+            : NaN;
+    const locationID = parseLocationID(body.locationID);
+    const hasPreviousLocation = body.previousLocationID !== undefined && body.previousLocationID !== null;
+    const previousLocationID = hasPreviousLocation ? parseLocationID(body.previousLocationID) : null;
+    const validLocation = (value) => Number.isInteger(value) && value > 0 && value <= 2147483647;
+    const isCraneReturn = body.reason === 'RETURN_AFTER_PARTIAL_OUTBOUND';
+
+    if (
+        !palletID || palletID.length > 255 ||
+        !validLocation(locationID) ||
+        (hasPreviousLocation && !validLocation(previousLocationID)) ||
+        (hasPreviousLocation && previousLocationID === locationID)
+    ) {
+        return res.status(400).json({ success: false, palletID: palletID || null, message: 'Invalid callback payload' });
+    }
+
+    let transaction;
+    let transactionFinished = false;
+    try {
+        const pool = await tagpoolPromise;
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        if (isCraneReturn) {
+            const sourceOrderID = craneWms.positiveId(body.sourceOrderID);
+            const eventID = typeof body.eventID === 'string' ? body.eventID.trim() : '';
+            const config = craneWms.getCraneConfig();
+            if (!config || !sourceOrderID || !eventID || eventID.length > 255 ||
+                locationID === config.temporaryLocationID ||
+                (hasPreviousLocation && previousLocationID !== config.temporaryLocationID)) {
+                throw craneWms.craneError(400, 'Thông tin nhập lại pallet không hợp lệ');
+            }
+            const order = await craneWms.findCraneOrder(transaction, sourceOrderID, true);
+            if (!order) throw craneWms.craneError(404, 'Không tìm thấy phiếu cầu trục');
+            const rowResult = await new sql.Request(transaction)
+                .input('OrderID', sql.Int, sourceOrderID)
+                .input('PalletID', sql.NVarChar(255), palletID)
+                .query(`SELECT p.* FROM dbo.CraneWmsOutboundPallet p WITH (UPDLOCK, HOLDLOCK)
+                        WHERE p.ID_PhieuXuatBTP=@OrderID AND p.PalletID=@PalletID`);
+            const cycle = rowResult.recordset[0];
+            if (!cycle) throw craneWms.craneError(404, 'Không tìm thấy pallet chờ nhập lại của phiếu');
+            if (cycle.Status === 'RETURNED' && cycle.ReturnEventID === eventID &&
+                Number(cycle.ReturnLocationID) === locationID) {
+                await transaction.commit();
+                transactionFinished = true;
+                return res.status(200).json({ success: true, palletID, locationID, updated: false });
+            }
+            if (cycle.Status !== 'WAITING_RETURN') throw craneWms.craneError(409, 'Pallet không ở trạng thái chờ nhập lại');
+            const usedEvent = await new sql.Request(transaction)
+                .input('EventID', sql.NVarChar(255), eventID)
+                .query(`SELECT ID_PhieuXuatBTP FROM dbo.CraneWmsOutboundPallet WITH (UPDLOCK, HOLDLOCK)
+                        WHERE ReturnEventID=@EventID`);
+            if (usedEvent.recordset.length) throw craneWms.craneError(409, 'Mã sự kiện WMS đã được dùng');
+            const target = await new sql.Request(transaction)
+                .input('LocationID', sql.Int, locationID)
+                .input('WarehouseID', sql.Int, order.ID_Kho)
+                .query(`SELECT ID_ViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
+                        WHERE ID_ViTriKho=@LocationID AND ID_Kho=@WarehouseID AND TonTai=1 AND SuDung=1`);
+            if (target.recordset.length !== 1) throw craneWms.craneError(400, 'Vị trí nhập lại không thuộc kho cầu trục');
+            const current = await new sql.Request(transaction)
+                .input('PackageID', sql.Int, cycle.ID_TheKhoKienBTP)
+                .query('SELECT ID_ViTriKho FROM dbo.TheKhoKienBTP WITH (UPDLOCK, HOLDLOCK) WHERE ID_TheKhoKienBTP=@PackageID AND TonTai=1');
+            if (Number(current.recordset[0]?.ID_ViTriKho) !== config.temporaryLocationID)
+                throw craneWms.craneError(409, 'Pallet không còn ở vị trí tạm');
+            await new sql.Request(transaction)
+                .input('ID_TheKhoKienBTP', sql.Int, cycle.ID_TheKhoKienBTP)
+                .input('ID_ViTriKho', sql.Int, locationID)
+                .input('ID_TaiKhoan', sql.Int, null)
+                .input('LoaiThaoTac', sql.VarChar(20), 'DIEU_CHUYEN')
+                .execute('dbo.App_BTP_CapNhatViTriKien');
+            await new sql.Request(transaction)
+                .input('OrderID', sql.Int, sourceOrderID)
+                .input('PackageID', sql.Int, cycle.ID_TheKhoKienBTP)
+                .input('EventID', sql.NVarChar(255), eventID)
+                .input('LocationID', sql.Int, locationID)
+                .query(`UPDATE dbo.CraneWmsOutboundPallet SET Status='RETURNED', ReturnEventID=@EventID,
+                        ReturnLocationID=@LocationID WHERE ID_PhieuXuatBTP=@OrderID AND ID_TheKhoKienBTP=@PackageID;
+                        IF NOT EXISTS (SELECT 1 FROM dbo.CraneWmsOutboundPallet
+                            WHERE ID_PhieuXuatBTP=@OrderID AND Status='WAITING_RETURN')
+                        UPDATE dbo.CraneWmsOutbound SET Status='COMPLETE', UpdatedAt=SYSUTCDATETIME()
+                            WHERE ID_PhieuXuatBTP=@OrderID;`);
+            await transaction.commit();
+            transactionFinished = true;
+            return res.status(200).json({ success: true, palletID, locationID, updated: true });
+        }
+
+        const craneConfig = craneWms.getCraneConfig();
+        if (craneConfig && locationID === craneConfig.temporaryLocationID)
+            throw craneWms.craneError(409, 'Vị trí tạm chỉ được dùng bởi callback xuất cầu trục');
+        const activeCranePallet = craneConfig
+            ? await craneWms.findActivePallet(transaction, palletID, true) : null;
+        if (activeCranePallet) throw craneWms.craneError(409, 'Pallet đang tham gia phiếu xuất cầu trục');
+
+        const result = await new sql.Request(transaction)
+            .input('QRCode', sql.NVarChar(255), palletID)
+            .query(`
+                SELECT ID_TheKhoKienBTP, ID_ViTriKho
+                FROM dbo.TheKhoKienBTP WITH (UPDLOCK, HOLDLOCK)
+                WHERE QRCode = @QRCode AND TonTai = 1;
+            `);
+
+        if (result.recordset.length !== 1) {
+            const error = new Error('Không tìm thấy kiện tương ứng');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        const pallet = result.recordset[0];
+        const currentLocationID = pallet.ID_ViTriKho == null ? null : Number(pallet.ID_ViTriKho);
+        const unchanged = currentLocationID === locationID;
+
+        if (!unchanged && hasPreviousLocation && currentLocationID !== previousLocationID) {
+            const error = new Error('Vị trí hiện tại của kiện không khớp previousLocationID');
+            error.statusCode = 409;
+            throw error;
+        }
+
+        if (!unchanged) {
+            await new sql.Request(transaction)
+                .input('ID_TheKhoKienBTP', sql.Int, pallet.ID_TheKhoKienBTP)
+                .input('ID_ViTriKho', sql.Int, locationID)
+                .input('ID_TaiKhoan', sql.Int, null)
+                .input('LoaiThaoTac', sql.VarChar(20), 'DIEU_CHUYEN')
+                .execute('dbo.App_BTP_CapNhatViTriKien');
+        }
+
+        await transaction.commit();
+        transactionFinished = true;
+        return res.status(200).json({
+            success: true,
+            palletID,
+            locationID,
+            updated: !unchanged,
+            message: 'Callback received'
+        });
+    } catch (error) {
+        if (transaction && !transactionFinished) {
+            try { await transaction.rollback(); }
+            catch (rollbackError) { console.error('[POST /wms/location-callback] rollback error:', rollbackError); }
+        }
+        console.error('[POST /wms/location-callback] error:', error);
+        const sqlErrorNumber = error.number ?? error.originalError?.info?.number;
+        const statusCode = error.statusCode || (sqlErrorNumber === 51041 ? 404 :
+            [51042, 51043].includes(sqlErrorNumber) ? 400 : 500);
+        return res.status(statusCode).json({
+            success: false,
+            palletID,
+            message: statusCode === 500 ? 'Internal Server Error' : error.message
+        });
+    }
+});
+
 /** Xem trước đúng payload ERP sẽ gửi tới POST /api/share/wmsOutbound. */
 router.get('/wms/outbound-orders/:id', checkApiKey, async (req, res) => {
     const idPhieuXuat = Number(req.params.id);
@@ -769,9 +929,12 @@ router.get('/wms/outbound-orders/:id', checkApiKey, async (req, res) => {
         const items = details.map((row) => ({
             itemCode: row.ItemCode == null ? '' : String(row.ItemCode).trim(),
             itemName: row.Ten_SanPham == null ? '' : String(row.Ten_SanPham).trim(),
-            ...(row.So_LoSanXuat == null || String(row.So_LoSanXuat).trim() === ''
+            // LOT của WMS là dấu tuần trên chi tiết kiện, không phải số lô sản xuất
+            // của đơn hàng. Stored procedure hiện chưa trả DauTuan nên không được
+            // lấy So_LoSanXuat để thay thế.
+            ...(row.DauTuan == null || String(row.DauTuan).trim() === ''
                 ? {}
-                : { lot: String(row.So_LoSanXuat).trim() }),
+                : { lot: String(row.DauTuan).trim() }),
             quantity: Number(row.SoLuong_XuatKho)
         }));
 
@@ -824,19 +987,23 @@ router.post('/wms/outbound-callback', checkApiKey, async (req, res) => {
     }
 
     const normalizedItems = [];
+    const itemLotKeys = new Set();
     let hasExported = false;
     let hasShortfall = false;
 
     for (const item of items) {
         const itemCode = typeof item?.itemCode === 'string' ? item.itemCode.trim() : '';
-        const lot = item?.lot == null ? null : String(item.lot).trim() || null;
+        const lot = item?.lot == null ? '' : String(item.lot).trim();
         const requestedQuantity = item?.requestedQuantity;
         const exportedQuantity = item?.exportedQuantity;
-        if (!itemCode || !Number.isSafeInteger(requestedQuantity) || requestedQuantity <= 0 ||
+        const itemLotKey = JSON.stringify([itemCode, lot]);
+        if (!itemCode || !lot || lot.length > 50 || itemLotKeys.has(itemLotKey) ||
+            !Number.isSafeInteger(requestedQuantity) || requestedQuantity <= 0 ||
             !Number.isSafeInteger(exportedQuantity) || exportedQuantity < 0 ||
             exportedQuantity > requestedQuantity || !Array.isArray(item.pallets)) {
             return badPayload();
         }
+        itemLotKeys.add(itemLotKey);
 
         const palletIDs = new Set();
         let palletTotal = 0;
@@ -853,7 +1020,7 @@ router.post('/wms/outbound-callback', checkApiKey, async (req, res) => {
         if (palletTotal !== exportedQuantity) return badPayload();
         if (exportedQuantity > 0) hasExported = true;
         if (exportedQuantity < requestedQuantity) hasShortfall = true;
-        normalizedItems.push({ itemCode, lot, requestedQuantity, pallets });
+        normalizedItems.push({ itemCode, lot, requestedQuantity, exportedQuantity, pallets });
     }
 
     if ((status === 'COMPLETED' && hasShortfall) ||
@@ -885,28 +1052,122 @@ router.post('/wms/outbound-callback', checkApiKey, async (req, res) => {
             throw callbackError(400, 'Phiếu xuất chưa được xác nhận');
         }
 
+        const craneOrder = craneWms.getCraneConfig()
+            ? await craneWms.findCraneOrder(transaction, idPhieuXuat, true) : null;
+        const callbackFingerprint = craneWms.outboundFingerprint(status, normalizedItems);
+        if (craneOrder?.CallbackJson) {
+            if (craneOrder.CallbackJson !== callbackFingerprint)
+                throw callbackError(409, 'Phiếu cầu trục đã có kết quả WMS khác');
+            await transaction.commit();
+            finished = true;
+            return res.status(200).json({ success: true, orderID, duplicate: true, message: 'Callback received' });
+        }
+        if (craneOrder && status === 'FAILED') {
+            await new sql.Request(transaction).input('OrderID', sql.Int, idPhieuXuat)
+                .query(`UPDATE dbo.CraneWmsOutbound SET Status='FAILED_RETRY', UpdatedAt=SYSUTCDATETIME()
+                        WHERE ID_PhieuXuatBTP=@OrderID;
+                        UPDATE dbo.CraneWmsOutboundPallet SET Status='FAILED_RETRY'
+                        WHERE ID_PhieuXuatBTP=@OrderID AND Status='WAITING_WMS'`);
+            await transaction.commit();
+            finished = true;
+            return res.status(200).json({ success: true, orderID, message: 'Awaiting WMS retry' });
+        }
+        if (craneOrder && !['WAITING_WMS', 'FAILED_RETRY'].includes(craneOrder.Status))
+            throw callbackError(409, 'Phiếu cầu trục không chờ kết quả xuất WMS');
+
         const detailResult = await new sql.Request(transaction)
             .input('ID_PhieuXuatBTP', sql.Int, idPhieuXuat)
             .execute('dbo.App_BTP_PhieuXuat_ThongTinChiTiet');
         const details = detailResult.recordsets?.[1] || [];
-        if (details.length !== normalizedItems.length) {
-            throw callbackError(400, 'Invalid callback payload');
-        }
+        if (details.length === 0) throw callbackError(400, 'Invalid callback payload');
 
-        const usedDetailIndexes = new Set();
-        const links = [];
-        for (const item of normalizedItems) {
-            const candidates = details.map((row, index) => ({ row, index }))
-                .filter(({ row, index }) => !usedDetailIndexes.has(index) &&
-                    String(row.ItemCode || '').trim() === item.itemCode &&
-                    (item.lot === null || String(row.So_LoSanXuat || '').trim() === item.lot));
-            if (candidates.length !== 1 ||
-                Number(candidates[0].row.SoLuong_XuatKho) !== item.requestedQuantity) {
+        // So_LoSanXuat thuộc đơn hàng và không phải LOT của WMS. Đối chiếu yêu cầu
+        // theo tổng ItemCode để một dòng phiếu có thể được WMS tách thành nhiều
+        // DauTuan khác nhau.
+        const detailBuckets = new Map();
+        for (const row of details) {
+            const itemCode = String(row.ItemCode || '').trim();
+            const requestedQuantity = Number(row.SoLuong_XuatKho);
+            if (!itemCode || !Number.isSafeInteger(requestedQuantity) || requestedQuantity <= 0) {
                 throw callbackError(400, 'Invalid callback payload');
             }
-            const { row: detail, index } = candidates[0];
-            usedDetailIndexes.add(index);
+            if (!detailBuckets.has(itemCode)) detailBuckets.set(itemCode, []);
+            detailBuckets.get(itemCode).push({
+                row,
+                remainingRequested: requestedQuantity
+            });
+        }
 
+        const callbackRequestedTotals = new Map();
+        for (const item of normalizedItems) {
+            callbackRequestedTotals.set(
+                item.itemCode,
+                (callbackRequestedTotals.get(item.itemCode) || 0) + item.requestedQuantity
+            );
+        }
+        if (callbackRequestedTotals.size !== detailBuckets.size) {
+            throw callbackError(400, 'Invalid callback payload');
+        }
+        for (const [itemCode, bucket] of detailBuckets) {
+            const expected = bucket.reduce(
+                (sum, detail) => sum + detail.remainingRequested,
+                0
+            );
+            if (callbackRequestedTotals.get(itemCode) !== expected) {
+                throw callbackError(400, 'Invalid callback payload');
+            }
+        }
+
+        // Phân bổ phần số lượng yêu cầu của từng DauTuan vào các dòng chi tiết ERP.
+        // Việc phân bổ này chỉ dùng ID đơn hàng để ghi bảng liên kết; LOT vẫn luôn
+        // được xác định từ TheKhoKienBTP_ChiTiet.DauTuan.
+        for (const item of normalizedItems) {
+            let remaining = item.requestedQuantity;
+            const bucket = detailBuckets.get(item.itemCode);
+            item.detailAllocations = [];
+            for (const detail of bucket) {
+                if (remaining === 0) break;
+                if (detail.remainingRequested === 0) continue;
+                const quantity = Math.min(remaining, detail.remainingRequested);
+                item.detailAllocations.push({
+                    row: detail.row,
+                    requestedQuantity: quantity,
+                    exportedQuantity: 0
+                });
+                detail.remainingRequested -= quantity;
+                remaining -= quantity;
+            }
+            if (remaining !== 0) throw callbackError(400, 'Invalid callback payload');
+        }
+
+        const usedPackageDetailIDs = new Set();
+        const links = [];
+        const cranePallets = craneOrder ? (await new sql.Request(transaction)
+            .input('OrderID', sql.Int, idPhieuXuat)
+            .query(`SELECT * FROM dbo.CraneWmsOutboundPallet WITH (UPDLOCK, HOLDLOCK)
+                    WHERE ID_PhieuXuatBTP=@OrderID`)).recordset : [];
+        let craneOutcomes = [];
+        if (craneOrder) {
+            craneOutcomes = craneWms.reconcilePallets(cranePallets, normalizedItems);
+            const plannedItems = JSON.parse(craneOrder.RequestJson).items || [];
+            const planned = new Map();
+            const actual = new Map();
+            const keyOf = (palletID, itemCode, lot) => JSON.stringify([palletID, itemCode, lot]);
+            for (const item of plannedItems) {
+                const key = keyOf(item.palletID, item.itemCode, item.lot);
+                planned.set(key, (planned.get(key) || 0) + Number(item.quantity));
+            }
+            for (const item of normalizedItems) for (const pallet of item.pallets) {
+                const key = keyOf(pallet.palletID, item.itemCode, item.lot);
+                actual.set(key, (actual.get(key) || 0) + pallet.quantity);
+            }
+            for (const [key, quantity] of actual) {
+                if (quantity > (planned.get(key) || 0))
+                    throw callbackError(409, 'WMS trả về mặt hàng hoặc dấu tuần khác lựa chọn trên app');
+            }
+            await craneWms.assertTemporaryLocation(transaction, craneWms.getCraneConfig());
+        }
+        for (const item of normalizedItems) {
             for (const pallet of item.pallets) {
                 const packageDetail = await new sql.Request(transaction)
                     .input('QRCode', sql.NVarChar(255), pallet.palletID)
@@ -918,19 +1179,39 @@ router.post('/wms/outbound-callback', checkApiKey, async (req, res) => {
                         JOIN dbo.TheKhoKienBTP_ChiTiet AS d WITH (UPDLOCK, HOLDLOCK)
                           ON d.ID_TheKhoKienBTP = k.ID_TheKhoKienBTP
                         WHERE k.QRCode = @QRCode AND k.TonTai = 1
-                          AND d.TonTai = 1 AND d.ItemCode = @ItemCode
-                          AND (@Lot IS NULL OR d.DauTuan = @Lot);
+                          AND d.TonTai = 1 AND LTRIM(RTRIM(d.ItemCode)) = @ItemCode
+                          AND LTRIM(RTRIM(ISNULL(d.DauTuan, N''))) = @Lot;
                     `);
                 if (packageDetail.recordset.length !== 1) {
                     throw callbackError(404, 'Order or pallet not found');
                 }
-                links.push({
-                    orderID: Number(detail.ID_DonHang) || 0,
-                    lotID: Number(detail.ID_DonHang_LoSanXuat) || 0,
-                    productID: Number(detail.ID_DonHang_SanPham) || 0,
-                    packageDetailID: packageDetail.recordset[0].ID_TheKhoKienBTP_ChiTiet,
-                    quantity: pallet.quantity
-                });
+
+                const packageDetailID = packageDetail.recordset[0].ID_TheKhoKienBTP_ChiTiet;
+                if (usedPackageDetailIDs.has(packageDetailID)) {
+                    throw callbackError(400, 'Invalid callback payload');
+                }
+                usedPackageDetailIDs.add(packageDetailID);
+
+                let remainingPalletQuantity = pallet.quantity;
+                for (const allocation of item.detailAllocations) {
+                    if (remainingPalletQuantity === 0) break;
+                    const available = allocation.requestedQuantity - allocation.exportedQuantity;
+                    if (available === 0) continue;
+                    const quantity = Math.min(remainingPalletQuantity, available);
+                    const detail = allocation.row;
+                    links.push({
+                        orderID: Number(detail.ID_DonHang) || 0,
+                        lotID: Number(detail.ID_DonHang_LoSanXuat) || 0,
+                        productID: Number(detail.ID_DonHang_SanPham) || 0,
+                        packageDetailID,
+                        quantity
+                    });
+                    allocation.exportedQuantity += quantity;
+                    remainingPalletQuantity -= quantity;
+                }
+                if (remainingPalletQuantity !== 0) {
+                    throw callbackError(400, 'Invalid callback payload');
+                }
             }
         }
 
@@ -971,6 +1252,36 @@ router.post('/wms/outbound-callback', checkApiKey, async (req, res) => {
                                     @ID_DonHang_SanPham, @ID_TheKhoKienBTP_ChiTiet,
                                     @SoLuong_XuatKho);`);
             }
+        }
+
+        if (craneOrder) {
+            let waitingReturn = false;
+            for (const pallet of craneOutcomes) {
+                const actual = pallet.actual;
+                const nextStatus = pallet.nextStatus;
+                if (nextStatus === 'WAITING_RETURN') {
+                    await new sql.Request(transaction)
+                        .input('ID_TheKhoKienBTP', sql.Int, pallet.ID_TheKhoKienBTP)
+                        .input('ID_ViTriKho', sql.Int, craneWms.getCraneConfig().temporaryLocationID)
+                        .input('ID_TaiKhoan', sql.Int, null)
+                        .input('LoaiThaoTac', sql.VarChar(20), 'DIEU_CHUYEN')
+                        .execute('dbo.App_BTP_CapNhatViTriKien');
+                    waitingReturn = true;
+                }
+                await new sql.Request(transaction)
+                    .input('OrderID', sql.Int, idPhieuXuat)
+                    .input('PackageID', sql.Int, pallet.ID_TheKhoKienBTP)
+                    .input('Actual', sql.Decimal(18,2), actual)
+                    .input('NextStatus', sql.VarChar(24), nextStatus)
+                    .query(`UPDATE dbo.CraneWmsOutboundPallet SET ActualQuantity=@Actual, Status=@NextStatus
+                            WHERE ID_PhieuXuatBTP=@OrderID AND ID_TheKhoKienBTP=@PackageID`);
+            }
+            await new sql.Request(transaction)
+                .input('OrderID', sql.Int, idPhieuXuat)
+                .input('CallbackJson', sql.NVarChar(sql.MAX), callbackFingerprint)
+                .input('NextStatus', sql.VarChar(24), waitingReturn ? 'WAITING_RETURN' : 'COMPLETE')
+                .query(`UPDATE dbo.CraneWmsOutbound SET Status=@NextStatus, CallbackJson=@CallbackJson,
+                        UpdatedAt=SYSUTCDATETIME() WHERE ID_PhieuXuatBTP=@OrderID`);
         }
 
         await transaction.commit();

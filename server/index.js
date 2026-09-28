@@ -7,6 +7,7 @@ const fs = require("fs");
 require('dotenv').config();
 
 const authRouter = require('./routes/auth')
+const authErpPermissionsRouter = require('./routes/authErpPermissions');
 const hrRouter = require('./routes/hr')
 const qlhdRouter = require('./routes/qlhd')
 const vanbandiRouter = require('./routes/vanbandi');
@@ -51,6 +52,7 @@ app.use(cors({
 // Định nghĩa route
 
 app.use('/auth', authRouter);
+app.use('/auth', authErpPermissionsRouter);
 app.use('/hr', hrRouter);
 app.use('/QLHD', qlhdRouter);
 app.use('/vanbandi', vanbandiRouter);
