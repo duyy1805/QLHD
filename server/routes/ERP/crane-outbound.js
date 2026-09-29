@@ -23,9 +23,9 @@ module.exports = function createCraneOutboundRouter(poolPromise, { isTest = fals
                 .input('Skip', sql.Int, page * pageSize).input('Take', sql.Int, pageSize);
             const result = await request.query(`
                 SELECT ID_PhieuXuatBTP AS orderID,So_PhieuXuatBTP AS orderCode,Ngay_XuatBTP AS date,
-                    ID_KhoXuat AS warehouseID, CAST(0 AS bit) AS qrStatus
+                    ID_KhoXuat AS warehouseID, ISNULL(QrStatus,0) AS qrStatus, TrangThai AS erpStatus
                 FROM dbo.PhieuXuatBTP
-                WHERE TonTai=1 AND ISNULL(QrStatus,0)=0 AND TrangThai NOT IN (4,5) AND ID_KhoXuat=@Warehouse
+                WHERE TonTai=1 AND ISNULL(TrangThai,0)<>5 AND ID_KhoXuat=@Warehouse
                     AND (@Search='' OR So_PhieuXuatBTP LIKE '%'+@Search+'%')
                 ORDER BY Ngay_XuatBTP DESC,ID_PhieuXuatBTP DESC OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;`);
             return res.json({ ok: true, page, pageSize, count: result.recordset.length,
@@ -40,11 +40,9 @@ module.exports = function createCraneOutboundRouter(poolPromise, { isTest = fals
             const row = (await pool.request().input('ID', sql.Int, id)
                 .query('SELECT * FROM dbo.PhieuXuatBTP WHERE ID_PhieuXuatBTP=@ID AND TonTai=1')).recordset[0];
             if (!row) throw crane.craneError(404, 'Không tìm thấy phiếu xuất');
-            // Retain existing read behavior for previously confirmed documents.
-            if (row.QrStatus) return next();
             const cfg = await outbound.config(pool, isTest);
-            if (Number(row.ID_KhoXuat) !== cfg.warehouseID || [4, 5].includes(Number(row.TrangThai)))
-                throw crane.craneError(409, 'Phiếu không phải phiếu cầu trục đang chờ WMS');
+            if (Number(row.ID_KhoXuat) !== cfg.warehouseID || Number(row.TrangThai) === 5)
+                throw crane.craneError(409, 'Phiếu không thuộc kho cầu trục hoặc đã ghi thẻ kho');
             const details = await outbound.loadDetails(pool, id);
             const items = new Map();
             for (const d of details) {
@@ -56,7 +54,7 @@ module.exports = function createCraneOutboundRouter(poolPromise, { isTest = fals
             if (!items.size) throw crane.craneError(422, 'Phiếu chưa có dòng yêu cầu xuất');
             return res.json({ ok: true, data: { orderID: String(id), orderCode: row.So_PhieuXuatBTP,
                 orderType: 'OUTBOUND', date: new Date(row.Ngay_XuatBTP).toISOString(), warehouseID: cfg.warehouseID,
-                qrStatus: false, items: [...items.values()] } });
+                qrStatus: Boolean(row.QrStatus), erpStatus: Number(row.TrangThai), items: [...items.values()] } });
         } catch (error) { return errorResponse(res, error); }
     });
     router.post('/wms/outbound-callback', checkApiKey, async (req, res, next) => {

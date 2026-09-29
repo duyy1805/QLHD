@@ -46,7 +46,8 @@
 # G. WMS CHỌN KIỆN - ERP LƯU PHIẾU (LUỒNG MỚI)
 # Chạy G01 -> G08; G09/G10 dùng phiếu riêng. Không dùng demoMode.
 # Điền ID/mã phiếu chưa xác nhận sau G01; đọc CRANE_WMS_SETUP.md.
-@wfErpBaseUrl = http://localhost:5000/erp-test
+# @wfErpBaseUrl = http://localhost:5000/erp-test
+@wfErpBaseUrl = https://localhost:5000/erp-test
 @wfKhoBaseUrl = http://localhost:5000/khotmtest
 @wfOrderId = 326999
 @wfOrderCode = PXBTP-2026-07-2444
@@ -71,22 +72,22 @@
 @wfLot2 = DIEN_DAU_TUAN_2
 @wfMultiQty1 = 100
 @wfMultiQty2 = 200
-# Giữ nguyên eventID/processedAt khi gửi lại. Phiếu mới dùng eventID mới.
+# eventID là tùy chọn. Trước TrangThai=5, mỗi callback hợp lệ thay thế snapshot xuất hiện tại.
 
-### G01 - Danh sách phiếu chờ
-# 200; chọn orderID/orderCode điền vào biến. Có thể thêm &soPhieu=...
+### G01 - Danh sách phiếu WMS còn được cập nhật
+# 200; gồm phiếu chưa lưu và phiếu TrangThai=4, không gồm TrangThai=5. Có thể thêm &soPhieu=...
 GET {{wfErpBaseUrl}}/wms/outbound-orders?page=0&pageSize=20
 x-api-key: {{apiKey}}
 Accept: application/json
 
-### G02 - Chi tiết phiếu chưa xác nhận
-# 200 qrStatus=false. Điền itemCode/quantity; lấy QR/dấu tuần/vị trí từ scripts/check-wms-outbound.sql.
+### G02 - Chi tiết phiếu chưa ghi thẻ kho
+# 200; qrStatus có thể false hoặc true ở TrangThai=4. Lấy QR/dấu tuần/vị trí từ scripts/check-wms-outbound.sql.
 GET {{wfErpBaseUrl}}/wms/outbound-orders/{{wfOrderId}}
 x-api-key: {{apiKey}}
 Accept: application/json
 
-### G03a - Thiếu eventID
-# 400; các G03 chạy trước G04; phiếu và tồn không đổi.
+### G03a - Payload WMS cũ không có eventID (TÙY CHỌN, chạy thay G04)
+# 200; ERP vẫn lưu snapshot. Không chạy G03a nếu muốn G04 là lần lưu đầu tiên.
 POST {{wfErpBaseUrl}}/wms/outbound-callback
 x-api-key: {{apiKey}}
 Content-Type: application/json
@@ -346,7 +347,8 @@ Content-Type: application/json
 }
 
 ### G04 - WMS xuất đủ, ERP lưu và xác nhận
-# 200 duplicate=false. Kiện còn hàng -> WAITING_RETURN; xuất hết -> COMPLETE.
+# 200. Lần đầu duplicate=false; nếu G03a đã chạy cùng nội dung thì duplicate=true.
+# Phiếu được đặt QrStatus=1, TrangThai=4 và vẫn có thể POST lại để thay snapshot.
 POST {{wfErpBaseUrl}}/wms/outbound-callback
 x-api-key: {{apiKey}}
 Content-Type: application/json
@@ -387,7 +389,7 @@ x-api-key: {{apiKey}}
 Accept: application/json
 
 ### G06 - Gửi lặp sự kiện G04
-# 200 duplicate=true; không trừ tồn hay chuyển vị trí lần nữa. Có thể gửi đồng thời với G04.
+# 200 duplicate=true; snapshot giống nhau nên không làm thay đổi tồn. Có thể gửi đồng thời với G04.
 POST {{wfErpBaseUrl}}/wms/outbound-callback
 x-api-key: {{apiKey}}
 Content-Type: application/json
@@ -415,8 +417,8 @@ Content-Type: application/json
   ]
 }
 
-### G07a - Cùng eventID khác nội dung
-# 409; chạy sau G04.
+### G07a - Cùng eventID, thay processedAt
+# 200 duplicate=true vì dữ liệu hàng/kiện không đổi; processedAt không quyết định snapshot nghiệp vụ.
 POST {{wfErpBaseUrl}}/wms/outbound-callback
 x-api-key: {{apiKey}}
 Content-Type: application/json
@@ -444,8 +446,8 @@ Content-Type: application/json
   ]
 }
 
-### G07b - eventID mới trên phiếu đã lưu
-# 409; không ghi lại phiếu.
+### G07b - eventID mới, cùng snapshot khi TrangThai=4
+# 200 duplicate=true. eventID mới vẫn được nhận vì phiếu chưa TrangThai=5.
 POST {{wfErpBaseUrl}}/wms/outbound-callback
 x-api-key: {{apiKey}}
 Content-Type: application/json
