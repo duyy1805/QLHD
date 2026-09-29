@@ -43,6 +43,542 @@
 @notFoundPallet = PALLET-NOT-FOUND
 
 
+# G. WMS CHỌN KIỆN - ERP LƯU PHIẾU (LUỒNG MỚI)
+# Chạy G01 -> G08; G09/G10 dùng phiếu riêng. Không dùng demoMode.
+# Điền ID/mã phiếu chưa xác nhận sau G01; đọc CRANE_WMS_SETUP.md.
+@wfErpBaseUrl = http://localhost:5000/erp-test
+@wfKhoBaseUrl = http://localhost:5000/khotmtest
+@wfOrderId = 326999
+@wfOrderCode = PXBTP-2026-07-2444
+@wfItemCode = 4666377.B
+@wfLot = 5
+@wfPallet = BP0000535493
+@wfQuantity = 300
+@wfShortQuantity = 299
+@wfOriginalLocation = 0
+@wfTempLocation = 0
+@wfEventId = WMS-XUAT-THU-001
+@wfReturnEventId = WMS-TRA-THU-001
+@wfProcessedAt = 2026-09-29T08:00:00.000Z
+@wfFullOrderId = 0
+@wfFullOrderCode = DIEN_PHIEU_XUAT_HET
+@wfFullPallet = DIEN_QR_XUAT_HET
+@wfFullQuantity = 300
+@wfMultiOrderId = 0
+@wfMultiOrderCode = DIEN_PHIEU_NHIEU_DONG
+@wfMultiPallet1 = DIEN_KIEN_1
+@wfMultiPallet2 = DIEN_KIEN_2
+@wfLot2 = DIEN_DAU_TUAN_2
+@wfMultiQty1 = 100
+@wfMultiQty2 = 200
+# Giữ nguyên eventID/processedAt khi gửi lại. Phiếu mới dùng eventID mới.
+
+### G01 - Danh sách phiếu chờ
+# 200; chọn orderID/orderCode điền vào biến. Có thể thêm &soPhieu=...
+GET {{wfErpBaseUrl}}/wms/outbound-orders?page=0&pageSize=20
+x-api-key: {{apiKey}}
+Accept: application/json
+
+### G02 - Chi tiết phiếu chưa xác nhận
+# 200 qrStatus=false. Điền itemCode/quantity; lấy QR/dấu tuần/vị trí từ scripts/check-wms-outbound.sql.
+GET {{wfErpBaseUrl}}/wms/outbound-orders/{{wfOrderId}}
+x-api-key: {{apiKey}}
+Accept: application/json
+
+### G03a - Thiếu eventID
+# 400; các G03 chạy trước G04; phiếu và tồn không đổi.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G03b - Sai mã phiếu
+# 409; phiếu và tồn không đổi.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "MA-PHIEU-KHONG-KHOP",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G03c - Sai QR
+# 404; phiếu và tồn không đổi.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "QR-KHONG-TON-TAI",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G03d - Sai dấu tuần
+# 409; phiếu và tồn không đổi.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "DAU-TUAN-KHONG-KHOP",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G03e - Xuất thiếu so với ERP
+# 422; đặt wfShortQuantity nhỏ hơn wfQuantity.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfShortQuantity}},
+      "exportedQuantity": {{wfShortQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfShortQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G03f - Tổng kiện không khớp exportedQuantity
+# 400.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfShortQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G03g - Từ chối PARTIAL
+# 422; không xác nhận, không ghi xuất.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "PARTIAL",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G03h - Từ chối FAILED
+# 422; không xác nhận, không ghi xuất.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "FAILED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G03i - Vượt tồn kiện
+# 409 khi QR tồn tại, đúng item/lot và tồn nhỏ hơn yêu cầu. Điền QR phù hợp trước khi chạy.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "DIEN_QR_CUNG_ITEM_LOT_NHUNG_TON_THIEU",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G04 - WMS xuất đủ, ERP lưu và xác nhận
+# 200 duplicate=false. Kiện còn hàng -> WAITING_RETURN; xuất hết -> COMPLETE.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G05a - Xem phiếu đã lưu
+# 200 trangThai=true; kiens chứa các kiện WMS.
+GET {{wfKhoBaseUrl}}/btp/phieuxuat/{{wfOrderId}}
+x-api-key: {{apiKey}}
+Accept: application/json
+
+### G05b - Xem tồn và vị trí tạm
+# 200 dispatchStatus=WMS_CONFIRMED; tồn đầu 500 xuất 300 thì remainingQuantity=200.
+GET {{wfKhoBaseUrl}}/btp/cau-truc/orders/{{wfOrderId}}
+x-api-key: {{apiKey}}
+Accept: application/json
+
+### G06 - Gửi lặp sự kiện G04
+# 200 duplicate=true; không trừ tồn hay chuyển vị trí lần nữa. Có thể gửi đồng thời với G04.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G07a - Cùng eventID khác nội dung
+# 409; chạy sau G04.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "2026-09-29T09:00:00.000Z",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G07b - eventID mới trên phiếu đã lưu
+# 409; không ghi lại phiếu.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}-KHAC",
+  "orderID": "{{wfOrderId}}",
+  "orderCode": "{{wfOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfQuantity}},
+      "exportedQuantity": {{wfQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfPallet}}",
+          "quantity": {{wfQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G08a - Nhập lại kiện lẻ về vị trí cũ
+# 200 updated=true; chỉ chạy khi WAITING_RETURN. Điền ID vị trí chính xác. Không cộng tồn.
+POST {{wfErpBaseUrl}}/wms/location-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "reason": "RETURN_AFTER_PARTIAL_OUTBOUND",
+  "sourceOrderID": "{{wfOrderId}}",
+  "palletID": "{{wfPallet}}",
+  "eventID": "{{wfReturnEventId}}",
+  "previousLocationID": {{wfTempLocation}},
+  "locationID": {{wfOriginalLocation}}
+}
+
+### G08b - Gửi lặp nhập lại
+# 200 updated=false.
+POST {{wfErpBaseUrl}}/wms/location-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "reason": "RETURN_AFTER_PARTIAL_OUTBOUND",
+  "sourceOrderID": "{{wfOrderId}}",
+  "palletID": "{{wfPallet}}",
+  "eventID": "{{wfReturnEventId}}",
+  "previousLocationID": {{wfTempLocation}},
+  "locationID": {{wfOriginalLocation}}
+}
+
+### G08c - Kiểm tra sau nhập lại
+# Kiện RETURNED, vị trí thật, số tồn không đổi.
+GET {{wfKhoBaseUrl}}/btp/cau-truc/orders/{{wfOrderId}}
+x-api-key: {{apiKey}}
+Accept: application/json
+
+### G09 - Xuất hết: dùng phiếu RIÊNG
+# 200 COMPLETE, remainingQuantity=0. Phiếu mới đúng wfItemCode/wfLot; kiện tổng tồn bằng wfFullQuantity.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}-FULL",
+  "orderID": "{{wfFullOrderId}}",
+  "orderCode": "{{wfFullOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfFullQuantity}},
+      "exportedQuantity": {{wfFullQuantity}},
+      "pallets": [
+        {
+          "palletID": "{{wfFullPallet}}",
+          "quantity": {{wfFullQuantity}}
+        }
+      ]
+    }
+  ]
+}
+
+### G10 - Nhiều kiện/dấu tuần/dòng ERP: phiếu RIÊNG
+# 200; tổng wfMultiQty1+wfMultiQty2 bằng yêu cầu ERP theo mã hàng. Chọn phiếu nhiều dòng cùng mã để kiểm tra lượng từng dòng yêu cầu được giữ nguyên.
+POST {{wfErpBaseUrl}}/wms/outbound-callback
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "eventID": "{{wfEventId}}-MULTI",
+  "orderID": "{{wfMultiOrderId}}",
+  "orderCode": "{{wfMultiOrderCode}}",
+  "orderType": "OUTBOUND",
+  "status": "COMPLETED",
+  "processedAt": "{{wfProcessedAt}}",
+  "items": [
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot}}",
+      "requestedQuantity": {{wfMultiQty1}},
+      "exportedQuantity": {{wfMultiQty1}},
+      "pallets": [
+        {
+          "palletID": "{{wfMultiPallet1}}",
+          "quantity": {{wfMultiQty1}}
+        }
+      ]
+    },
+    {
+      "itemCode": "{{wfItemCode}}",
+      "lot": "{{wfLot2}}",
+      "requestedQuantity": {{wfMultiQty2}},
+      "exportedQuantity": {{wfMultiQty2}},
+      "pallets": [
+        {
+          "palletID": "{{wfMultiPallet2}}",
+          "quantity": {{wfMultiQty2}}
+        }
+      ]
+    }
+  ]
+}
+
 # A. API ERP
 
 ### A01 - Danh sách phiếu nhập, trang đầu

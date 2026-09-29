@@ -1,0 +1,3 @@
+# Các script cần đi cùng thay đổi WMS; .gitignore gốc bỏ qua *.sql.
+!migrations/20260929_crane_wms_events.sql
+!scripts/check-wms-outbound.sql

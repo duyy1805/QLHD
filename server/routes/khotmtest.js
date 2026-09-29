@@ -1202,6 +1202,8 @@ router.get('/btp/phieuxuat/types', async (_req, res) => {
 router.post('/btp/phieuxuat/tim-kiem', async (req, res) => {
     try {
         const body = req.body || {};
+        if (body.craneMode === true) return res.json(await require('../utils/craneWmsOutbound')
+            .searchAppOrders(await testpoolPromise, body, true));
         const pageSize = Math.min(100, Math.max(1, Number(body.PageSize || 20)));
         const pageIndex = Math.max(0, Number(body.PageIndex || 0));
         const warehouseIds = (Array.isArray(body.idKho) ? body.idKho : []).map(Number).filter(Number.isInteger).join(',');
@@ -1215,7 +1217,15 @@ router.post('/btp/phieuxuat/tim-kiem', async (req, res) => {
             .input('Skip', sql.Int, pageIndex * pageSize)
             .input('ID_TaiKhoanDangNhap', sql.Int, toIntOrNull(body.IdTaiKhoanDangNhap) || 0)
             .query(`SELECT * FROM dbo.SearchPhieuXuatBTP(@WarehouseId, @Status, @ReviewNumber, @Type, @Take, @Skip, @ID_TaiKhoanDangNhap);`);
-        res.json({ data: (result.recordset || []).map(mapExportSearchRow), pageSize, pageIndex });
+        const rows = (result.recordset || []).map(mapExportSearchRow);
+        const ids = rows.map(row => toIntOrNull(row.id)).filter(Boolean);
+        if (ids.length) {
+            const states = (await pool.request().query(`IF OBJECT_ID(N'dbo.CraneWmsOutbound',N'U') IS NOT NULL
+                SELECT ID_PhieuXuatBTP,Status FROM dbo.CraneWmsOutbound WHERE ID_PhieuXuatBTP IN (${ids.join(',')})`)).recordset || [];
+            const byID = new Map(states.map(row => [Number(row.ID_PhieuXuatBTP),row.Status]));
+            rows.forEach(row => { if (byID.has(Number(row.id))) row.wmsStatus=byID.get(Number(row.id)); });
+        }
+        res.json({ data: rows, pageSize, pageIndex });
     } catch (error) {
         res.status(500).json({ message: 'Không tìm kiếm được phiếu xuất BTP', detail: error.message });
     }

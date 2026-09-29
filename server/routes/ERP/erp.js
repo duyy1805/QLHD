@@ -7,8 +7,9 @@ const checkApiKey = require('../../middleware/apiKey');
 const craneWms = require('../../utils/craneWms');
 const XLSX = require('xlsx');
 
-function createErpRouter(tagpoolPromise) {
+function createErpRouter(tagpoolPromise, options = {}) {
 const router = express.Router()
+router.use(require('./crane-outbound')(tagpoolPromise, options));
 
 function normalizeOptionalString(value, maxLength) {
     if (value === undefined || value === null) return null;
@@ -777,7 +778,7 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
         if (isCraneReturn) {
             const sourceOrderID = craneWms.positiveId(body.sourceOrderID);
             const eventID = typeof body.eventID === 'string' ? body.eventID.trim() : '';
-            const config = craneWms.getCraneConfig();
+            const config = await require('../../utils/craneWmsOutbound').config(transaction, Boolean(options.isTest));
             if (!config || !sourceOrderID || !eventID || eventID.length > 255 ||
                 locationID === config.temporaryLocationID ||
                 (hasPreviousLocation && previousLocationID !== config.temporaryLocationID)) {
@@ -837,7 +838,9 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
             return res.status(200).json({ success: true, palletID, locationID, updated: true });
         }
 
-        const craneConfig = craneWms.getCraneConfig();
+        const craneConfig = options.isTest
+            ? await require('../../utils/craneWmsOutbound').config(transaction, true)
+            : craneWms.getCraneConfig();
         if (craneConfig && locationID === craneConfig.temporaryLocationID)
             throw craneWms.craneError(409, 'Vị trí tạm chỉ được dùng bởi callback xuất cầu trục');
         const activeCranePallet = craneConfig

@@ -1550,6 +1550,8 @@ router.get("/btp/phieuxuat/types", async (_req, res) => {
 
 router.post("/btp/phieuxuat/tim-kiem", async (req, res) => {
   try {
+    if (req.body?.craneMode === true) return res.json(await require('../utils/craneWmsOutbound')
+      .searchAppOrders(await tagpoolPromise, req.body, false));
     const body = req.body || {};
     const pageSize = Math.min(100, Math.max(1, Number(body.PageSize || 20)));
     const pageIndex = Math.max(0, Number(body.PageIndex || 0));
@@ -1915,10 +1917,7 @@ router.put("/btp/phieuxuat/xac-nhan", async (req, res) => {
         .input('OrderID', sql.Int, idPhieuXuat)
         .query('SELECT ID_KhoXuat FROM dbo.PhieuXuatBTP WHERE ID_PhieuXuatBTP=@OrderID AND TonTai=1');
       if (Number(warehouse.recordset[0]?.ID_KhoXuat) === craneConfig.warehouseID) {
-        await craneWms.confirmCraneOutbound(pool, idPhieuXuat, picks);
-        try { await craneWms.dispatchMock(pool, idPhieuXuat); }
-        catch (dispatchError) { console.error('[crane WMS mock dispatch]', dispatchError); }
-        return res.json({ ok: true, isSuccess: 'success', wmsStatus: 'WAITING_WMS' });
+        return res.status(409).json({ message: 'Phiếu kho cầu trục được xác nhận bằng callback WMS' });
       }
     }
     const result = await pool
@@ -1981,9 +1980,13 @@ router.get('/btp/cau-truc/orders/:id', async (req, res) => {
     const order = await craneWms.findCraneOrder(pool, id);
     if (!order) return res.status(404).json({ message: 'Chưa có yêu cầu WMS cho phiếu' });
     const pallets = await pool.request().input('OrderID', sql.Int, id)
-      .query(`SELECT PalletID, InitialQuantity, PlannedQuantity, ActualQuantity,
-                     OriginalLocationID, ReturnLocationID, Status
-              FROM dbo.CraneWmsOutboundPallet WHERE ID_PhieuXuatBTP=@OrderID`);
+      .query(`SELECT p.PalletID, p.InitialQuantity, p.PlannedQuantity, p.ActualQuantity,
+                     p.OriginalLocationID, p.ReturnLocationID, p.Status,
+                     k.ID_ViTriKho AS CurrentLocationID, v.MaViTriKho AS CurrentLocationCode
+              FROM dbo.CraneWmsOutboundPallet p
+              JOIN dbo.TheKhoKienBTP k ON k.ID_TheKhoKienBTP=p.ID_TheKhoKienBTP
+              LEFT JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho
+              WHERE p.ID_PhieuXuatBTP=@OrderID`);
     return res.json({ orderID: id, orderCode: order.OrderCode, status: order.Status,
       dispatchStatus: order.DispatchStatus, dispatchAttempts: order.DispatchAttempts,
       dispatchError: order.DispatchError,
