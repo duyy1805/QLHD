@@ -488,12 +488,49 @@ async function getInvoicePermissionContext(pool, hoaDonId, requesterUserId) {
     return context;
 }
 
-async function assertCanManageInvoiceAttachments(pool, hoaDonId, requesterUserId) {
+async function assertCanManageInvoiceAttachments(pool, hoaDonId, requesterUserId, { allowAnyStatus = false } = {}) {
     const context = await getInvoicePermissionContext(pool, hoaDonId, requesterUserId);
-    const canManage = context.MaTrangThai === 'KhoiTao' &&
-        (Boolean(context.IsAdmin) || Number(context.NguoiDangKyId) === Number(requesterUserId));
+    const isOwnerOrAdmin = Boolean(context.IsAdmin) || Number(context.NguoiDangKyId) === Number(requesterUserId);
+    const canManage = isOwnerOrAdmin && (allowAnyStatus || context.MaTrangThai === 'KhoiTao');
     if (!canManage) {
-        const error = new Error('Bạn chỉ được quản lý file của hóa đơn nháp do mình tạo hoặc có quyền HD_Admin.');
+        const error = new Error(allowAnyStatus
+            ? 'Bạn chỉ được đính kèm file cho hóa đơn do mình tạo hoặc có quyền HD_Admin.'
+            : 'Bạn chỉ được xóa file của hóa đơn nháp do mình tạo hoặc có quyền HD_Admin.');
+        error.statusCode = 403;
+        throw error;
+    }
+    return context;
+}
+
+async function assertCanEditInvoiceAllInfo(pool, hoaDonId, requesterUserId) {
+    const result = await pool.request()
+        .input('HoaDonId', sql.Int, hoaDonId)
+        .input('RequesterUserId', sql.Int, requesterUserId)
+        .query(`
+            SELECT TOP 1
+                h.NguoiDangKyId,
+                h.MaLoaiHoaDon,
+                tt.MaTrangThai,
+                IsAdmin = dbo.HD_fn_UserCoQuyen(@RequesterUserId, N'HD_Admin'),
+                IsResponsible = CONVERT(BIT, CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM dbo.HD_NguoiPhuTrach p
+                    WHERE p.UserId = @RequesterUserId
+                      AND p.MaLoaiHoaDon = h.MaLoaiHoaDon
+                      AND p.TonTai = 1
+                ) THEN 1 ELSE 0 END)
+            FROM dbo.HD_HoaDon h
+            JOIN dbo.HD_TrangThai tt ON tt.TrangThaiId = h.TrangThaiId
+            WHERE h.HoaDonId = @HoaDonId AND h.IsDeleted = 0;
+        `);
+    const context = result.recordset?.[0];
+    const isAdmin = Boolean(context?.IsAdmin);
+    const allowed = context && (
+        (context.MaTrangThai === 'KhoiTao' && (isAdmin || Number(context.NguoiDangKyId) === Number(requesterUserId))) ||
+        (context.MaTrangThai === 'ChoXuLy_HoaDon' && (isAdmin || Boolean(context.IsResponsible)))
+    );
+    if (!allowed) {
+        const error = new Error('Bạn không có quyền sửa toàn bộ thông tin hóa đơn ở trạng thái hiện tại.');
         error.statusCode = 403;
         throw error;
     }
@@ -685,6 +722,7 @@ async function getImportGroupForUser(pool, nhomImportId, requester) {
             DECLARE @IsTBP BIT = CASE WHEN dbo.HD_fn_UserCoQuyen(@RequesterUserId, N'HD_TBP') = 1
                 OR dbo.SS_fn_UserCoQuyen(@RequesterUserId, N'TBP') = 1 THEN 1 ELSE 0 END;
             DECLARE @CanExport BIT = dbo.HD_fn_UserCoQuyen(@RequesterUserId, N'HD_XuatHoaDon');
+            DECLARE @CanViewExported BIT = dbo.HD_fn_UserCoQuyen(@RequesterUserId, N'HD_XemHoaDonDaXuat');
 
             SELECT TOP 1 n.*
             FROM dbo.HD_NhomImport n
@@ -705,6 +743,7 @@ async function getImportGroupForUser(pool, nhomImportId, requester) {
                             WHERE scope.IdDonVi = h.IdDonVi
                         ))
                         OR @CanExport = 1
+                        OR (@CanViewExported = 1 AND tt.MaTrangThai = N'DaXuat')
                         OR EXISTS (
                             SELECT 1 FROM dbo.HD_NguoiPhuTrach p
                             WHERE p.UserId = @RequesterUserId
@@ -727,6 +766,7 @@ async function listGroupInvoiceIdsForUser(pool, nhomImportId, requester, creator
             DECLARE @IsTBP BIT = CASE WHEN dbo.HD_fn_UserCoQuyen(@RequesterUserId, N'HD_TBP') = 1
                 OR dbo.SS_fn_UserCoQuyen(@RequesterUserId, N'TBP') = 1 THEN 1 ELSE 0 END;
             DECLARE @CanExport BIT = dbo.HD_fn_UserCoQuyen(@RequesterUserId, N'HD_XuatHoaDon');
+            DECLARE @CanViewExported BIT = dbo.HD_fn_UserCoQuyen(@RequesterUserId, N'HD_XemHoaDonDaXuat');
 
             SELECT m.HoaDonId
             FROM dbo.HD_NhomImport_HoaDon m
@@ -743,6 +783,7 @@ async function listGroupInvoiceIdsForUser(pool, nhomImportId, requester, creator
                             WHERE scope.IdDonVi = h.IdDonVi
                         ))
                         OR @CanExport = 1
+                        OR (@CanViewExported = 1 AND tt.MaTrangThai = N'DaXuat')
                         OR EXISTS (
                             SELECT 1 FROM dbo.HD_NguoiPhuTrach p
                             WHERE p.UserId = @RequesterUserId
@@ -954,7 +995,7 @@ router.get('/role/:userId', async (req, res) => {
                 WHERE pq.ID_TaiKhoanDangNhap = @UserId
                   AND pq.CapNhat = 1
                   AND cn.TonTai = 1
-                  AND cn.Ma_ChucNang IN (N'HD_TBP', N'HD_XuatHoaDon', N'HD_Admin', N'TBP', N'Admin');
+                  AND cn.Ma_ChucNang IN (N'HD_TBP', N'HD_XuatHoaDon', N'HD_XemHoaDonDaXuat', N'HD_Admin', N'TBP', N'Admin');
 
                 SELECT MaLoaiHoaDon
                 FROM dbo.HD_NguoiPhuTrach
@@ -1457,6 +1498,7 @@ router.put('/hoa-don/:id', async (req, res) => {
             return res.status(400).json({ message: nationalDefenseError });
         }
         const pool = await poolPromise;
+        await assertCanEditInvoiceAllInfo(pool, hoaDonId, requester.userId);
         payload = await syncInvoiceBuyer(pool, payload, requester.userId);
         const rs = await addCommonInvoiceInputs(pool.request(), requester)
             .input('HoaDonId', sql.Int, hoaDonId)
@@ -1689,7 +1731,7 @@ router.post('/hoa-don/:hoaDonId/tai-lieu', uploadInvoiceAttachments, async (req,
         if (!files.length) return res.status(400).json({ message: 'Không có file nào được upload.' });
 
         const pool = await poolPromise;
-        await assertCanManageInvoiceAttachments(pool, hoaDonId, requester.userId);
+        await assertCanManageInvoiceAttachments(pool, hoaDonId, requester.userId, { allowAnyStatus: true });
         const inserted = [];
         const savedFiles = [];
 
@@ -2014,6 +2056,7 @@ router.get('/nhom-import', async (req, res) => {
                 DECLARE @IsTBP BIT = CASE WHEN dbo.HD_fn_UserCoQuyen(@RequesterUserId, N'HD_TBP') = 1
                     OR dbo.SS_fn_UserCoQuyen(@RequesterUserId, N'TBP') = 1 THEN 1 ELSE 0 END;
                 DECLARE @CanExport BIT = dbo.HD_fn_UserCoQuyen(@RequesterUserId, N'HD_XuatHoaDon');
+            DECLARE @CanViewExported BIT = dbo.HD_fn_UserCoQuyen(@RequesterUserId, N'HD_XemHoaDonDaXuat');
 
                 SELECT
                     nhomImportId = n.NhomImportId,
@@ -2050,6 +2093,7 @@ router.get('/nhom-import', async (req, res) => {
                                 WHERE scope.IdDonVi = h.IdDonVi
                             ))
                             OR @CanExport = 1
+                        OR (@CanViewExported = 1 AND tt.MaTrangThai = N'DaXuat')
                             OR EXISTS (
                                 SELECT 1 FROM dbo.HD_NguoiPhuTrach p
                                 WHERE p.UserId = @RequesterUserId
@@ -2442,7 +2486,23 @@ router.get('/dot-xuat-file/:id/export.xlsx', async (req, res) => {
             'Thành tiền',
             'Thành tiền quy đổi',
         ];
-        const exportRows = rows.map((row) => Object.fromEntries(headers.map((header) => [header, row[header] ?? null])));
+        const roundExcelAmount = (value, fraction) => {
+            if (value === null || value === undefined || value === '') return null;
+            const number = Number(value);
+            if (!Number.isFinite(number)) return value;
+            const factor = 10 ** fraction;
+            return Math.round((number + Number.EPSILON) * factor) / factor;
+        };
+        const exportRows = rows.map((row) => {
+            const currency = String(row['Loại tiền'] || 'VND').toUpperCase();
+            const currencyAmountScale = currency === 'VND' ? 0 : 3;
+            const exported = Object.fromEntries(headers.map((header) => [header, row[header] ?? null]));
+            exported['Tiền thuế GTGT'] = roundExcelAmount(exported['Tiền thuế GTGT'], currencyAmountScale);
+            exported['Thành tiền'] = roundExcelAmount(exported['Thành tiền'], currencyAmountScale);
+            exported['Tiền thuế GTGT quy đổi'] = roundExcelAmount(exported['Tiền thuế GTGT quy đổi'], 0);
+            exported['Thành tiền quy đổi'] = roundExcelAmount(exported['Thành tiền quy đổi'], 0);
+            return exported;
+        });
         const worksheet = XLSX.utils.json_to_sheet(exportRows, { header: headers });
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Hóa đơn GTGT');
