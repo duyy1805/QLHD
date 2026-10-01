@@ -7,6 +7,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
+const { parseExcelDate } = require('../utils/excelDate');
 const axios = require('axios');
 const crypto = require('crypto');
 const {
@@ -49,6 +50,7 @@ const importUpload = multer({
 
 const IMPORT_TEMPLATE_VERSION = 'MISA-22COL-V3';
 const LEGACY_IMPORT_TEMPLATE_VERSION = 'MISA-21COL-V2';
+const FLEXIBLE_IMPORT_TEMPLATE_VERSION = 'MISA-FLEX-V4';
 const UNCLASSIFIED_INVOICE_TYPE = 'ChuaPhanLoai';
 const IMPORT_INVOICE_TYPE = 'XuatKhau';
 const IMPORT_REVENUE_TYPE = 'XuatKhau';
@@ -80,6 +82,10 @@ const IMPORT_HEADERS = [
     ...LEGACY_IMPORT_HEADERS.slice(0, 2),
     'Thời hạn thanh toán',
     ...LEGACY_IMPORT_HEADERS.slice(2),
+];
+const MINIMUM_IMPORT_HEADERS = [
+    'Số thứ tự hóa đơn (*)',
+    'Tên hàng hóa/dịch vụ (*)',
 ];
 
 function decodeMultipartFileName(fileName) {
@@ -199,40 +205,13 @@ function parseExcelNumber(value) {
     return Number(text);
 }
 
-function parseExcelDate(value) {
-    if (isBlankCell(value)) return null;
-    if (value instanceof Date && !Number.isNaN(value.getTime())) {
-        return value.toISOString().slice(0, 10);
-    }
-    if (typeof value === 'number') {
-        const parts = XLSX.SSF.parse_date_code(value);
-        if (!parts) return undefined;
-        return `${String(parts.y).padStart(4, '0')}-${String(parts.m).padStart(2, '0')}-${String(parts.d).padStart(2, '0')}`;
-    }
-
-    const text = String(value).trim();
-    const iso = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(text);
-    const vietnamese = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(text);
-    const parts = iso
-        ? { year: Number(iso[1]), month: Number(iso[2]), day: Number(iso[3]) }
-        : vietnamese
-            ? { year: Number(vietnamese[3]), month: Number(vietnamese[2]), day: Number(vietnamese[1]) }
-            : null;
-    if (!parts) return undefined;
-    const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
-    if (date.getUTCFullYear() !== parts.year || date.getUTCMonth() !== parts.month - 1 || date.getUTCDate() !== parts.day) {
-        return undefined;
-    }
-    return `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
-}
-
 function invoiceImportWarning(invoice, message) {
     invoice.warnings.push({ invoiceOrder: invoice.invoiceOrder, message });
 }
 
 function parseInvoiceImportWorkbook(buffer) {
     const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
-    const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
     const sheetName = workbook.SheetNames[0];
     if (!sheetName) {
         return { checksum, sheetName: null, invoices: [], errors: [{ message: 'File Excel không có worksheet.' }], warnings: [] };
@@ -267,16 +246,22 @@ function parseInvoiceImportWorkbook(buffer) {
     });
     const paymentDeadlineHeader = normalizeExcelHeader('Thời hạn thanh toán');
     const missingLegacyHeaders = legacyExpectedHeaders.filter((header) => !headerIndexes.has(header));
+    const minimumHeaders = MINIMUM_IMPORT_HEADERS.map(normalizeExcelHeader);
+    const missingMinimumHeaders = minimumHeaders.filter((header) => !headerIndexes.has(header));
     const usesCurrentTemplate = headerIndexes.has(paymentDeadlineHeader);
-    const usesLegacyTemplate = !usesCurrentTemplate;
+    const usesLegacyTemplate = !usesCurrentTemplate && missingLegacyHeaders.length === 0;
+    const usesFlexibleTemplate = missingLegacyHeaders.length > 0;
     const sourceColumnNumber = (legacyColumnIndex) => (headerIndexes.get(legacyExpectedHeaders[legacyColumnIndex]) ?? legacyColumnIndex) + 1;
 
-    missingLegacyHeaders.forEach((header) => {
-        const legacyIndex = legacyExpectedHeaders.indexOf(header);
-        errors.push({ row: 1, column: legacyIndex + 1, message: `Thiếu cột bắt buộc “${LEGACY_IMPORT_HEADERS[legacyIndex]}”.` });
+    missingMinimumHeaders.forEach((header) => {
+        const expectedIndex = expectedHeaders.indexOf(header);
+        errors.push({ row: 1, column: expectedIndex + 1, message: `Thiếu cột bắt buộc “${IMPORT_HEADERS[expectedIndex]}”.` });
     });
     if (errors.length) {
         return { checksum, sheetName, invoices: [], errors, warnings, rowCount: Math.max(matrix.length - 1, 0) };
+    }
+    if (usesFlexibleTemplate) {
+        warnings.push({ message: `File đang dùng mẫu cột linh hoạt; ${missingLegacyHeaders.length} cột không có trong file sẽ được để trống và bổ sung sau.` });
     }
 
     const invoiceMap = new Map();
@@ -324,7 +309,7 @@ function parseInvoiceImportWorkbook(buffer) {
 
         let invoice = invoiceMap.get(invoiceOrder);
         if (!invoice) {
-            if (usesCurrentTemplate && !paymentDeadline) {
+            if (usesCurrentTemplate && !usesFlexibleTemplate && !paymentDeadline) {
                 errors.push({ row: excelRow, column: 3, message: 'Thời hạn thanh toán không được để trống ở dòng đầu của hóa đơn.' });
             }
             invoice = {
@@ -399,7 +384,7 @@ function parseInvoiceImportWorkbook(buffer) {
         errors,
         warnings,
         rowCount: Math.max(matrix.length - 1, 0),
-        templateVersion: usesCurrentTemplate ? IMPORT_TEMPLATE_VERSION : LEGACY_IMPORT_TEMPLATE_VERSION,
+        templateVersion: usesFlexibleTemplate ? FLEXIBLE_IMPORT_TEMPLATE_VERSION : usesCurrentTemplate ? IMPORT_TEMPLATE_VERSION : LEGACY_IMPORT_TEMPLATE_VERSION,
     };
 }
 
@@ -873,24 +858,9 @@ async function syncInvoiceBuyer(pool, payload, requesterUserId) {
                     UPDATE dbo.HD_NguoiMua_DiaChi
                     SET DiaChi = @DiaChi, NguoiCapNhatId = @RequesterUserId, NgayCapNhat = SYSDATETIME()
                     WHERE DiaChiId = @DiaChiId;
-
-                SELECT TOP 1 @LienHeId = LienHeId
-                FROM dbo.HD_NguoiMua_LienHe
-                WHERE NguoiMuaId = @NguoiMuaId AND IsDeleted = 0
-                ORDER BY IsDefault DESC, LienHeId;
-
-                IF @LienHeId IS NULL AND (@NguoiLienHe IS NOT NULL OR @Email IS NOT NULL OR @DienThoai IS NOT NULL)
-                BEGIN
-                    INSERT dbo.HD_NguoiMua_LienHe(NguoiMuaId, HoTen, Email, DienThoai, IsDefault, NguoiTaoId)
-                    VALUES(@NguoiMuaId, COALESCE(@NguoiLienHe, @TenPhapLy), NULLIF(@Email, N''), NULLIF(@DienThoai, N''), 1, @RequesterUserId);
-                    SET @LienHeId = SCOPE_IDENTITY();
-                END
-                ELSE IF @LienHeId IS NOT NULL
-                    UPDATE dbo.HD_NguoiMua_LienHe
-                    SET HoTen = COALESCE(@NguoiLienHe, @TenPhapLy),
-                        Email = NULLIF(@Email, N''), DienThoai = NULLIF(@DienThoai, N''),
-                        NguoiCapNhatId = @RequesterUserId, NgayCapNhat = SYSDATETIME()
-                    WHERE LienHeId = @LienHeId;
+                -- Thông tin người mua hàng trên hóa đơn là snapshot nhập thủ công.
+                -- Không tự chọn, tạo hoặc cập nhật liên hệ mặc định của đơn vị mua.
+                SET @LienHeId = NULL;
 
                 SELECT NguoiMuaId = @NguoiMuaId, DiaChiId = @DiaChiId, LienHeId = @LienHeId;
             `);
@@ -2276,6 +2246,89 @@ router.post('/nhom-import/:id/submit', async (req, res) => {
     }
 });
 
+router.put('/nhom-import/:id/thong-tin-xuat', async (req, res) => {
+    try {
+        const nhomImportId = Number(req.params.id);
+        const requester = getRequester(req);
+        const action = String(req.body.action || 'save');
+        const items = Array.isArray(req.body.items) ? req.body.items : [];
+        if (!nhomImportId || !requester.userId || !requester.idDonVi) {
+            return res.status(400).json({ message: 'Thiếu nhóm import hoặc thông tin người thực hiện.' });
+        }
+        if (!['save', 'save_and_approve'].includes(action)) {
+            return res.status(400).json({ message: 'Hành động cập nhật không hợp lệ.' });
+        }
+        if (!items.length) return res.status(400).json({ message: 'Danh sách hóa đơn rỗng.' });
+
+        const pool = await poolPromise;
+        const group = await getImportGroupForUser(pool, nhomImportId, requester);
+        if (!group) return res.status(404).json({ message: 'Không tìm thấy nhóm import hoặc bạn không có quyền xem.' });
+        const allowedIds = new Set((await listGroupInvoiceIdsForUser(pool, nhomImportId, requester)).map(Number));
+        const processed = [];
+        const skipped = [];
+        const validTaxCodes = new Set(['0', '5', '8', '10', 'KCT', 'KKKNT', 'KHAC']);
+
+        for (const item of items) {
+            const hoaDonId = Number(item.hoaDonId);
+            try {
+                if (!hoaDonId || !allowedIds.has(hoaDonId)) throw new Error('Hóa đơn không thuộc nhóm hoặc bạn không có quyền xử lý.');
+                const paymentMethod = String(item.hinhThucThanhToan || '').trim();
+                const taxMode = String(item.cheDoThue || 'MotThueSuat');
+                const currency = String(item.maLoaiTien || '').trim();
+                const exchangeRate = currency === 'VND' ? 1 : Number(item.tyGia || 0);
+                if (!paymentMethod) throw new Error('Chưa chọn hình thức thanh toán.');
+                if (!['MotThueSuat', 'NhieuThueSuat'].includes(taxMode)) throw new Error('Chế độ thuế không hợp lệ.');
+                if (!currency || !Number.isFinite(exchangeRate) || exchangeRate <= 0) throw new Error('Loại tiền hoặc tỷ giá không hợp lệ.');
+                if (!Array.isArray(item.chiTiet) || !item.chiTiet.length) throw new Error('Hóa đơn chưa có thông tin thuế cho dòng hàng.');
+
+                const commonCode = String(item.thueSuatChung ?? '');
+                const lines = item.chiTiet.map((line) => {
+                    const code = taxMode === 'NhieuThueSuat' ? String(line.thueSuatGTGT ?? '') : commonCode;
+                    if (!validTaxCodes.has(code)) throw new Error(`Thuế suất dòng ${line.soDong || ''} không hợp lệ.`);
+                    const rate = ['0', '5', '8', '10'].includes(code) ? Number(code) : 0;
+                    return { soDong: Number(line.soDong), maThueSuatGTGT: code, thueSuatGTGT: rate };
+                });
+                if (lines.some((line) => !line.soDong)) throw new Error('Số dòng hàng hóa không hợp lệ.');
+
+                const payload = {
+                    hinhThucThanhToan: paymentMethod,
+                    cheDoThue: taxMode,
+                    maLoaiTien: currency,
+                    tyGia: exchangeRate,
+                    thueSuatChung: ['0', '5', '8', '10'].includes(commonCode) ? Number(commonCode) : 0,
+                    chiTiet: lines,
+                };
+                const updated = await pool.request()
+                    .input('HoaDonId', sql.Int, hoaDonId)
+                    .input('Payload', sql.NVarChar(sql.MAX), JSON.stringify(payload))
+                    .input('RequesterUserId', sql.Int, requester.userId)
+                    .execute('HD_sp_HoaDon_CapNhatThongTinXuat');
+                await syncInvoiceTaxCodes(pool, hoaDonId, payload);
+
+                if (action === 'save_and_approve') {
+                    try {
+                        await addCommonInvoiceInputs(pool.request(), requester)
+                            .input('HoaDonId', sql.Int, hoaDonId)
+                            .input('HanhDong', sql.NVarChar(20), 'Duyet')
+                            .input('TenNguoiThucHien', sql.NVarChar(300), req.body.tenNguoiThucHien || null)
+                            .input('GhiChu', sql.NVarChar(1000), null)
+                            .execute('HD_sp_HoaDon_Duyet');
+                    } catch (approveError) {
+                        skipped.push({ hoaDonId, saved: true, reason: `Đã lưu nhưng chưa duyệt được: ${approveError?.originalError?.info?.message || approveError.message}` });
+                        continue;
+                    }
+                }
+                const invoice = mapHoaDon(firstRecordset(updated, 0)[0]) || {};
+                processed.push({ ...invoice, hoaDonId, id: hoaDonId });
+            } catch (error) {
+                skipped.push({ hoaDonId, saved: false, reason: error?.originalError?.info?.message || error.message });
+            }
+        }
+        return res.json({ action, processed, skipped });
+    } catch (err) {
+        return httpError(res, err, 'Có lỗi khi cập nhật thông tin xuất cho nhóm hóa đơn.');
+    }
+});
 router.post('/nhom-import/:id/approve', async (req, res) => {
     try {
         const nhomImportId = Number(req.params.id);

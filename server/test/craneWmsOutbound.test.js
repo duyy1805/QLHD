@@ -6,8 +6,10 @@ const payload = () => ({ eventID: 'event-1', orderID: '12', orderCode: 'PX-12', 
         requestedQuantity: 300, exportedQuantity: 300, pallets: [{ palletID: 'QR1', quantity: 300 }] }] });
 const line = (order, quantity, product = 1) => ({ ID_DonHang: order, ID_DonHang_LoSanXuat: 1,
     ID_DonHang_SanPham: product, ItemCode: 'A.CP', SoLuong_XuatKho: quantity });
-test('requires event ID and full success; rejects mismatched pallet sums', () => {
-    for (const update of [{eventID:''},{status:'PARTIAL'},{status:'FAILED'}]) {
+test('event ID is optional; full success and matching pallet sums are required', () => {
+    assert.equal(normalize({...payload(),eventID:undefined}).eventID,'');
+    assert.equal(normalize({...payload(),eventID:''}).eventID,'');
+    for (const update of [{status:'PARTIAL'},{status:'FAILED'}]) {
         assert.throws(() => normalize({...payload(),...update}), e => [400,422].includes(e.statusCode));
     }
     const p=payload();p.items[0].exportedQuantity=299;

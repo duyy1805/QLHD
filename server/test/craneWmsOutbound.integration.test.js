@@ -80,7 +80,7 @@ test('WMS HTTP + DB: validation, confirmation, concurrency, rollback and return'
         const a=await fixture('partial-pallet');
         assert.equal((await send('/erp-test/wms/outbound-orders?soPhieu='+a.code)).body.data.length,1);
         assert.equal((await send('/erp-test/wms/outbound-orders/'+a.id)).body.data.items[0].quantity,300);
-        const invalid=[ [{...a.body,eventID:undefined},400], [{...a.body,orderCode:'WRONG'},409],
+        const invalid=[ [{...a.body,orderCode:'WRONG'},409],
             [{...a.body,status:'PARTIAL'},422], [{...a.body,status:'FAILED'},422] ];
         for (const [body,expected] of invalid) assert.equal((await callback(body)).code,expected);
         const wrong=structuredClone(a.body);wrong.items[0].lot='WRONG';assert.equal((await callback(wrong)).code,409);
@@ -92,9 +92,11 @@ test('WMS HTTP + DB: validation, confirmation, concurrency, rollback and return'
         assert.deepEqual(both.map(r=>r.code),[200,200]);
         assert.deepEqual(both.map(r=>r.body.duplicate).sort(),[false,true]);
         assert.equal(both[0].body.pallets[0].remainingQuantity,200);
-        assert.equal((await callback({...a.body,processedAt:'2026-09-29T02:00:00Z'})).code,409);
-        assert.equal((await callback({...a.body,eventID:a.body.eventID+'-new'})).code,409);
-        assert.equal((await send('/erp-test/wms/outbound-orders?soPhieu='+a.code)).body.data.length,0);
+        assert.equal((await callback({...a.body,processedAt:'2026-09-29T02:00:00Z'})).body.duplicate,true);
+        assert.equal((await callback({...a.body,eventID:a.body.eventID+'-new'})).body.duplicate,true);
+        assert.equal((await send('/erp-test/wms/outbound-orders?soPhieu='+a.code)).body.data.length,1);
+        const detailAtStatus4=await send('/erp-test/wms/outbound-orders/'+a.id);
+        assert.equal(detailAtStatus4.body.data.erpStatus,4);assert.equal(detailAtStatus4.body.data.qrStatus,true);
         const tracked=(await send('/khotmtest/btp/cau-truc/orders/'+a.id)).body;
         assert.equal(tracked.pallets[0].CurrentLocationID,cfg.temporaryLocationID);
         const appList=await send('/khotmtest/btp/phieuxuat/tim-kiem',{
@@ -102,7 +104,8 @@ test('WMS HTTP + DB: validation, confirmation, concurrency, rollback and return'
         assert.equal(appList.code,200);assert.equal(appList.body.data[0].wmsStatus,'WAITING_RETURN');
         const saved=await send('/khotmtest/btp/phieuxuat/'+a.id);
         assert.equal(saved.body.trangThai,true);assert.equal(saved.body.kiens[0].qrCode,a.qr);
-        assert.equal((await callback({...a.body,eventID:undefined})).code,400);
+        const withoutEvent={...a.body};delete withoutEvent.eventID;
+        assert.equal((await callback(withoutEvent)).body.duplicate,true);
         const locked=await fixture('locked');locked.body.items[0].pallets[0].palletID=a.qr;
         assert.equal((await callback(locked.body)).code,409);
         const wrongWarehouse=await fixture('warehouse');
@@ -115,10 +118,34 @@ test('WMS HTTP + DB: validation, confirmation, concurrency, rollback and return'
         assert.equal((await send('/erp-test/wms/location-callback',returned)).body.updated,true);
         assert.equal((await send('/erp-test/wms/location-callback',returned)).body.updated,false);
         assert.equal((await callback(a.body)).body.duplicate,true);
+        await pool.request().input('ID',sql.Int,a.id).query('UPDATE PhieuXuatBTP SET TrangThai=5 WHERE ID_PhieuXuatBTP=@ID');
+        assert.equal((await callback(a.body)).code,409);
+        assert.equal((await send('/erp-test/wms/outbound-orders?soPhieu='+a.code)).body.data.length,0);
         const full=await fixture('full',300);assert.equal((await callback(full.body)).body.status,'COMPLETE');
+        const replace=await fixture('replace-snapshot');
+        assert.equal((await callback(replace.body)).code,200);
+        const replacementQR=replace.qr+'B';
+        const replacementPackage=await clone('TheKhoKienBTP','ID_TheKhoKienBTP',source.ID_TheKhoKienBTP,{QRCode:replacementQR});
+        packageIDs.push(replacementPackage);
+        const replacementDetail=await clone('TheKhoKienBTP_ChiTiet','ID_TheKhoKienBTP_ChiTiet',source.ID_TheKhoKienBTP_ChiTiet,
+            {ID_TheKhoKienBTP:replacementPackage,ItemCode:sourceLine.ItemCode,DauTuan:'2639',SoLuong:500});
+        const replacementBody=structuredClone(replace.body);
+        replacementBody.items[0].pallets=[{palletID:replacementQR,quantity:300}];
+        const replacementResult=await callback(replacementBody);
+        assert.equal(replacementResult.code,200);assert.equal(replacementResult.body.duplicate,false);
+        const replacementState=(await pool.request().input('Old',sql.Int,replace.pkg)
+            .input('New',sql.Int,replacementPackage).input('OrderID',sql.Int,replace.id)
+            .input('Detail',sql.Int,replacementDetail).query(`
+                SELECT ID_TheKhoKienBTP,ID_ViTriKho FROM TheKhoKienBTP WHERE ID_TheKhoKienBTP IN (@Old,@New);
+                SELECT ID_TheKhoKienBTP_ChiTiet FROM PhieuXuatBTP_ChiTiet_TheKhoKien WHERE ID_PhieuXuatBTP=@OrderID;`)).recordsets;
+        assert.equal(replacementState[0].find(x=>x.ID_TheKhoKienBTP===replace.pkg).ID_ViTriKho,source.ID_ViTriKho);
+        assert.equal(replacementState[0].find(x=>x.ID_TheKhoKienBTP===replacementPackage).ID_ViTriKho,cfg.temporaryLocationID);
+        assert.deepEqual(replacementState[1].map(x=>x.ID_TheKhoKienBTP_ChiTiet),[replacementDetail]);
+        const replacementWithoutEvent=structuredClone(replacementBody);delete replacementWithoutEvent.eventID;
+        assert.equal((await callback(replacementWithoutEvent)).body.duplicate,true);
         const race=await fixture('race-events',300);
         const raceResults=await Promise.all([callback(race.body),callback({...race.body,eventID:race.body.eventID+'-other'})]);
-        assert.deepEqual(raceResults.map(x=>x.code).sort(),[200,409]);
+        assert.deepEqual(raceResults.map(x=>x.code).sort(),[200,200]);
         const insufficient=await fixture('insufficient',299);assert.equal((await callback(insufficient.body)).code,409);
         const multi=await fixture('multiple-lots');
         // Two destination lines of the same product; preserve 150+150, not 300 on each line.
