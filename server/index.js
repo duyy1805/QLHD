@@ -5,6 +5,7 @@ const path = require('path');
 const https = require("https");
 const fs = require("fs");
 require('dotenv').config();
+const { poolPromise } = require('./db');
 
 const authRouter = require('./routes/auth')
 const authErpPermissionsRouter = require('./routes/authErpPermissions');
@@ -96,7 +97,17 @@ app.use('/uploads_hstt', express.static(path.join('C:/DocumentsUpload/HoSoThanhT
 }));
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-});
+async function startServer() {
+    try {
+        await poolPromise;
+        app.listen(PORT, () => {
+            console.log(`Server is running on port ${PORT}`);
+        });
+    } catch (error) {
+        console.error('Server was not started because the main database is unavailable.', error?.message || error);
+        process.exitCode = 1;
+    }
+}
+
+startServer();
 

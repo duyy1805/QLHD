@@ -6,6 +6,14 @@ const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const sql = require('mssql');
 const craneWmsInbound = require('../utils/craneWmsInbound');
 const checkApiKey = require('../middleware/apiKey');
+const {
+    RENTAL_WAREHOUSE_ID,
+    RENTAL_FACTORY_WAREHOUSE_ID,
+    isMarkedRentalExport,
+    isRentalTransfer,
+    rentalTransferDirection,
+    assertFullRentalPackageSelection,
+} = require('../utils/rentalWarehouseTransfer');
 
 const testConfigured = ['DB_SERVER_TEST', 'DB_DATABASE_TEST', 'DB_USER_TEST',
     'DB_PASSWORD_TEST', 'DB_PORT_TEST'].every((name) => Boolean(process.env[name]));
@@ -103,6 +111,16 @@ router.post('/updateqrcodekien', async (req, res) => {
         }
 
         const pool = await testpoolPromise;
+        const packageImport = await pool.request()
+            .input('ID_Kien_LegacyQr', sql.Int, Number(ID_TheKhoKienBTP))
+            .query(`SELECT k.ID_PhieuNhapBTP
+                    FROM dbo.TheKhoKienBTP k
+                    WHERE k.ID_TheKhoKienBTP=@ID_Kien_LegacyQr
+                      AND ISNULL(k.TonTai, 1)=1;`);
+        if (!packageImport.recordset?.length) {
+            return res.status(404).json({ ok: false, message: 'Không tìm thấy kiện BTP' });
+        }
+        await ensureImportEditable(pool.request(), packageImport.recordset[0].ID_PhieuNhapBTP);
 
         const response = await updateBtpPackageQrOnly(pool, Number(ID_TheKhoKienBTP), QRCode.trim());
 
@@ -594,6 +612,29 @@ const toNumber = (value) => {
     return Number.isFinite(number) ? number : 0;
 };
 
+const filterUnconfirmedRentalPackages = async (pool, packages, getId) => {
+    const ids = [...new Set(packages.map(getId).map(toIntOrNull).filter(Boolean))];
+    if (!ids.length) return packages;
+    const blocked = await pool.request().query(`
+        SELECT k.ID_TheKhoKienBTP
+        FROM dbo.TheKhoKienBTP k
+        JOIN dbo.PhieuNhapBTP pn
+          ON pn.ID_PhieuNhapBTP = k.ID_PhieuNhapBTP AND pn.TonTai = 1
+        JOIN dbo.PhieuXuatBTP sourceExport
+          ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
+        WHERE k.ID_TheKhoKienBTP IN (${ids.join(',')})
+          AND (ISNULL(pn.QrStatus, 0) <> 1 OR ISNULL(pn.TrangThai, 0) <> 5)
+          AND pn.ID_PhieuXuatBTP IS NOT NULL
+          AND (pn.ID_KhoNhap = ${RENTAL_WAREHOUSE_ID}
+               OR (pn.ID_KhoXuat = ${RENTAL_WAREHOUSE_ID}
+                   AND pn.ID_KhoNhap = ${RENTAL_FACTORY_WAREHOUSE_ID}))
+          AND CHARINDEX(N'[KHOTHUE]', UPPER(ISNULL(sourceExport.GhiChu, N''))) > 0;
+    `);
+    const blockedIds = new Set((blocked.recordset || [])
+        .map((row) => Number(row.ID_TheKhoKienBTP)));
+    return packages.filter((item) => !blockedIds.has(Number(getId(item))));
+};
+
 const normalizeDauTuan = (value) => {
     const normalized = String(value ?? '').trim();
     if (normalized.length > 50) throw new Error('Dấu tuần tối đa 50 ký tự');
@@ -677,7 +718,8 @@ const importDetailResponse = (recordsets = []) => {
     const header = recordsets[0]?.[0] || {};
     const materials = recordsets[1] || [];
     const packageHeaders = recordsets[2] || [];
-    const packageDetails = recordsets[3] || [];
+    const packageDetails = (recordsets[3] || [])
+        .filter((row) => row.TonTai == null || Number(row.TonTai) !== 0);
     return {
         id: header.ID_PhieuNhapBTP,
         soPhieu: header.So_PhieuNhapBTP,
@@ -685,6 +727,12 @@ const importDetailResponse = (recordsets = []) => {
         khoNhap: header.Ten_Kho,
         trangThai: Boolean(header.QrStatus),
         ngayNhap: header.Ngay_NhapBTP,
+        sourceExportId: toIntOrNull(header.ID_PhieuXuatBTP),
+        isRentalTransfer: isRentalTransfer(header),
+        transferDirection: isRentalTransfer(header)
+            ? rentalTransferDirection(header)
+            : null,
+        packagesLocked: isRentalTransfer(header),
         chiTiets: materials.map((row) => ({
             ...row,
             idKeHoachSanXuat: row.ID_KeHoachSanXuat,
@@ -730,12 +778,24 @@ const importDetailResponse = (recordsets = []) => {
     };
 };
 
-const ensureImportEditable = async (request, idPhieuNhap) => {
+const ensureImportEditable = async (
+    request,
+    idPhieuNhap,
+    { allowRentalTransfer = false } = {},
+) => {
     const result = await request
         .input('ID_PhieuNhapBTP_Edit', sql.Int, idPhieuNhap)
-        .query(`SELECT TOP (1) QrStatus FROM PhieuNhapBTP WHERE ID_PhieuNhapBTP = @ID_PhieuNhapBTP_Edit AND TonTai = 1;`);
+        .query(`SELECT TOP (1) pn.QrStatus, pn.ID_PhieuXuatBTP, pn.ID_KhoXuat, pn.ID_KhoNhap,
+                       sourceExport.GhiChu AS GhiChuPhieuXuat
+                FROM dbo.PhieuNhapBTP pn
+                LEFT JOIN dbo.PhieuXuatBTP sourceExport
+                  ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
+                WHERE pn.ID_PhieuNhapBTP = @ID_PhieuNhapBTP_Edit AND pn.TonTai = 1;`);
     if (!result.recordset?.length) throw new Error('Không tìm thấy phiếu nhập BTP');
     if (result.recordset[0].QrStatus) throw new Error('Phiếu nhập BTP đã xác nhận, không thể cập nhật');
+    if (!allowRentalTransfer && isRentalTransfer(result.recordset[0])) {
+        throw new Error('Kiện chuyển kho thuê được tạo tự động và không thể chỉnh sửa');
+    }
 };
 
 router.get('/btp/phieunhap/types', async (_req, res) => {
@@ -792,6 +852,17 @@ router.get('/btp/phieunhap/:id', async (req, res) => {
         const pool = await testpoolPromise;
         const result = await pool.request().input('ID_PhieuNhapBTP', sql.Int, id).execute('App_PhieuNhapBTP_ThongTinChiTiet');
         if (!result.recordsets?.[0]?.length) return res.status(404).json({ message: 'Không tìm thấy phiếu nhập BTP' });
+        const transferMetadata = await pool.request()
+            .input('ID_PhieuNhapBTP_TransferMetadata', sql.Int, id)
+            .query(`
+                SELECT TOP (1) pn.ID_PhieuXuatBTP, pn.ID_KhoXuat, pn.ID_KhoNhap,
+                       sourceExport.GhiChu AS GhiChuPhieuXuat
+                FROM dbo.PhieuNhapBTP pn
+                LEFT JOIN dbo.PhieuXuatBTP sourceExport
+                  ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
+                WHERE pn.ID_PhieuNhapBTP = @ID_PhieuNhapBTP_TransferMetadata AND pn.TonTai = 1;
+            `);
+        Object.assign(result.recordsets[0][0], transferMetadata.recordset?.[0] || {});
         const savedWeeks = await pool.request().input('OrderID', sql.Int, id).query(`
             SELECT d.ID_TheKhoKienBTP_ChiTiet, d.DauTuan
             FROM dbo.TheKhoKienBTP_ChiTiet d
@@ -1076,7 +1147,7 @@ router.put('/btp/phieunhap/xac-nhan', async (req, res) => {
         const positiveDetails = details.filter((item) => toNumber(item.soLuongTon) > 0);
         if (!positiveDetails.length) return res.status(400).json({ message: 'Phiếu nhập chưa có số lượng BTP' });
         const pool = await testpoolPromise;
-        await ensureImportEditable(pool.request(), idPhieuNhap);
+        await ensureImportEditable(pool.request(), idPhieuNhap, { allowRentalTransfer: true });
         const warehouseID = isCraneInbound ? await craneWmsInbound.getWarehouseID(pool, idPhieuNhap) : null;
         if (isCraneInbound && warehouseID !== 5) return res.status(400).json({ message: 'Phiếu nhập demo không thuộc kho BTP test (ID 5)' });
         const allowedResult = await pool.request()
@@ -1162,7 +1233,7 @@ router.put('/btp/phieunhap/xac-nhan', async (req, res) => {
         const tx = new sql.Transaction(pool);
         await tx.begin();
         try {
-            await ensureImportEditable(new sql.Request(tx), idPhieuNhap);
+            await ensureImportEditable(new sql.Request(tx), idPhieuNhap, { allowRentalTransfer: true });
             const pendingLocationID = await craneWmsInbound.testPendingLocationID(tx);
             await craneWmsInbound.stagePackages(tx, idPhieuNhap, warehouseID, pendingLocationID, packages);
             const result = await new sql.Request(tx)
@@ -1288,6 +1359,11 @@ router.get('/btp/phieuxuat/goi-y-kien', async (req, res) => {
             });
         }
         let packages = Array.from(packagesById.values());
+        packages = await filterUnconfirmedRentalPackages(
+            pool,
+            packages,
+            (item) => item.idTheKhoKienBTP,
+        );
         if (packages.length) {
             const active = await pool.request().query(`IF OBJECT_ID(N'dbo.CraneWmsOutboundPallet', N'U') IS NOT NULL
                 SELECT PalletID FROM dbo.CraneWmsOutboundPallet
@@ -1400,6 +1476,48 @@ router.get('/btp/phieuxuat/:id', async (req, res) => {
 router.get('/btp/phieuxuat/kien/:qrcode/:idPhieuXuat/:idDonHangLoSanXuat', async (req, res) => {
     try {
         const pool = await testpoolPromise;
+        const currentPackage = await pool.request()
+            .input('QrCode_Current', sql.NVarChar(255), req.params.qrcode)
+            .input('ID_PhieuXuat_Current', sql.Int, toIntOrNull(req.params.idPhieuXuat))
+            .query(`
+                SELECT TOP (1) k.ID_TheKhoKienBTP
+                FROM dbo.TheKhoKienBTP k
+                JOIN dbo.DM_Kho_ViTri vt ON vt.ID_ViTriKho = k.ID_ViTriKho
+                JOIN dbo.PhieuNhapBTP pn
+                  ON pn.ID_PhieuNhapBTP = k.ID_PhieuNhapBTP AND pn.TonTai = 1
+                LEFT JOIN dbo.PhieuXuatBTP sourceExport
+                  ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
+                JOIN dbo.PhieuXuatBTP px
+                  ON px.ID_PhieuXuatBTP = @ID_PhieuXuat_Current
+                 AND px.TonTai = 1 AND px.ID_KhoXuat = vt.ID_Kho
+                WHERE k.QRCode = @QrCode_Current AND ISNULL(k.TonTai, 1) = 1
+                  AND (pn.ID_PhieuXuatBTP IS NULL
+                       OR NOT ((pn.ID_KhoNhap = ${RENTAL_WAREHOUSE_ID}
+                                OR (pn.ID_KhoXuat = ${RENTAL_WAREHOUSE_ID}
+                                    AND pn.ID_KhoNhap = ${RENTAL_FACTORY_WAREHOUSE_ID}))
+                               AND CHARINDEX(N'[KHOTHUE]', UPPER(ISNULL(sourceExport.GhiChu, N''))) > 0)
+                       OR (ISNULL(pn.QrStatus, 0) = 1 AND ISNULL(pn.TrangThai, 0) = 5))
+                  AND EXISTS (
+                      SELECT 1
+                      FROM dbo.TheKhoKienBTP_ChiTiet d
+                      LEFT JOIN (
+                          SELECT x.ID_TheKhoKienBTP_ChiTiet,
+                                 SUM(x.SoLuong_XuatKho) AS DaXuat
+                          FROM dbo.PhieuXuatBTP_ChiTiet_TheKhoKien x
+                          JOIN dbo.PhieuXuatBTP ep
+                            ON ep.ID_PhieuXuatBTP = x.ID_PhieuXuatBTP AND ep.TonTai = 1
+                          GROUP BY x.ID_TheKhoKienBTP_ChiTiet
+                      ) used ON used.ID_TheKhoKienBTP_ChiTiet = d.ID_TheKhoKienBTP_ChiTiet
+                      WHERE d.ID_TheKhoKienBTP = k.ID_TheKhoKienBTP
+                        AND ISNULL(d.TonTai, 1) = 1
+                        AND d.SoLuong - ISNULL(used.DaXuat, 0) > 0
+                  )
+                ORDER BY k.ID_TheKhoKienBTP DESC;
+            `);
+        const currentPackageId = toIntOrNull(currentPackage.recordset?.[0]?.ID_TheKhoKienBTP);
+        if (!currentPackageId) {
+            return res.status(404).json({ message: 'Không tìm thấy kiện còn tồn tại trong kho xuất' });
+        }
         const pendingInbound = await pool.request().input('PalletID', sql.NVarChar(255), req.params.qrcode)
             .query(`IF OBJECT_ID(N'dbo.CraneWmsInbound', N'U') IS NOT NULL
                 SELECT TOP (1) 1 AS Pending FROM dbo.TheKhoKienBTP k
@@ -1417,7 +1535,8 @@ router.get('/btp/phieuxuat/kien/:qrcode/:idPhieuXuat/:idDonHangLoSanXuat', async
             .input('ID_PhieuXuatBTP', sql.Int, toIntOrNull(req.params.idPhieuXuat))
             .input('ID_DonHang_LoSanXuat', sql.Int, toIntOrNull(req.params.idDonHangLoSanXuat) || 0)
             .execute('App_ChiTiet_PhieuXuatBTP_ByKien');
-        const header = result.recordsets?.[0]?.[0];
+        const header = (result.recordsets?.[0] || [])
+            .find((row) => Number(row.ID_TheKhoKienBTP) === currentPackageId);
         if (!header) return res.status(404).json({ message: 'Không tìm thấy kiện phù hợp' });
         const qrCode = header.QRCode ?? header.QrCode;
         const details = (result.recordsets?.[1] || []).map((row) => ({
@@ -1454,7 +1573,12 @@ router.get('/btp/phieuxuat/list-kien', async (req, res) => {
             .input('ID_DonHang', sql.Int, toIntOrNull(req.query.idDonHang) || 0)
             .input('ID_QuyTrinhSanXuat', sql.Int, toIntOrNull(req.query.IdQuyTrinhSanXuat) || 0)
             .execute('App_ThongTinListKien_By_PhieuXuatBTP');
-        res.json(result.recordset || []);
+        const rows = await filterUnconfirmedRentalPackages(
+            pool,
+            result.recordset || [],
+            (item) => item.IdTheKhoKienBTP ?? item.ID_TheKhoKienBTP,
+        );
+        res.json(rows);
     } catch (error) {
         res.status(500).json({ message: 'Không tải được danh sách kiện BTP', detail: error.message });
     }
@@ -1498,7 +1622,11 @@ router.put('/btp/phieuxuat/xac-nhan', async (req, res) => {
             WHERE d.ID_TheKhoKienBTP_ChiTiet IN (${detailParams.join(',')})
               AND p.Status IN ('WAITING_WMS','FAILED_RETRY','WAITING_RETURN')`);
         if (locked.recordset?.length) return res.status(409).json({ message: 'Pallet đang chờ WMS hoặc nhập lại' });
-        const statusResult = await pool.request().input('ID_PhieuXuatBTP_Status', sql.Int, idPhieuXuat).query(`SELECT TOP (1) QrStatus FROM PhieuXuatBTP WHERE ID_PhieuXuatBTP=@ID_PhieuXuatBTP_Status AND TonTai=1;`);
+        const statusResult = await pool.request()
+            .input('ID_PhieuXuatBTP_Status', sql.Int, idPhieuXuat)
+            .query(`SELECT TOP (1) QrStatus, ID_KhoXuat, ID_KhoNhap, GhiChu
+                    FROM PhieuXuatBTP
+                    WHERE ID_PhieuXuatBTP=@ID_PhieuXuatBTP_Status AND TonTai=1;`);
         if (!statusResult.recordset?.length) return res.status(404).json({ message: 'Không tìm thấy phiếu xuất BTP' });
         if (statusResult.recordset[0].QrStatus) return res.status(409).json({ message: 'Phiếu xuất BTP đã xác nhận' });
         const allowedResult = await pool.request()
@@ -1517,16 +1645,43 @@ router.put('/btp/phieuxuat/xac-nhan', async (req, res) => {
         if (!quantitiesFit(allowedResult.recordset || [], requestedByOrder, ['ID_DonHang'], 'SoLuong_XuatKho', 'SoLuong_XuatKho')) {
             return res.status(400).json({ message: 'Số lượng xuất lớn hơn trên ERP' });
         }
-        const result = await pool.request()
-            .input('ChiTietKienBTPsTable', table)
-            .input('ID_PhieuXuatBTP', sql.Int, idPhieuXuat)
-            .output('InsertResult', sql.NVarChar(50))
-            .execute('App_Update_PhieuXuatBTP_ChiTiet_By_PhieuXuatBTP_ChiTiet_TheKhoKien');
-        const status = result.output?.InsertResult;
-        if (status !== 'success') return res.status(400).json({ message: status || 'Xác nhận phiếu xuất thất bại' });
-        res.json({ ok: true, isSuccess: status });
+        const tx = new sql.Transaction(pool);
+        await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        try {
+            const lockedStatus = await new sql.Request(tx)
+                .input('ID_PhieuXuatBTP_Lock', sql.Int, idPhieuXuat)
+                .query(`SELECT QrStatus, ID_KhoXuat, ID_KhoNhap, GhiChu
+                        FROM dbo.PhieuXuatBTP WITH (UPDLOCK, HOLDLOCK)
+                        WHERE ID_PhieuXuatBTP=@ID_PhieuXuatBTP_Lock AND TonTai=1;`);
+            if (!lockedStatus.recordset?.length) {
+                throw Object.assign(new Error('Không tìm thấy phiếu xuất BTP'), { statusCode: 404 });
+            }
+            if (lockedStatus.recordset[0].QrStatus) {
+                throw Object.assign(new Error('Phiếu xuất BTP đã xác nhận'), { statusCode: 409 });
+            }
+            const rentalTransferPending = isMarkedRentalExport(lockedStatus.recordset[0]);
+            if (rentalTransferPending) {
+                await assertFullRentalPackageSelection(
+                    new sql.Request(tx), sql, idPhieuXuat, picks,
+                );
+            }
+
+            const result = await new sql.Request(tx)
+                .input('ChiTietKienBTPsTable', table)
+                .input('ID_PhieuXuatBTP', sql.Int, idPhieuXuat)
+                .output('InsertResult', sql.NVarChar(50))
+                .execute('App_Update_PhieuXuatBTP_ChiTiet_By_PhieuXuatBTP_ChiTiet_TheKhoKien');
+            const status = result.output?.InsertResult;
+            if (status !== 'success') throw new Error(status || 'Xác nhận phiếu xuất thất bại');
+
+            await tx.commit();
+            res.json({ ok: true, isSuccess: status, rentalTransferPending });
+        } catch (error) {
+            try { await tx.rollback(); } catch (_) { /* transaction may already be rolled back */ }
+            throw error;
+        }
     } catch (error) {
-        res.status(400).json({ message: error.message });
+        res.status(error.statusCode || 400).json({ message: error.message });
     }
 });
 
@@ -1612,17 +1767,212 @@ router.get('/btp/vitri/:id/chitiet', async (req, res) => {
     }
 });
 
+router.get('/btp/kien/:idKien/lich-su-vi-tri/:idLichSu', async (req, res) => {
+    const idKien = Number(req.params.idKien);
+    const idLichSu = String(req.params.idLichSu || '');
+    if (!Number.isInteger(idKien) || idKien <= 0 || idKien > 2147483647
+        || !/^[1-9][0-9]{0,18}$/.test(idLichSu)
+        || BigInt(idLichSu) > 9223372036854775807n) {
+        return res.status(400).json({ message: 'Kiện hoặc lịch sử không hợp lệ' });
+    }
+    try {
+        const pool = await testpoolPromise;
+        const result = await pool.request()
+            .input('ID_Kien', sql.Int, idKien)
+            .input('ID_LichSu', sql.VarChar(19), idLichSu)
+            .query(`
+                SELECT CONVERT(varchar(20), ID_LichSu) AS ID_LichSu,
+                    ID_TheKhoKienBTP, ID_TheKhoKienBTP_Nguon, ID_PhieuXuatBTP,
+                    QRCodeKien, ID_ViTriCu, MaViTriCu, QRCodeViTriCu,
+                    ID_ViTriMoi, MaViTriMoi, QRCodeViTriMoi,
+                    CONVERT(varchar(23), ThoiGianUTC, 126) + 'Z' AS ThoiGianUTC,
+                    ID_TaiKhoan, LoaiThaoTac, ThongTinViTriCu, ThongTinViTriMoi,
+                    SnapshotVersion, ThongTinKien, ChiTietKien
+                FROM dbo.TheKhoKienBTP_LichSuViTri
+                WHERE ID_TheKhoKienBTP = @ID_Kien
+                  AND ID_LichSu = CONVERT(bigint, @ID_LichSu);
+            `);
+        const row = result.recordset?.[0];
+        if (!row) return res.status(404).json({ message: 'Không tìm thấy lịch sử của kiện này' });
+        const hasPackageSnapshot = row.SnapshotVersion != null
+            && row.ThongTinKien != null && row.ChiTietKien != null;
+        const packageInfo = hasPackageSnapshot ? JSON.parse(row.ThongTinKien) : null;
+        const details = hasPackageSnapshot ? JSON.parse(row.ChiTietKien) : null;
+        if (hasPackageSnapshot && (!packageInfo || typeof packageInfo !== 'object'
+            || Array.isArray(packageInfo) || !Array.isArray(details))) {
+            throw new Error('Snapshot nội dung kiện không hợp lệ');
+        }
+        res.json({
+            ...row,
+            hasPackageSnapshot,
+            ThongTinKien: packageInfo,
+            ChiTietKien: details,
+        });
+    } catch (error) {
+        res.status(500).json({
+            message: 'Không tải được nội dung kiện lúc điều chuyển',
+            detail: error.message,
+        });
+    }
+});
+
+const loadPackageLineageHistory = async (pool, idKien, offset, pageSize) => pool
+    .request()
+    .input('ID_Kien', sql.Int, idKien)
+    .input('Offset', sql.Int, offset)
+    .input('PageSize', sql.Int, pageSize)
+    .query(`
+        DECLARE @RootPackageID int;
+        ;WITH Ancestors AS (
+            SELECT ID_TheKhoKienBTP, ID_TheKhoKienBTP_Xuat, 0 AS Depth
+            FROM dbo.TheKhoKienBTP WHERE ID_TheKhoKienBTP = @ID_Kien
+            UNION ALL
+            SELECT parent.ID_TheKhoKienBTP, parent.ID_TheKhoKienBTP_Xuat, a.Depth + 1
+            FROM dbo.TheKhoKienBTP parent
+            JOIN Ancestors a ON a.ID_TheKhoKienBTP_Xuat = parent.ID_TheKhoKienBTP
+        )
+        SELECT TOP (1) @RootPackageID = ID_TheKhoKienBTP
+        FROM Ancestors ORDER BY Depth DESC OPTION (MAXRECURSION 100);
+
+        IF @RootPackageID IS NULL THROW 51120, N'Không tìm thấy kiện BTP.', 1;
+
+        DECLARE @Lineage TABLE (ID_TheKhoKienBTP int PRIMARY KEY);
+        ;WITH Descendants AS (
+            SELECT ID_TheKhoKienBTP
+            FROM dbo.TheKhoKienBTP WHERE ID_TheKhoKienBTP = @RootPackageID
+            UNION ALL
+            SELECT child.ID_TheKhoKienBTP
+            FROM dbo.TheKhoKienBTP child
+            JOIN Descendants parent
+              ON child.ID_TheKhoKienBTP_Xuat = parent.ID_TheKhoKienBTP
+        )
+        INSERT @Lineage(ID_TheKhoKienBTP)
+        SELECT ID_TheKhoKienBTP FROM Descendants OPTION (MAXRECURSION 100);
+
+        SELECT COUNT(*) AS total
+        FROM dbo.TheKhoKienBTP_LichSuViTri h
+        JOIN @Lineage l ON l.ID_TheKhoKienBTP = h.ID_TheKhoKienBTP;
+
+        SELECT CONVERT(varchar(20), h.ID_LichSu) AS ID_LichSu,
+            h.ID_TheKhoKienBTP, h.ID_TheKhoKienBTP_Nguon, h.ID_PhieuXuatBTP,
+            h.QRCodeKien, h.ID_ViTriCu, h.MaViTriCu, h.QRCodeViTriCu,
+            h.ID_ViTriMoi, h.MaViTriMoi, h.QRCodeViTriMoi,
+            CONVERT(varchar(23), h.ThoiGianUTC, 126) + 'Z' AS ThoiGianUTC,
+            h.ID_TaiKhoan, h.LoaiThaoTac, px.So_PhieuXuatBTP,
+            kx.Ten_Kho AS KhoXuat, kn.Ten_Kho AS KhoNhap,
+            CAST(CASE WHEN h.SnapshotVersion IS NOT NULL AND h.ThongTinKien IS NOT NULL
+                           AND h.ChiTietKien IS NOT NULL THEN 1 ELSE 0 END AS bit) AS hasPackageSnapshot,
+            COALESCE(h.ThongTinViTriCu, (
+                SELECT TenViTriKho, TenNha, MaNha, TenKhuVuc, MaKhuVuc,
+                       TenDay, MaDay, TenTang, MaTang, TenKe, MaKe
+                FROM dbo.DM_Kho_ViTri WHERE ID_ViTriKho = h.ID_ViTriCu
+                FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+            )) AS ThongTinViTriCu,
+            COALESCE(h.ThongTinViTriMoi, (
+                SELECT TenViTriKho, TenNha, MaNha, TenKhuVuc, MaKhuVuc,
+                       TenDay, MaDay, TenTang, MaTang, TenKe, MaKe
+                FROM dbo.DM_Kho_ViTri WHERE ID_ViTriKho = h.ID_ViTriMoi
+                FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+            )) AS ThongTinViTriMoi,
+            CASE WHEN h.ThongTinViTriCu IS NULL AND h.ID_ViTriCu IS NOT NULL
+                 THEN 1 ELSE 0 END AS ViTriCuTuDanhMuc,
+            CASE WHEN h.ThongTinViTriMoi IS NULL THEN 1 ELSE 0 END AS ViTriMoiTuDanhMuc
+        FROM dbo.TheKhoKienBTP_LichSuViTri h
+        JOIN @Lineage l ON l.ID_TheKhoKienBTP = h.ID_TheKhoKienBTP
+        LEFT JOIN dbo.PhieuXuatBTP px ON px.ID_PhieuXuatBTP = h.ID_PhieuXuatBTP
+        LEFT JOIN dbo.DM_Kho kx ON kx.ID_Kho = px.ID_KhoXuat
+        LEFT JOIN dbo.DM_Kho kn ON kn.ID_Kho = px.ID_KhoNhap
+        ORDER BY h.ThoiGianUTC DESC, h.ID_LichSu DESC
+        OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+    `);
+
+const packageHistoryRequest = async (req, res, idKien) => {
+    const pageIndex = Number(req.query.pageIndex ?? 0);
+    const requestedSize = Number(req.query.pageSize ?? 20);
+    if (!Number.isInteger(idKien) || idKien <= 0 || idKien > 2147483647
+        || !Number.isInteger(pageIndex) || pageIndex < 0
+        || !Number.isInteger(requestedSize) || requestedSize < 1) {
+        return res.status(400).json({ message: 'Kiện hoặc phân trang không hợp lệ' });
+    }
+    const pageSize = Math.min(requestedSize, 100);
+    const offset = pageIndex * pageSize;
+    if (!Number.isSafeInteger(offset) || offset > 2147483647) {
+        return res.status(400).json({ message: 'Trang vượt giới hạn' });
+    }
+    try {
+        const pool = await testpoolPromise;
+        const result = await loadPackageLineageHistory(pool, idKien, offset, pageSize);
+        res.json({
+            items: result.recordsets?.[1] || [],
+            total: result.recordsets?.[0]?.[0]?.total || 0,
+            pageIndex,
+            pageSize,
+        });
+    } catch (error) {
+        res.status(500).json({ message: 'Không tải được lịch sử vị trí', detail: error.message });
+    }
+};
+
+router.get('/btp/kien/qr/:qrcode/lich-su-vi-tri', async (req, res) => {
+    const qrCode = String(req.params.qrcode || '').trim();
+    if (!qrCode || qrCode.length > 255) {
+        return res.status(400).json({ message: 'QR kiện không hợp lệ' });
+    }
+    try {
+        const pool = await testpoolPromise;
+        const latest = await pool.request()
+            .input('QrCode_History', sql.NVarChar(255), qrCode)
+            .query(`SELECT TOP (1) ID_TheKhoKienBTP
+                    FROM dbo.TheKhoKienBTP
+                    WHERE QRCode = @QrCode_History AND ISNULL(TonTai, 1) = 1
+                    ORDER BY ID_TheKhoKienBTP DESC;`);
+        const idKien = toIntOrNull(latest.recordset?.[0]?.ID_TheKhoKienBTP);
+        if (!idKien) return res.status(404).json({ message: 'Không tìm thấy kiện theo QR' });
+        return packageHistoryRequest(req, res, idKien);
+    } catch (error) {
+        return res.status(500).json({ message: 'Không tải được lịch sử vị trí', detail: error.message });
+    }
+});
+
+router.get('/btp/kien/:idKien/lich-su-vi-tri', async (req, res) => {
+    return packageHistoryRequest(req, res, Number(req.params.idKien));
+});
+
 router.post('/btp/vitri/cap-nhat-kien', async (req, res) => {
     try {
         const idKien = toIntOrNull(req.body?.ID_TheKhoKienBTP);
         const idViTri = toIntOrNull(req.body?.ID_ViTriKho);
         if (!idKien || !idViTri) return res.status(400).json({ message: 'Kiện hoặc vị trí không hợp lệ' });
         const pool = await testpoolPromise;
-        const result = await pool.request().input('ID_Kien_Update', sql.Int, idKien).input('ID_ViTri_Update', sql.Int, idViTri).query(`UPDATE TheKhoKienBTP SET ID_ViTriKho=@ID_ViTri_Update WHERE ID_TheKhoKienBTP=@ID_Kien_Update AND TonTai=1; SELECT @@ROWCOUNT AS affected;`);
-        if (!result.recordset?.[0]?.affected) return res.status(404).json({ message: 'Không tìm thấy kiện BTP' });
+        const packageState = await pool.request()
+            .input('ID_Kien_TransferGuard', sql.Int, idKien)
+            .query(`SELECT pn.QrStatus, pn.ID_PhieuXuatBTP, pn.ID_KhoXuat, pn.ID_KhoNhap,
+                           sourceExport.GhiChu AS GhiChuPhieuXuat
+                    FROM dbo.TheKhoKienBTP k
+                    JOIN dbo.PhieuNhapBTP pn ON pn.ID_PhieuNhapBTP = k.ID_PhieuNhapBTP
+                    LEFT JOIN dbo.PhieuXuatBTP sourceExport
+                      ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
+                    WHERE k.ID_TheKhoKienBTP=@ID_Kien_TransferGuard
+                      AND ISNULL(k.TonTai, 1)=1 AND pn.TonTai=1;`);
+        if (!packageState.recordset?.length) {
+            return res.status(404).json({ message: 'Không tìm thấy kiện BTP' });
+        }
+        if (isRentalTransfer(packageState.recordset[0]) && !packageState.recordset[0].QrStatus) {
+            return res.status(409).json({
+                message: 'Kiện chuyển kho thuê phải xác nhận nhập trước khi đổi vị trí',
+            });
+        }
+        await pool.request()
+            .input('ID_TheKhoKienBTP', sql.Int, idKien)
+            .input('ID_ViTriKho', sql.Int, idViTri)
+            .input('ID_TaiKhoan', sql.Int, toIntOrNull(req.body?.IdTaiKhoanDangNhap))
+            .input('LoaiThaoTac', sql.VarChar(20), 'DIEU_CHUYEN')
+            .execute('dbo.App_BTP_CapNhatViTriKien');
         res.json({ ok: true });
     } catch (error) {
-        res.status(500).json({ message: 'Cập nhật vị trí thất bại', detail: error.message });
+        const number = error.number ?? error.originalError?.info?.number;
+        const status = number === 51041 ? 404 : [51042, 51043].includes(number) ? 400 : 500;
+        res.status(status).json({ message: 'Cập nhật vị trí thất bại', detail: error.message });
     }
 });
 

@@ -12,9 +12,10 @@ const checkApiKey = require('../middleware/apiKey');
 const {
   RENTAL_WAREHOUSE_ID,
   RENTAL_FACTORY_WAREHOUSE_ID,
-  isSupportedRentalExport,
+  isMarkedRentalExport,
   isRentalTransfer,
   rentalTransferDirection,
+  assertFullRentalPackageSelection,
 } = require('../utils/rentalWarehouseTransfer');
 
 // Chi cap nhat QRCode. ID_ViTriKho duoc khoa va giu nguyen trong suot giao dich.
@@ -723,11 +724,14 @@ const filterUnconfirmedRentalPackages = async (pool, packages, getId) => {
     SELECT k.ID_TheKhoKienBTP
     FROM dbo.TheKhoKienBTP k
     JOIN dbo.PhieuNhapBTP pn ON pn.ID_PhieuNhapBTP = k.ID_PhieuNhapBTP AND pn.TonTai = 1
+    JOIN dbo.PhieuXuatBTP sourceExport
+      ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
     WHERE k.ID_TheKhoKienBTP IN (${ids.join(",")})
       AND (ISNULL(pn.QrStatus, 0) <> 1 OR ISNULL(pn.TrangThai, 0) <> 5)
       AND pn.ID_PhieuXuatBTP IS NOT NULL
       AND (pn.ID_KhoNhap = ${RENTAL_WAREHOUSE_ID}
-           OR (pn.ID_KhoXuat = ${RENTAL_WAREHOUSE_ID} AND pn.ID_KhoNhap = ${RENTAL_FACTORY_WAREHOUSE_ID}));
+           OR (pn.ID_KhoXuat = ${RENTAL_WAREHOUSE_ID} AND pn.ID_KhoNhap = ${RENTAL_FACTORY_WAREHOUSE_ID}))
+      AND CHARINDEX(N'[KHOTHUE]', UPPER(ISNULL(sourceExport.GhiChu, N''))) > 0;
   `);
   const blockedIds = new Set((blocked.recordset || []).map((row) => Number(row.ID_TheKhoKienBTP)));
   return packages.filter((item) => !blockedIds.has(Number(getId(item))));
@@ -920,9 +924,12 @@ const ensureImportEditable = async (
   const result = await request
     .input("ID_PhieuNhapBTP_Edit", sql.Int, idPhieuNhap)
     .query(
-      `SELECT TOP (1) QrStatus, ID_PhieuXuatBTP, ID_KhoXuat, ID_KhoNhap
-       FROM PhieuNhapBTP
-       WHERE ID_PhieuNhapBTP = @ID_PhieuNhapBTP_Edit AND TonTai = 1;`,
+      `SELECT TOP (1) pn.QrStatus, pn.ID_PhieuXuatBTP, pn.ID_KhoXuat, pn.ID_KhoNhap,
+              sourceExport.GhiChu AS GhiChuPhieuXuat
+       FROM dbo.PhieuNhapBTP pn
+       LEFT JOIN dbo.PhieuXuatBTP sourceExport
+         ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
+       WHERE pn.ID_PhieuNhapBTP = @ID_PhieuNhapBTP_Edit AND pn.TonTai = 1;`,
     );
   if (!result.recordset?.length)
     throw new Error("Không tìm thấy phiếu nhập BTP");
@@ -1022,6 +1029,17 @@ router.get('/btp/phieunhap/:id', async (req, res) => {
         const pool = await tagpoolPromise;
         const result = await pool.request().input('ID_PhieuNhapBTP', sql.Int, id).execute('App_PhieuNhapBTP_ThongTinChiTiet');
         if (!result.recordsets?.[0]?.length) return res.status(404).json({ message: 'Không tìm thấy phiếu nhập BTP' });
+        const transferMetadata = await pool.request()
+            .input('ID_PhieuNhapBTP_TransferMetadata', sql.Int, id)
+            .query(`
+                SELECT TOP (1) pn.ID_PhieuXuatBTP, pn.ID_KhoXuat, pn.ID_KhoNhap,
+                       sourceExport.GhiChu AS GhiChuPhieuXuat
+                FROM dbo.PhieuNhapBTP pn
+                LEFT JOIN dbo.PhieuXuatBTP sourceExport
+                  ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
+                WHERE pn.ID_PhieuNhapBTP = @ID_PhieuNhapBTP_TransferMetadata AND pn.TonTai = 1;
+            `);
+        Object.assign(result.recordsets[0][0], transferMetadata.recordset?.[0] || {});
         const activeDetails = await pool.request()
             .input('ID_PhieuNhap_ActiveDetails', sql.Int, id)
             .query(`
@@ -1825,14 +1843,17 @@ router.get(
           FROM dbo.TheKhoKienBTP k
           JOIN dbo.DM_Kho_ViTri vt ON vt.ID_ViTriKho = k.ID_ViTriKho
           JOIN dbo.PhieuNhapBTP pn ON pn.ID_PhieuNhapBTP = k.ID_PhieuNhapBTP AND pn.TonTai = 1
+          LEFT JOIN dbo.PhieuXuatBTP sourceExport
+            ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
           JOIN dbo.PhieuXuatBTP px ON px.ID_PhieuXuatBTP = @ID_PhieuXuat_Current
                                       AND px.TonTai = 1 AND px.ID_KhoXuat = vt.ID_Kho
           WHERE k.QRCode = @QrCode_Current AND ISNULL(k.TonTai, 1) = 1
             AND (pn.ID_PhieuXuatBTP IS NULL
-                 OR (ISNULL(pn.QrStatus, 0) = 1 AND ISNULL(pn.TrangThai, 0) = 5)
-                 OR NOT (pn.ID_KhoNhap = ${RENTAL_WAREHOUSE_ID}
-                         OR (pn.ID_KhoXuat = ${RENTAL_WAREHOUSE_ID}
-                             AND pn.ID_KhoNhap = ${RENTAL_FACTORY_WAREHOUSE_ID})))
+                 OR NOT ((pn.ID_KhoNhap = ${RENTAL_WAREHOUSE_ID}
+                          OR (pn.ID_KhoXuat = ${RENTAL_WAREHOUSE_ID}
+                              AND pn.ID_KhoNhap = ${RENTAL_FACTORY_WAREHOUSE_ID}))
+                         AND CHARINDEX(N'[KHOTHUE]', UPPER(ISNULL(sourceExport.GhiChu, N''))) > 0)
+                 OR (ISNULL(pn.QrStatus, 0) = 1 AND ISNULL(pn.TrangThai, 0) = 5))
             AND EXISTS (
               SELECT 1
               FROM dbo.TheKhoKienBTP_ChiTiet d
@@ -1975,7 +1996,7 @@ router.put("/btp/phieuxuat/xac-nhan", async (req, res) => {
       .request()
       .input("ID_PhieuXuatBTP_Status", sql.Int, idPhieuXuat)
       .query(
-        `SELECT TOP (1) QrStatus, ID_KhoXuat, ID_KhoNhap
+        `SELECT TOP (1) QrStatus, ID_KhoXuat, ID_KhoNhap, GhiChu
          FROM PhieuXuatBTP
          WHERE ID_PhieuXuatBTP=@ID_PhieuXuatBTP_Status AND TonTai=1;`,
       );
@@ -2021,12 +2042,22 @@ router.put("/btp/phieuxuat/xac-nhan", async (req, res) => {
     try {
       const lockedStatus = await new sql.Request(tx)
         .input("ID_PhieuXuatBTP_Lock", sql.Int, idPhieuXuat)
-        .query(`SELECT QrStatus FROM dbo.PhieuXuatBTP WITH (UPDLOCK, HOLDLOCK)
+        .query(`SELECT QrStatus, ID_KhoXuat, ID_KhoNhap, GhiChu
+                FROM dbo.PhieuXuatBTP WITH (UPDLOCK, HOLDLOCK)
                 WHERE ID_PhieuXuatBTP=@ID_PhieuXuatBTP_Lock AND TonTai=1;`);
       if (!lockedStatus.recordset?.length)
         throw Object.assign(new Error("Không tìm thấy phiếu xuất BTP"), { statusCode: 404 });
       if (lockedStatus.recordset[0].QrStatus)
         throw Object.assign(new Error("Phiếu xuất BTP đã xác nhận"), { statusCode: 409 });
+      const rentalTransferPending = isMarkedRentalExport(lockedStatus.recordset[0]);
+      if (rentalTransferPending) {
+        await assertFullRentalPackageSelection(
+          new sql.Request(tx),
+          sql,
+          idPhieuXuat,
+          picks,
+        );
+      }
       const result = await new sql.Request(tx)
         .input("ChiTietKienBTPsTable", table)
         .input("ID_PhieuXuatBTP", sql.Int, idPhieuXuat)
@@ -2038,20 +2069,8 @@ router.put("/btp/phieuxuat/xac-nhan", async (req, res) => {
       if (status !== "success")
         throw new Error(status || "Xác nhận phiếu xuất thất bại");
 
-      let rentalTransfer = null;
-      if (isSupportedRentalExport(exportHeader)) {
-        const transferResult = await new sql.Request(tx)
-          .input("ID_PhieuXuatBTP", sql.Int, idPhieuXuat)
-          .input(
-            "ID_TaiKhoan",
-            sql.Int,
-            toIntOrNull(req.body?.IdTaiKhoanDangNhap),
-          )
-          .execute("dbo.KhoTM_BTP_TaoKienNhapChuyenKhoThue");
-        rentalTransfer = transferResult.recordset?.[0] || null;
-      }
       await tx.commit();
-      res.json({ ok: true, isSuccess: status, rentalTransfer });
+      res.json({ ok: true, isSuccess: status, rentalTransferPending });
     } catch (error) {
       try { await tx.rollback(); } catch (_) { /* transaction may already be rolled back */ }
       throw error;
@@ -2501,9 +2520,12 @@ router.post("/btp/vitri/cap-nhat-kien", async (req, res) => {
     const pool = await tagpoolPromise;
     const packageState = await pool.request()
       .input("ID_Kien_TransferGuard", sql.Int, idKien)
-      .query(`SELECT pn.QrStatus, pn.ID_PhieuXuatBTP, pn.ID_KhoXuat, pn.ID_KhoNhap
+      .query(`SELECT pn.QrStatus, pn.ID_PhieuXuatBTP, pn.ID_KhoXuat, pn.ID_KhoNhap,
+                     sourceExport.GhiChu AS GhiChuPhieuXuat
               FROM dbo.TheKhoKienBTP k
               JOIN dbo.PhieuNhapBTP pn ON pn.ID_PhieuNhapBTP = k.ID_PhieuNhapBTP
+              LEFT JOIN dbo.PhieuXuatBTP sourceExport
+                ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
               WHERE k.ID_TheKhoKienBTP=@ID_Kien_TransferGuard
                 AND ISNULL(k.TonTai, 1)=1 AND pn.TonTai=1;`);
     if (!packageState.recordset?.length)

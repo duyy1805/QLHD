@@ -173,6 +173,18 @@ function isBlankCell(value) {
     return value === null || value === undefined || String(value).trim() === '';
 }
 
+function rowHasValue(row) {
+    return (row || []).some((value) => !isBlankCell(value));
+}
+
+function findImportHeaderRowIndex(matrix) {
+    const minimumHeaders = MINIMUM_IMPORT_HEADERS.map(normalizeExcelHeader);
+    return matrix.findIndex((row) => {
+        const headers = new Set((row || []).map(normalizeExcelHeader).filter(Boolean));
+        return minimumHeaders.every((header) => headers.has(header));
+    });
+}
+
 function trimTrailingBlankCells(row) {
     const trimmed = [...(row || [])];
     while (trimmed.length && isBlankCell(trimmed[trimmed.length - 1])) trimmed.pop();
@@ -185,6 +197,18 @@ function isInvoiceTotalRow(row) {
         .map(normalizeExcelHeader)
         .filter(Boolean);
     return labels.some((label) => ["tong", "tong cong", "cong"].includes(label));
+}
+
+function isRepeatedImportHeaderRow(row) {
+    const headers = new Set((row || []).map(normalizeExcelHeader).filter(Boolean));
+    return MINIMUM_IMPORT_HEADERS
+        .map(normalizeExcelHeader)
+        .every((header) => headers.has(header));
+}
+
+function hasInvoiceLineEvidence(row) {
+    return [row?.[14], row?.[16], row?.[17], row?.[18], row?.[19], row?.[20]]
+        .some((value) => !isBlankCell(value));
 }
 
 function parseExcelNumber(value) {
@@ -214,23 +238,30 @@ function parseInvoiceImportWorkbook(buffer) {
     const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
     const sheetName = workbook.SheetNames[0];
     if (!sheetName) {
-        return { checksum, sheetName: null, invoices: [], errors: [{ message: 'File Excel không có worksheet.' }], warnings: [] };
+        return { checksum, sheetName: null, invoices: [], errors: [{ message: 'File Excel không có worksheet.' }], warnings: [], skippedRows: [], skippedRowCount: 0 };
     }
 
     const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true });
     const errors = [];
     const warnings = [];
-    if (matrix.length - 1 > 5000) {
+    const skippedRows = [];
+    const headerRowIndex = findImportHeaderRowIndex(matrix);
+    const headerExcelRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 1;
+    const dataRowCount = Math.max(matrix.length - Math.max(headerRowIndex + 1, 1), 0);
+    if (dataRowCount > 5000) {
         return {
             checksum,
             sheetName,
             invoices: [],
             errors: [{ message: 'File import vượt quá giới hạn 5.000 dòng dữ liệu.' }],
             warnings,
-            rowCount: matrix.length - 1,
+            skippedRows,
+            skippedRowCount: 0,
+            headerRow: headerRowIndex >= 0 ? headerExcelRow : null,
+            rowCount: dataRowCount,
         };
     }
-    const actualHeaders = trimTrailingBlankCells(matrix[0]);
+    const actualHeaders = trimTrailingBlankCells(matrix[headerRowIndex >= 0 ? headerRowIndex : 0]);
     const expectedHeaders = IMPORT_HEADERS.map(normalizeExcelHeader);
     const legacyExpectedHeaders = LEGACY_IMPORT_HEADERS.map(normalizeExcelHeader);
     const knownHeaders = new Set(expectedHeaders);
@@ -239,7 +270,7 @@ function parseInvoiceImportWorkbook(buffer) {
     normalizedActual.forEach((header, index) => {
         if (!header) return;
         if (headerIndexes.has(header) && knownHeaders.has(header)) {
-            errors.push({ row: 1, column: index + 1, message: `Tiêu đề “${actualHeaders[index]}” bị trùng với cột ${headerIndexes.get(header) + 1}.` });
+            errors.push({ row: headerExcelRow, column: index + 1, message: `Tiêu đề “${actualHeaders[index]}” bị trùng với cột ${headerIndexes.get(header) + 1}.` });
             return;
         }
         if (!headerIndexes.has(header)) headerIndexes.set(header, index);
@@ -255,11 +286,24 @@ function parseInvoiceImportWorkbook(buffer) {
 
     missingMinimumHeaders.forEach((header) => {
         const expectedIndex = expectedHeaders.indexOf(header);
-        errors.push({ row: 1, column: expectedIndex + 1, message: `Thiếu cột bắt buộc “${IMPORT_HEADERS[expectedIndex]}”.` });
+        errors.push({ row: headerExcelRow, column: expectedIndex + 1, message: `Thiếu cột bắt buộc “${IMPORT_HEADERS[expectedIndex]}”.` });
     });
     if (errors.length) {
-        return { checksum, sheetName, invoices: [], errors, warnings, rowCount: Math.max(matrix.length - 1, 0) };
+        return {
+            checksum,
+            sheetName,
+            invoices: [],
+            errors,
+            warnings,
+            skippedRows,
+            skippedRowCount: 0,
+            headerRow: headerRowIndex >= 0 ? headerExcelRow : null,
+            rowCount: dataRowCount,
+        };
     }
+    matrix.slice(0, headerRowIndex).forEach((row, index) => {
+        if (rowHasValue(row)) skippedRows.push({ row: index + 1, reason: 'Tiêu đề phụ trước dòng tiêu đề cột.' });
+    });
     if (usesFlexibleTemplate) {
         warnings.push({ message: `File đang dùng mẫu cột linh hoạt; ${missingLegacyHeaders.length} cột không có trong file sẽ được để trống và bổ sung sau.` });
     }
@@ -268,14 +312,29 @@ function parseInvoiceImportWorkbook(buffer) {
     let lastInvoiceOrder = null;
     const numericColumns = [10, 11, 12, 13, 17, 18, 19, 20];
 
-    matrix.slice(1).forEach((sourceRow, rowOffset) => {
-        const excelRow = rowOffset + 2;
+    matrix.slice(headerRowIndex + 1).forEach((sourceRow, rowOffset) => {
+        const excelRow = headerRowIndex + rowOffset + 2;
         sourceRow = trimTrailingBlankCells(sourceRow);
         if (sourceRow.every(isBlankCell)) return;
         const paymentDeadlineCell = usesCurrentTemplate ? sourceRow[headerIndexes.get(paymentDeadlineHeader)] : null;
         const row = LEGACY_IMPORT_HEADERS.map((_, index) => sourceRow[headerIndexes.get(legacyExpectedHeaders[index])]);
 
-        if (isInvoiceTotalRow(row)) return;
+        if (isRepeatedImportHeaderRow(sourceRow)) {
+            skippedRows.push({ row: excelRow, reason: 'Dòng tiêu đề cột lặp lại.' });
+            return;
+        }
+        if (isInvoiceTotalRow(row)) {
+            skippedRows.push({ row: excelRow, reason: 'Dòng tổng/cộng.' });
+            return;
+        }
+        if (isBlankCell(row[15])) {
+            skippedRows.push({ row: excelRow, reason: 'Dòng tổng, ghi chú hoặc chữ ký không có tên hàng hóa/dịch vụ.' });
+            return;
+        }
+        if (isBlankCell(row[0]) && !hasInvoiceLineEvidence(row)) {
+            skippedRows.push({ row: excelRow, reason: 'Dòng tiêu đề phụ hoặc chữ ký không có dữ liệu hàng hóa.' });
+            return;
+        }
 
         let invoiceOrder = parseExcelNumber(row[0]);
         if (invoiceOrder === null) invoiceOrder = lastInvoiceOrder;
@@ -301,9 +360,6 @@ function parseInvoiceImportWorkbook(buffer) {
         const paymentDeadline = parseExcelDate(paymentDeadlineCell);
         if (paymentDeadline === undefined) {
             errors.push({ row: excelRow, column: 3, message: 'Thời hạn thanh toán không hợp lệ.' });
-        }
-        if (isBlankCell(row[15])) {
-            errors.push({ row: excelRow, column: sourceColumnNumber(15), message: 'Tên hàng hóa/dịch vụ không được để trống.' });
         }
         if (numericColumns.some((columnIndex) => Number.isNaN(parsedNumbers[columnIndex]))) return;
 
@@ -383,7 +439,10 @@ function parseInvoiceImportWorkbook(buffer) {
         invoices,
         errors,
         warnings,
-        rowCount: Math.max(matrix.length - 1, 0),
+        skippedRows: skippedRows.slice(0, 100),
+        skippedRowCount: skippedRows.length,
+        headerRow: headerExcelRow,
+        rowCount: dataRowCount,
         templateVersion: usesFlexibleTemplate ? FLEXIBLE_IMPORT_TEMPLATE_VERSION : usesCurrentTemplate ? IMPORT_TEMPLATE_VERSION : LEGACY_IMPORT_TEMPLATE_VERSION,
     };
 }
@@ -2028,6 +2087,7 @@ router.post('/nhom-import', importUpload.single('file'), async (req, res) => {
             group: { nhomImportId, maNhom, fileName: originalFileName, soHoaDon: parsed.invoices.length },
             invoices: createdInvoices,
             warnings: parsed.warnings,
+            skippedRowCount: parsed.skippedRowCount || 0,
         });
     } catch (err) {
         if (transaction) {
@@ -2113,6 +2173,7 @@ router.get('/nhom-import', async (req, res) => {
 });
 
 router.delete('/nhom-import/:id', async (req, res) => {
+    let transaction = null;
     try {
         const nhomImportId = Number(req.params.id);
         const requester = getRequester(req);
@@ -2121,55 +2182,138 @@ router.delete('/nhom-import/:id', async (req, res) => {
         }
 
         const pool = await poolPromise;
-        const preflight = await pool.request()
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        const preflight = await new sql.Request(transaction)
             .input('NhomImportId', sql.BigInt, nhomImportId)
             .input('RequesterUserId', sql.Int, requester.userId)
             .query(`
-                IF NOT EXISTS (
-                    SELECT 1
-                    FROM Tag_System.dbo.PQ_TaiKhoan_ChucNang pq
-                    JOIN Tag_System.dbo.PQ_DM_ChucNang cn ON cn.ID_ChucNang = pq.ID_ChucNang
-                    WHERE pq.ID_TaiKhoanDangNhap = @RequesterUserId
-                      AND pq.CapNhat = 1
-                      AND cn.TonTai = 1
-                      AND cn.Ma_ChucNang IN (N'HD_Admin', N'Admin')
-                )
-                    THROW 73003, N'Chỉ tài khoản Admin mới được xóa nhóm import.', 1;
+                SELECT TOP 1
+                    n.NhomImportId,
+                    n.MaNhom,
+                    n.FilePath,
+                    n.NguoiTaoId,
+                    IsAdmin = CONVERT(BIT, CASE WHEN EXISTS (
+                        SELECT 1
+                        FROM Tag_System.dbo.PQ_TaiKhoan_ChucNang pq
+                        JOIN Tag_System.dbo.PQ_DM_ChucNang cn ON cn.ID_ChucNang = pq.ID_ChucNang
+                        WHERE pq.ID_TaiKhoanDangNhap = @RequesterUserId
+                          AND pq.CapNhat = 1
+                          AND cn.TonTai = 1
+                          AND cn.Ma_ChucNang IN (N'HD_Admin', N'Admin')
+                    ) THEN 1 ELSE 0 END),
+                    ActiveInvoiceCount = (
+                        SELECT COUNT(*)
+                        FROM dbo.HD_NhomImport_HoaDon m
+                        JOIN dbo.HD_HoaDon h WITH (UPDLOCK, HOLDLOCK) ON h.HoaDonId = m.HoaDonId
+                        WHERE m.NhomImportId = n.NhomImportId AND h.IsDeleted = 0
+                    ),
+                    NonDraftInvoiceCount = (
+                        SELECT COUNT(*)
+                        FROM dbo.HD_NhomImport_HoaDon m
+                        JOIN dbo.HD_HoaDon h WITH (UPDLOCK, HOLDLOCK) ON h.HoaDonId = m.HoaDonId
+                        JOIN dbo.HD_TrangThai tt ON tt.TrangThaiId = h.TrangThaiId
+                        WHERE m.NhomImportId = n.NhomImportId
+                          AND h.IsDeleted = 0
+                          AND tt.MaTrangThai <> N'KhoiTao'
+                    )
+                FROM dbo.HD_NhomImport n WITH (UPDLOCK, HOLDLOCK)
+                WHERE n.NhomImportId = @NhomImportId AND n.IsDeleted = 0;
 
-                SELECT TOP 1 NhomImportId, MaNhom, FilePath
-                FROM dbo.HD_NhomImport
-                WHERE NhomImportId = @NhomImportId AND IsDeleted = 0;
+                SELECT DISTINCT a.FilePath
+                FROM dbo.HD_NhomImport_HoaDon m
+                JOIN dbo.HD_HoaDon h WITH (UPDLOCK, HOLDLOCK) ON h.HoaDonId = m.HoaDonId AND h.IsDeleted = 0
+                JOIN dbo.HD_HoaDon_TaiLieu a WITH (UPDLOCK, HOLDLOCK) ON a.HoaDonId = h.HoaDonId AND a.IsDeleted = 0
+                WHERE m.NhomImportId = @NhomImportId;
             `);
-        const group = preflight.recordset?.[0];
+        const group = preflight.recordsets?.[0]?.[0];
         if (!group) {
             const error = new Error('Nhóm import không tồn tại hoặc đã bị xóa.');
             error.statusCode = 404;
             throw error;
         }
+        const isAdmin = Boolean(group.IsAdmin);
+        if (!isAdmin && Number(group.NguoiTaoId) !== Number(requester.userId)) {
+            const error = new Error('Chỉ người tạo nhóm hoặc Admin được xóa nhóm import.');
+            error.statusCode = 403;
+            throw error;
+        }
+        if (!isAdmin && Number(group.NonDraftInvoiceCount || 0) > 0) {
+            const error = new Error('Chỉ được xóa nhóm khi tất cả hóa đơn còn lại đang ở trạng thái Nháp.');
+            error.statusCode = 403;
+            throw error;
+        }
 
-        await deleteStoredFile(group.FilePath);
+        const attachmentPaths = (preflight.recordsets?.[1] || []).map((row) => row.FilePath);
+        await deleteStoredFiles([group.FilePath, ...attachmentPaths]);
 
-        const result = await pool.request()
+        const result = await new sql.Request(transaction)
             .input('NhomImportId', sql.BigInt, nhomImportId)
             .input('RequesterUserId', sql.Int, requester.userId)
+            .input('IsAdmin', sql.Bit, isAdmin)
+            .input('MaNhom', sql.NVarChar(50), group.MaNhom)
             .query(`
+                DECLARE @InvoiceIds TABLE (HoaDonId INT PRIMARY KEY);
+                INSERT @InvoiceIds(HoaDonId)
+                SELECT h.HoaDonId
+                FROM dbo.HD_NhomImport_HoaDon m
+                JOIN dbo.HD_HoaDon h ON h.HoaDonId = m.HoaDonId AND h.IsDeleted = 0
+                WHERE m.NhomImportId = @NhomImportId;
+
+                UPDATE h
+                SET h.IsDeleted = 1,
+                    h.NgayCapNhat = SYSDATETIME()
+                FROM dbo.HD_HoaDon h
+                JOIN @InvoiceIds ids ON ids.HoaDonId = h.HoaDonId;
+
+                DECLARE @DeletedInvoiceCount INT = @@ROWCOUNT;
+
+                UPDATE a
+                SET a.IsDeleted = 1
+                FROM dbo.HD_HoaDon_TaiLieu a
+                JOIN @InvoiceIds ids ON ids.HoaDonId = a.HoaDonId
+                WHERE a.IsDeleted = 0;
+
+                INSERT dbo.HD_HoaDon_LichSu(HoaDonId, HanhDong, NguoiThucHienId, NoiDung, DuLieuJson)
+                SELECT ids.HoaDonId,
+                       N'Xoa',
+                       @RequesterUserId,
+                       CASE WHEN @IsAdmin = 1
+                            THEN N'Admin xóa hóa đơn cùng nhóm import ' + @MaNhom
+                            ELSE N'Người tạo xóa hóa đơn nháp cùng nhóm import ' + @MaNhom END,
+                       N'{"nhomImportId":' + CONVERT(NVARCHAR(30), @NhomImportId)
+                           + N',"deletedWithGroup":true,"isAdmin":'
+                           + CASE WHEN @IsAdmin = 1 THEN N'true' ELSE N'false' END + N'}'
+                FROM @InvoiceIds ids;
+
                 UPDATE dbo.HD_NhomImport
                 SET IsDeleted = 1,
                     NguoiXoaId = @RequesterUserId,
                     NgayXoa = SYSDATETIME()
-                OUTPUT inserted.NhomImportId, inserted.MaNhom
                 WHERE NhomImportId = @NhomImportId AND IsDeleted = 0;
 
                 IF @@ROWCOUNT = 0
                     THROW 73001, N'Nhóm import không tồn tại hoặc đã bị xóa.', 1;
+
+                SELECT NhomImportId, MaNhom, DeletedInvoiceCount = @DeletedInvoiceCount
+                FROM dbo.HD_NhomImport
+                WHERE NhomImportId = @NhomImportId;
             `);
+
+        await transaction.commit();
+        transaction = null;
 
         return res.json({
             success: true,
             id: Number(result.recordset?.[0]?.NhomImportId || nhomImportId),
             maNhom: result.recordset?.[0]?.MaNhom,
+            deletedInvoiceCount: Number(result.recordset?.[0]?.DeletedInvoiceCount || 0),
         });
     } catch (err) {
+        if (transaction) {
+            try { await transaction.rollback(); } catch (rollbackError) { console.error(rollbackError); }
+        }
         return httpError(res, err, 'Có lỗi khi xóa nhóm import.');
     }
 });
