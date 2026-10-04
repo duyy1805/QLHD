@@ -285,10 +285,12 @@ async function erpOtpLogin(req, res) {
                     fullName = COALESCE(NULLIF(tk.TenDayDu, N''), tk.TenDangNhap),
                     idDonVi = tk.ID_DonVi,
                     idBoPhan = tk.ID_BoPhan,
+                    tenBoPhan = bp.Ten_BoPhan,
                     idChucVu = tk.ID_ChucVu,
                     idNhanSu = tk.ID_NhanSu,
                     email = tk.Email
                 FROM TAG_System.dbo.TaiKhoanDangNhap tk
+                LEFT JOIN TAG_System.dbo.DM_BoPhan bp ON bp.ID_BoPhan = tk.ID_BoPhan
                 WHERE tk.TenDangNhap = @Username
                   AND LOWER(tk.MatKhau) = @PasswordMd5
                   AND tk.SuDung = 1 AND tk.TonTai = 1

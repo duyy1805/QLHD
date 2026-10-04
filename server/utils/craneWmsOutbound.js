@@ -230,6 +230,17 @@ async function confirm(pool, body, isTest = false) {
                 INSERT dbo.CraneWmsOutbound (ID_PhieuXuatBTP,ID_Kho,OrderCode,Status,DispatchStatus,RequestJson,CallbackJson)
                 VALUES (@ID,@Warehouse,@Code,@Status,'WMS_CONFIRMED',@Payload,@Callback)`);
         const pallets = [];
+        const locationCodeCache = new Map();
+        const getLocationCode = async (locationID) => {
+            if (locationCodeCache.has(locationID)) return locationCodeCache.get(locationID);
+            const row = (await new sql.Request(transaction)
+                .input('LocationID', sql.Int, locationID)
+                .query(`SELECT MaViTriKho FROM dbo.DM_Kho_ViTri
+                        WHERE ID_ViTriKho=@LocationID`)).recordset[0];
+            const locationCode = row?.MaViTriKho || null;
+            locationCodeCache.set(locationID, locationCode);
+            return locationCode;
+        };
         for (const [palletID, p] of palletMap) {
             const remaining = p.initial - p.actual;
             if (remaining > 0 && Number(p.ID_ViTriKho) !== cfg.temporaryLocationID)
@@ -244,8 +255,10 @@ async function confirm(pool, body, isTest = false) {
                     INSERT dbo.CraneWmsOutboundPallet (ID_PhieuXuatBTP,ID_TheKhoKienBTP,PalletID,OriginalLocationID,
                         InitialQuantity,PlannedQuantity,ActualQuantity,Status)
                     VALUES (@ID,@Package,@Pallet,@Location,@Initial,@Actual,@Actual,@Status)`);
+            const locationID = remaining > 0 ? cfg.temporaryLocationID : p.originalLocationID;
+            const locationCode = await getLocationCode(locationID);
             pallets.push({ palletID, exportedQuantity: p.actual, remainingQuantity: remaining, status,
-                locationID: remaining > 0 ? cfg.temporaryLocationID : p.originalLocationID });
+                locationID, locationCode });
         }
         const result = { success: true, orderID: payload.orderID, eventID: payload.eventID || null, duplicate,
             status: waiting ? 'WAITING_RETURN' : 'COMPLETE', pallets };

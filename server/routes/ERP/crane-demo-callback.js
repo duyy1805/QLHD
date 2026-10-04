@@ -53,11 +53,12 @@ function createCraneDemoCallback(testpoolPromise) {
             }
 
             const tempLocation = (await new sql.Request(transaction)
-                .query(`SELECT ID_ViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
+                .query(`SELECT ID_ViTriKho, MaViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
                         WHERE ID_Kho=5 AND MaViTriKho=N'CT-TEMP-TEST' AND SuDung=1 AND TonTai=1`)).recordset;
             if (tempLocation.length !== 1)
                 throw craneWms.craneError(503, 'Chưa có vị trí CT-TEMP-TEST trên DB test');
             const temporaryLocationID = Number(tempLocation[0].ID_ViTriKho);
+            const temporaryLocationCode = tempLocation[0].MaViTriKho;
 
             const saved = (await new sql.Request(transaction)
                 .input('OrderID', sql.Int, orderID)
@@ -135,6 +136,7 @@ function createCraneDemoCallback(testpoolPromise) {
             return res.json({ success: true, orderID: String(orderID), palletID,
                 exportedQuantity: exported, remainingQuantity: remaining,
                 status, temporaryLocationID: remaining > 0 ? temporaryLocationID : null,
+                temporaryLocationCode: remaining > 0 ? temporaryLocationCode : null,
                 message: 'Callback demo đã xử lý' });
         } catch (error) {
             if (transaction && !finished) {
@@ -176,6 +178,13 @@ function createCraneDemoLocationCallback(testpoolPromise) {
             const order = await craneWms.findCraneOrder(transaction, sourceOrderID, true);
             if (!order || Number(order.ID_Kho) !== 5)
                 throw craneWms.craneError(404, 'Không tìm thấy phiếu cầu trục demo');
+            const target = (await new sql.Request(transaction)
+                .input('LocationID', sql.Int, locationID)
+                .query(`SELECT ID_ViTriKho, MaViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
+                        WHERE ID_ViTriKho=@LocationID AND ID_Kho=5 AND TonTai=1 AND SuDung=1`)).recordset;
+            if (target.length !== 1)
+                throw craneWms.craneError(400, 'Vị trí nhập lại không thuộc kho BTP test');
+            const locationCode = target[0].MaViTriKho;
             const cycle = (await new sql.Request(transaction)
                 .input('OrderID', sql.Int, sourceOrderID)
                 .input('PalletID', sql.NVarChar(255), palletID)
@@ -186,7 +195,7 @@ function createCraneDemoLocationCallback(testpoolPromise) {
                 Number(cycle.ReturnLocationID) === locationID) {
                 await transaction.commit();
                 finished = true;
-                return res.json({ success: true, palletID, locationID, updated: false });
+                return res.json({ success: true, palletID, locationID, locationCode, updated: false });
             }
             if (cycle.Status !== 'WAITING_RETURN' || order.Status !== 'WAITING_RETURN')
                 throw craneWms.craneError(409, 'Pallet không ở trạng thái chờ nhập lại');
@@ -198,12 +207,6 @@ function createCraneDemoLocationCallback(testpoolPromise) {
                         WHERE ID_Kho=5 AND MaViTriKho=N'CT-TEMP-TEST' AND TonTai=1 AND SuDung=1`)).recordset;
             if (tempLocation.length !== 1 || Number(tempLocation[0].ID_ViTriKho) !== previousLocationID)
                 throw craneWms.craneError(409, 'previousLocationID không phải vị trí tạm demo');
-            const target = (await new sql.Request(transaction)
-                .input('LocationID', sql.Int, locationID)
-                .query(`SELECT ID_ViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
-                        WHERE ID_ViTriKho=@LocationID AND ID_Kho=5 AND TonTai=1 AND SuDung=1`)).recordset;
-            if (target.length !== 1)
-                throw craneWms.craneError(400, 'Vị trí nhập lại không thuộc kho BTP test');
             const current = (await new sql.Request(transaction)
                 .input('PackageID', sql.Int, Number(cycle.ID_TheKhoKienBTP))
                 .query(`SELECT ID_ViTriKho, QRCode FROM dbo.TheKhoKienBTP WITH (UPDLOCK, HOLDLOCK)
@@ -236,7 +239,7 @@ function createCraneDemoLocationCallback(testpoolPromise) {
                             WHERE ID_PhieuXuatBTP=@OrderID;`);
             await transaction.commit();
             finished = true;
-            return res.json({ success: true, palletID, locationID, updated: true,
+            return res.json({ success: true, palletID, locationID, locationCode, updated: true,
                 status: 'RETURNED', message: 'Pallet đã nhập lại kho BTP test' });
         } catch (error) {
             if (transaction && !finished) {

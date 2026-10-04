@@ -47,10 +47,12 @@ router.post('/loginERP', checkApiKey, async (req, res) => {
                     fullName = COALESCE(NULLIF(tk.TenDayDu, N''), tk.TenDangNhap),
                     idDonVi = tk.ID_DonVi,
                     idBoPhan = tk.ID_BoPhan,
+                    tenBoPhan = bp.Ten_BoPhan,
                     idChucVu = tk.ID_ChucVu,
                     idNhanSu = tk.ID_NhanSu,
                     email = tk.Email
                 FROM TAG_System.dbo.TaiKhoanDangNhap AS tk
+                LEFT JOIN TAG_System.dbo.DM_BoPhan AS bp ON bp.ID_BoPhan = tk.ID_BoPhan
                 WHERE tk.TenDangNhap = @Username
                   AND LOWER(tk.MatKhau) = @PasswordMd5
                   AND tk.SuDung = 1

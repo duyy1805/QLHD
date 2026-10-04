@@ -5,7 +5,57 @@ const { verifyToken, verifyAdmin } = require('../../middleware/auth');
 const sql = require('mssql');
 const checkApiKey = require('../../middleware/apiKey');
 const craneWms = require('../../utils/craneWms');
+const craneWmsInbound = require('../../utils/craneWmsInbound');
 const XLSX = require('xlsx');
+
+function normalizeLocationReference(source) {
+    const rawID = source?.locationID;
+    const rawCode = source?.locationCode;
+    const hasID = rawID !== undefined && rawID !== null && rawID !== '';
+    const hasCode = rawCode !== undefined && rawCode !== null && rawCode !== '';
+    const locationID = hasID &&
+        (typeof rawID === 'number' || (typeof rawID === 'string' && /^\d+$/.test(rawID.trim())))
+        ? Number(rawID)
+        : null;
+    const locationCode = hasCode && typeof rawCode === 'string'
+        ? rawCode.trim().toUpperCase()
+        : null;
+    const validID = !hasID ||
+        (Number.isInteger(locationID) && locationID > 0 && locationID <= 2147483647);
+    const validCode = !hasCode ||
+        Boolean(locationCode && locationCode.length <= 25);
+
+    return {
+        locationID,
+        locationCode,
+        provided: hasID || hasCode,
+        valid: validID && validCode && (hasID || hasCode),
+    };
+}
+
+async function resolveActiveWarehouseLocation(executor, reference, warehouseID) {
+    const result = await new sql.Request(executor)
+        .input('LocationID', sql.Int, reference.locationID)
+        .input('LocationCode', sql.NVarChar(25), reference.locationCode)
+        .input('WarehouseID', sql.Int, warehouseID)
+        .query(`
+            SELECT ID_ViTriKho, MaViTriKho
+            FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
+            WHERE ID_Kho = @WarehouseID
+              AND TonTai = 1
+              AND SuDung = 1
+              AND (@LocationID IS NULL OR ID_ViTriKho = @LocationID)
+              AND (@LocationCode IS NULL OR MaViTriKho = @LocationCode);
+        `);
+
+    if (result.recordset.length !== 1) {
+        throw craneWms.craneError(
+            400,
+            'Không tìm thấy duy nhất vị trí theo locationID/locationCode trong kho cầu trục'
+        );
+    }
+    return result.recordset[0];
+}
 
 function createErpRouter(tagpoolPromise, options = {}) {
 const router = express.Router()
@@ -554,6 +604,63 @@ router.post('/tiendosanxuat-mocgio', async (req, res) => {
 });
 
 /**
+ * GET /erp/wms/locations
+ *
+ * Danh sách vị trí vật lý Z76 dành riêng cho WMS nội bộ. Endpoint bắt buộc
+ * x-api-key. Khi callback nhập/điều chuyển pallet, WMS có thể gửi locationID
+ * hoặc locationCode; nếu gửi cả hai thì chúng phải cùng trỏ tới một vị trí.
+ */
+router.get('/wms/locations', checkApiKey, async (_req, res) => {
+    try {
+        const pool = await tagpoolPromise;
+        const result = await pool.request()
+            .input('WarehouseID', sql.SmallInt, 5)
+            .input('ZoneCode', sql.NVarChar(14), 'A')
+            .input('BuildingCode', sql.NVarChar(10), 'Z76')
+            .input('AreaCode', sql.NVarChar(10), 'CT')
+            .query(`
+                SELECT
+                    v.ID_ViTriKho AS locationID,
+                    v.MaViTriKho AS locationCode,
+                    v.QRCode AS qrCode,
+                    v.TenViTriKho AS name,
+                    v.MaDay AS crane,
+                    TRY_CONVERT(tinyint, v.MaTang) AS rack,
+                    TRY_CONVERT(tinyint, v.MaKe) AS tier,
+                    CONVERT(int, v.STT_ViTriKho) AS position
+                FROM dbo.DM_Kho_ViTri v
+                WHERE v.ID_Kho = @WarehouseID
+                  AND v.MaVung = @ZoneCode
+                  AND v.MaNha = @BuildingCode
+                  AND v.MaKhuVuc = @AreaCode
+                  AND v.SuDung = 1
+                  AND v.TonTai = 1
+                ORDER BY
+                    v.MaDay,
+                    TRY_CONVERT(int, v.MaTang),
+                    TRY_CONVERT(int, v.MaKe),
+                    CONVERT(int, v.STT_ViTriKho),
+                    v.ID_ViTriKho;
+            `);
+        const locations = result.recordset || [];
+
+        return res.status(200).json({
+            success: true,
+            warehouseID: 5,
+            warehouseCode: 'Z76',
+            count: locations.length,
+            locations
+        });
+    } catch (error) {
+        console.error('[GET /wms/locations] error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Internal Server Error'
+        });
+    }
+});
+
+/**
  * POST /erp/wms/inbound-callback
  *
  * WMS gọi API này sau khi hoàn tất xử lý phiếu nhập. Chỉ những kiện có
@@ -605,16 +712,14 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
         const palletStatus = typeof pallet?.status === 'string'
             ? pallet.status.trim().toUpperCase()
             : '';
-        const locationID = pallet?.locationID == null
-            ? null
-            : Number(pallet.locationID);
+        const locationReference = normalizeLocationReference(pallet);
 
         if (
             !palletID ||
             palletIDs.has(palletID) ||
             !['COMPLETED', 'FAILED'].includes(palletStatus) ||
-            (palletStatus === 'COMPLETED' &&
-                (!Number.isInteger(locationID) || locationID <= 0 || locationID > 2147483647))
+            (palletStatus === 'COMPLETED' && !locationReference.valid) ||
+            (palletStatus === 'FAILED' && locationReference.provided && !locationReference.valid)
         ) {
             return res.status(400).json({
                 success: false,
@@ -624,7 +729,7 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
         }
 
         palletIDs.add(palletID);
-        normalizedPallets.push({ palletID, status: palletStatus, locationID });
+        normalizedPallets.push({ palletID, status: palletStatus, ...locationReference });
     }
 
     if (
@@ -654,7 +759,7 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
             .input('ID_PhieuNhapBTP', sql.Int, idPhieuNhap)
             .input('So_PhieuNhapBTP', sql.NVarChar(255), orderCode)
             .query(`
-                SELECT ID_PhieuNhapBTP
+                SELECT ID_PhieuNhapBTP, ID_KhoNhap
                 FROM dbo.PhieuNhapBTP WITH (UPDLOCK, HOLDLOCK)
                 WHERE ID_PhieuNhapBTP = @ID_PhieuNhapBTP
                   AND So_PhieuNhapBTP = @So_PhieuNhapBTP
@@ -667,10 +772,18 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
             throw error;
         }
 
+        const warehouseID = Number(orderResult.recordset[0].ID_KhoNhap);
         let updatedCount = 0;
 
         for (const pallet of normalizedPallets) {
             if (pallet.status !== 'COMPLETED') continue;
+
+            const targetLocation = await resolveActiveWarehouseLocation(
+                transaction,
+                pallet,
+                warehouseID
+            );
+            const targetLocationID = Number(targetLocation.ID_ViTriKho);
 
             const palletResult = await new sql.Request(transaction)
                 .input('ID_PhieuNhapBTP', sql.Int, idPhieuNhap)
@@ -693,13 +806,25 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
 
             const packageRow = palletResult.recordset[0];
 
+            const inboundOrderID = await craneWmsInbound.markPackageLocated(
+                transaction, packageRow.ID_TheKhoKienBTP, targetLocationID);
+            if (!inboundOrderID) {
+                const incremental = await new sql.Request(transaction).input('OrderID', sql.Int, idPhieuNhap).query(`
+                    SELECT TOP (1) ID_PhieuNhapBTP FROM dbo.CraneWmsInboundPackage WHERE ID_PhieuNhapBTP=@OrderID`);
+                if (incremental.recordset.length) {
+                    const error = new Error(`Kiện ${pallet.palletID} chưa được ERP gửi WMS`);
+                    error.statusCode = 400;
+                    throw error;
+                }
+            }
+
             // WMS có thể gửi lại callback. Không cập nhật/lưu lịch sử lần nữa
             // nếu kiện đã ở đúng vị trí.
-            if (Number(packageRow.ID_ViTriKho) === pallet.locationID) continue;
+            if (Number(packageRow.ID_ViTriKho) === targetLocationID) continue;
 
             await new sql.Request(transaction)
                 .input('ID_TheKhoKienBTP', sql.Int, packageRow.ID_TheKhoKienBTP)
-                .input('ID_ViTriKho', sql.Int, pallet.locationID)
+                .input('ID_ViTriKho', sql.Int, targetLocationID)
                 .input('ID_TaiKhoan', sql.Int, null)
                 .input('LoaiThaoTac', sql.VarChar(20), 'GAN_VI_TRI_NHAP')
                 .execute('dbo.App_BTP_CapNhatViTriKien');
@@ -709,6 +834,7 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
 
         await transaction.commit();
         transactionFinished = true;
+        const finalize = await craneWmsInbound.safeTryFinalize(pool, idPhieuNhap);
 
         console.info('[POST /wms/inbound-callback] processed:', {
             orderID,
@@ -720,7 +846,8 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
         return res.status(200).json({
             success: true,
             orderID,
-            message: 'Callback received'
+            message: 'Callback received',
+            finalize,
         });
     } catch (error) {
         if (transaction && !transactionFinished) {
@@ -749,11 +876,13 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
 router.post('/wms/location-callback', checkApiKey, async (req, res) => {
     const body = req.body || {};
     const palletID = typeof body.palletID === 'string' ? body.palletID.trim() : '';
+    const locationReference = normalizeLocationReference(body);
     const parseLocationID = (value) =>
         typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value.trim()))
             ? Number(value)
             : NaN;
-    const locationID = parseLocationID(body.locationID);
+    let locationID = locationReference.locationID;
+    let locationCode = locationReference.locationCode;
     const hasPreviousLocation = body.previousLocationID !== undefined && body.previousLocationID !== null;
     const previousLocationID = hasPreviousLocation ? parseLocationID(body.previousLocationID) : null;
     const validLocation = (value) => Number.isInteger(value) && value > 0 && value <= 2147483647;
@@ -761,31 +890,41 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
 
     if (
         !palletID || palletID.length > 255 ||
-        !validLocation(locationID) ||
+        !locationReference.valid ||
         (hasPreviousLocation && !validLocation(previousLocationID)) ||
-        (hasPreviousLocation && previousLocationID === locationID)
+        (hasPreviousLocation && locationID !== null && previousLocationID === locationID)
     ) {
         return res.status(400).json({ success: false, palletID: palletID || null, message: 'Invalid callback payload' });
     }
 
     let transaction;
     let transactionFinished = false;
+    let processingStage = 'begin-transaction';
     try {
         const pool = await tagpoolPromise;
         transaction = new sql.Transaction(pool);
         await transaction.begin();
 
         if (isCraneReturn) {
+            processingStage = 'validate-crane-return';
             const sourceOrderID = craneWms.positiveId(body.sourceOrderID);
             const eventID = typeof body.eventID === 'string' ? body.eventID.trim() : '';
             const config = await require('../../utils/craneWmsOutbound').config(transaction, Boolean(options.isTest));
             if (!config || !sourceOrderID || !eventID || eventID.length > 255 ||
-                locationID === config.temporaryLocationID ||
                 (hasPreviousLocation && previousLocationID !== config.temporaryLocationID)) {
                 throw craneWms.craneError(400, 'Thông tin nhập lại pallet không hợp lệ');
             }
             const order = await craneWms.findCraneOrder(transaction, sourceOrderID, true);
             if (!order) throw craneWms.craneError(404, 'Không tìm thấy phiếu cầu trục');
+            const targetLocation = await resolveActiveWarehouseLocation(
+                transaction,
+                locationReference,
+                Number(order.ID_Kho)
+            );
+            locationID = Number(targetLocation.ID_ViTriKho);
+            locationCode = targetLocation.MaViTriKho;
+            if (locationID === config.temporaryLocationID)
+                throw craneWms.craneError(400, 'Thông tin nhập lại pallet không hợp lệ');
             const rowResult = await new sql.Request(transaction)
                 .input('OrderID', sql.Int, sourceOrderID)
                 .input('PalletID', sql.NVarChar(255), palletID)
@@ -797,7 +936,7 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
                 Number(cycle.ReturnLocationID) === locationID) {
                 await transaction.commit();
                 transactionFinished = true;
-                return res.status(200).json({ success: true, palletID, locationID, updated: false });
+                return res.status(200).json({ success: true, palletID, locationID, locationCode, updated: false });
             }
             if (cycle.Status !== 'WAITING_RETURN') throw craneWms.craneError(409, 'Pallet không ở trạng thái chờ nhập lại');
             const usedEvent = await new sql.Request(transaction)
@@ -805,12 +944,6 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
                 .query(`SELECT ID_PhieuXuatBTP FROM dbo.CraneWmsOutboundPallet WITH (UPDLOCK, HOLDLOCK)
                         WHERE ReturnEventID=@EventID`);
             if (usedEvent.recordset.length) throw craneWms.craneError(409, 'Mã sự kiện WMS đã được dùng');
-            const target = await new sql.Request(transaction)
-                .input('LocationID', sql.Int, locationID)
-                .input('WarehouseID', sql.Int, order.ID_Kho)
-                .query(`SELECT ID_ViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
-                        WHERE ID_ViTriKho=@LocationID AND ID_Kho=@WarehouseID AND TonTai=1 AND SuDung=1`);
-            if (target.recordset.length !== 1) throw craneWms.craneError(400, 'Vị trí nhập lại không thuộc kho cầu trục');
             const current = await new sql.Request(transaction)
                 .input('PackageID', sql.Int, cycle.ID_TheKhoKienBTP)
                 .query('SELECT ID_ViTriKho FROM dbo.TheKhoKienBTP WITH (UPDLOCK, HOLDLOCK) WHERE ID_TheKhoKienBTP=@PackageID AND TonTai=1');
@@ -835,24 +968,28 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
                             WHERE ID_PhieuXuatBTP=@OrderID;`);
             await transaction.commit();
             transactionFinished = true;
-            return res.status(200).json({ success: true, palletID, locationID, updated: true });
+            return res.status(200).json({ success: true, palletID, locationID, locationCode, updated: true });
         }
 
+        processingStage = 'load-crane-config';
         const craneConfig = options.isTest
             ? await require('../../utils/craneWmsOutbound').config(transaction, true)
             : craneWms.getCraneConfig();
+        processingStage = 'check-active-crane-pallet';
         if (craneConfig && locationID === craneConfig.temporaryLocationID)
             throw craneWms.craneError(409, 'Vị trí tạm chỉ được dùng bởi callback xuất cầu trục');
         const activeCranePallet = craneConfig
             ? await craneWms.findActivePallet(transaction, palletID, true) : null;
         if (activeCranePallet) throw craneWms.craneError(409, 'Pallet đang tham gia phiếu xuất cầu trục');
 
+        processingStage = 'load-pallet';
         const result = await new sql.Request(transaction)
             .input('QRCode', sql.NVarChar(255), palletID)
             .query(`
-                SELECT ID_TheKhoKienBTP, ID_ViTriKho
-                FROM dbo.TheKhoKienBTP WITH (UPDLOCK, HOLDLOCK)
-                WHERE QRCode = @QRCode AND TonTai = 1;
+                SELECT k.ID_TheKhoKienBTP, k.ID_ViTriKho, v.ID_Kho
+                FROM dbo.TheKhoKienBTP k WITH (UPDLOCK, HOLDLOCK)
+                LEFT JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho = k.ID_ViTriKho
+                WHERE k.QRCode = @QRCode AND k.TonTai = 1;
             `);
 
         if (result.recordset.length !== 1) {
@@ -862,6 +999,23 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
         }
 
         const pallet = result.recordset[0];
+        const warehouseID = Number(craneConfig?.warehouseID || pallet.ID_Kho);
+        if (!Number.isInteger(warehouseID) || warehouseID <= 0)
+            throw craneWms.craneError(400, 'Không xác định được kho hiện tại của kiện');
+        processingStage = 'resolve-target-location';
+        const targetLocation = await resolveActiveWarehouseLocation(
+            transaction,
+            locationReference,
+            warehouseID
+        );
+        locationID = Number(targetLocation.ID_ViTriKho);
+        locationCode = targetLocation.MaViTriKho;
+        if (craneConfig && locationID === craneConfig.temporaryLocationID)
+            throw craneWms.craneError(409, 'Vị trí tạm chỉ được dùng bởi callback xuất cầu trục');
+        if (hasPreviousLocation && previousLocationID === locationID)
+            throw craneWms.craneError(400, 'Vị trí mới phải khác previousLocationID');
+
+        let inboundOrderID = null;
         const currentLocationID = pallet.ID_ViTriKho == null ? null : Number(pallet.ID_ViTriKho);
         const unchanged = currentLocationID === locationID;
 
@@ -872,6 +1026,7 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
         }
 
         if (!unchanged) {
+            processingStage = 'update-pallet-location';
             await new sql.Request(transaction)
                 .input('ID_TheKhoKienBTP', sql.Int, pallet.ID_TheKhoKienBTP)
                 .input('ID_ViTriKho', sql.Int, locationID)
@@ -880,14 +1035,26 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
                 .execute('dbo.App_BTP_CapNhatViTriKien');
         }
 
+        processingStage = 'mark-inbound-package-located';
+        inboundOrderID = await craneWmsInbound.markPackageLocated(transaction, pallet.ID_TheKhoKienBTP, locationID);
+        if (!inboundOrderID) {
+            const trackedInbound = await new sql.Request(transaction).input('PackageID', sql.Int, pallet.ID_TheKhoKienBTP).query(`
+                SELECT TOP (1) DispatchStatus FROM dbo.CraneWmsInboundPackage WHERE ID_TheKhoKienBTP=@PackageID`);
+            if (trackedInbound.recordset.length) throw craneWms.craneError(409, 'Kiện nhập chưa được WMS tiếp nhận thành công');
+        }
+
+        processingStage = 'commit';
         await transaction.commit();
         transactionFinished = true;
+        const finalize = inboundOrderID ? await craneWmsInbound.safeTryFinalize(pool, inboundOrderID) : null;
         return res.status(200).json({
             success: true,
             palletID,
             locationID,
+            locationCode,
             updated: !unchanged,
-            message: 'Callback received'
+            message: 'Callback received',
+            ...(finalize ? { finalize } : {}),
         });
     } catch (error) {
         if (transaction && !transactionFinished) {
@@ -901,7 +1068,12 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
         return res.status(statusCode).json({
             success: false,
             palletID,
-            message: statusCode === 500 ? 'Internal Server Error' : error.message
+            message: statusCode === 500 ? 'Internal Server Error' : error.message,
+            ...(options.isTest && statusCode === 500 ? {
+                stage: processingStage,
+                detail: error.message,
+                sqlErrorNumber: sqlErrorNumber || null,
+            } : {}),
         });
     }
 });
@@ -1506,3 +1678,5 @@ return router
 const { tagpoolPromise } = require('../../db2');
 module.exports = createErpRouter(tagpoolPromise)
 module.exports.createRouter = createErpRouter
+module.exports.normalizeLocationReference = normalizeLocationReference
+module.exports.resolveActiveWarehouseLocation = resolveActiveWarehouseLocation

@@ -13,8 +13,8 @@
 @khoTmBaseUrl = http://localhost:5000/khotmtest
 
 # Dữ liệu test
-@inboundOrderId = 256974
-@inboundOrderCode = PNBTP-2026-07-1827
+@inboundOrderId = 256963
+@inboundOrderCode = PNBTP-2026-07-1816
 @inboundPallet1 = BTP0000000173
 @inboundPallet2 = BTP0000000174
 @inboundPalletFailed = BTP0000000175
@@ -36,9 +36,9 @@
 @outboundPallet6 = BP0000556709
 @outboundPallet7 = BP0000556909
 
-@currentLocationId = 21924
-@targetLocationId = 21925
-@targetLocationCode = DDD
+@currentLocationId = 32149
+@targetLocationId = 32148
+@targetLocationCode = D-3-6-01
 @notFoundOrderId = 2147483647
 @notFoundPallet = PALLET-NOT-FOUND
 
@@ -46,8 +46,8 @@
 # G. WMS CHỌN KIỆN - ERP LƯU PHIẾU (LUỒNG MỚI)
 # Chạy G01 -> G08; G09/G10 dùng phiếu riêng. Không dùng demoMode.
 # Điền ID/mã phiếu chưa xác nhận sau G01; đọc CRANE_WMS_SETUP.md.
+@wfErpBaseUrl = http://localhost:5000/erp-test
 # @wfErpBaseUrl = http://localhost:5000/erp-test
-@wfErpBaseUrl = https://localhost:5000/erp-test
 @wfKhoBaseUrl = http://localhost:5000/khotmtest
 @wfOrderId = 326999
 @wfOrderCode = PXBTP-2026-07-2444
@@ -76,7 +76,7 @@
 
 ### G01 - Danh sách phiếu WMS còn được cập nhật
 # 200; gồm phiếu chưa lưu và phiếu TrangThai=4, không gồm TrangThai=5. Có thể thêm &soPhieu=...
-GET {{wfErpBaseUrl}}/wms/outbound-orders?page=0&pageSize=20
+GET {{wfErpBaseUrl}}/wms/outbound-orders?page=0&pageSize=100
 x-api-key: {{apiKey}}
 Accept: application/json
 
@@ -583,6 +583,13 @@ Content-Type: application/json
 
 # A. API ERP
 
+### A00 - Danh sách vị trí kho cầu trục Z76
+# Expected: 200; count=1976. locations[] gồm locationID, locationCode, qrCode,
+# name, crane, rack, tier và position; bắt buộc x-api-key của WMS nội bộ.
+GET {{erpBaseUrl}}/wms/locations
+x-api-key: {{apiKey}}
+Accept: application/json
+
 ### A01 - Danh sách phiếu nhập, trang đầu
 # Expected: 200; trả data, page, pageSize, count.
 GET {{erpBaseUrl}}/wms/inbound-orders?page=0&pageSize=100
@@ -653,6 +660,10 @@ x-api-key: {{apiKey}}
 ### B00a - Gửi lại phiếu nhập đã lưu nếu lần gửi trước FAILED
 POST {{khoTmBaseUrl}}/btp/phieunhap/{{inboundOrderId}}/gui-lai-wms
 x-api-key: {{apiKey}}
+
+### B00b - Lưu ý hợp đồng nhập tăng dần theo kiện
+# Backend thực tế gửi cùng orderID nhiều lần, mỗi request chỉ có 1 phần tử pallets.
+# Header Idempotency-Key: inbound-{orderID}-{palletID}. WMS phải cộng dồn pallet theo orderID.
 
 ### B01 - POST /api/share/wmsInbound: ERP gửi phiếu nhập sang WMS
 # Theo Swagger z76-local: thay dữ liệu mẫu nếu muốn gửi phiếu nhập khác.
@@ -779,7 +790,7 @@ Content-Type: application/json
 # C. WMS -> ERP - Callback nhập kho
 
 ### C01 - Nhập kho hoàn tất toàn bộ
-# Expected: 200; success=true.
+# Expected: 200; success=true. Ví dụ chỉ gửi locationCode.
 POST {{erpBaseUrl}}/wms/inbound-callback
 Content-Type: application/json
 x-api-key: {{apiKey}}
@@ -795,7 +806,6 @@ x-api-key: {{apiKey}}
     {
       "palletID": "{{inboundPallet1}}",
       "status": "COMPLETED",
-      "locationID": {{currentLocationId}},
       "locationCode": "{{targetLocationCode}}"
     }
   ]
@@ -818,14 +828,13 @@ x-api-key: {{apiKey}}
     {
       "palletID": "{{inboundPallet1}}",
       "status": "COMPLETED",
-      "locationID": {{currentLocationId}},
       "locationCode": "{{targetLocationCode}}"
     }
   ]
 }
 
 ### C03 - Nhập kho thành công một phần
-# Expected: 200; chỉ kiện COMPLETED được cập nhật vị trí.
+# Expected: 200; chỉ kiện COMPLETED được cập nhật vị trí. Ví dụ chỉ gửi locationID.
 POST {{erpBaseUrl}}/wms/inbound-callback
 Content-Type: application/json
 x-api-key: {{apiKey}}
@@ -841,8 +850,7 @@ x-api-key: {{apiKey}}
     {
       "palletID": "{{inboundPallet1}}",
       "status": "COMPLETED",
-      "locationID": {{currentLocationId}},
-      "locationCode": "{{targetLocationCode}}"
+      "locationID": {{currentLocationId}}
     },
     {
       "palletID": "{{inboundPalletFailed}}",
@@ -1579,8 +1587,7 @@ x-api-key: {{apiKey}}
 {
   "palletID": "{{inboundPallet1}}",
   "previousLocationID": {{currentLocationId}},
-  "locationID": {{targetLocationId}},
-  "locationCode": "{{targetLocationCode}}"
+  "locationID": {{targetLocationId}}
 }
 
 ### E02 - Gửi lại cùng vị trí để kiểm tra idempotent
@@ -1608,7 +1615,28 @@ x-api-key: {{apiKey}}
   "locationCode": "LOCATION-21926"
 }
 
-### E04 - locationID bằng null
+### E04 - Chỉ gửi locationCode
+# Expected: 200; locationCode được quy đổi sang locationID, updated=false nếu kiện đã ở đó.
+POST {{erpBaseUrl}}/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "palletID": "{{inboundPallet1}}",
+  "locationCode": "{{targetLocationCode}}"
+}
+
+### E04b - Không gửi locationID lẫn locationCode
+# Expected: 400; không thay đổi vị trí.
+POST {{erpBaseUrl}}/wms/location-callback
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "palletID": "{{inboundPallet1}}"
+}
+
+### E04c - locationID và locationCode không cùng một vị trí
 # Expected: 400; không thay đổi vị trí.
 POST {{erpBaseUrl}}/wms/location-callback
 Content-Type: application/json
@@ -1616,8 +1644,8 @@ x-api-key: {{apiKey}}
 
 {
   "palletID": "{{inboundPallet1}}",
-  "locationID": null,
-  "locationCode": "{{targetLocationCode}}"
+  "locationID": {{targetLocationId}},
+  "locationCode": "D-3-6-01"
 }
 
 ### E05 - previousLocationID trùng locationID
