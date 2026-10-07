@@ -2200,9 +2200,10 @@ router.get('/btp/cau-truc/orders/:id', async (req, res) => {
     const order = await craneWms.findCraneOrder(pool, id);
     if (!order) return res.status(404).json({ message: 'Chưa có yêu cầu WMS cho phiếu' });
     const pallets = await pool.request().input('OrderID', sql.Int, id)
-      .query(`SELECT p.PalletID, p.InitialQuantity, p.PlannedQuantity, p.ActualQuantity,
+      .query(`SELECT p.PalletID, p.NewPalletID, p.InitialQuantity, p.PlannedQuantity, p.ActualQuantity,
                      p.OriginalLocationID, originalLocation.MaViTriKho AS OriginalLocationCode,
                      p.ReturnLocationID, returnLocation.MaViTriKho AS ReturnLocationCode, p.Status,
+                     k.QRCode AS CurrentPalletID,
                      k.ID_ViTriKho AS CurrentLocationID, v.MaViTriKho AS CurrentLocationCode
               FROM dbo.CraneWmsOutboundPallet p
               JOIN dbo.TheKhoKienBTP k ON k.ID_TheKhoKienBTP=p.ID_TheKhoKienBTP

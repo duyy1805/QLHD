@@ -1486,9 +1486,10 @@ router.get('/btp/cau-truc/orders/:id', async (req, res) => {
                     FROM dbo.CraneWmsOutbound WHERE ID_PhieuXuatBTP=@OrderID AND ID_Kho=5`)).recordset[0];
         if (!order) return res.status(404).json({ message: 'Chưa có callback WMS thử nghiệm cho phiếu' });
         const pallets = await pool.request().input('OrderID', sql.Int, orderID)
-            .query(`SELECT p.PalletID, p.InitialQuantity, p.PlannedQuantity, p.ActualQuantity,
+            .query(`SELECT p.PalletID, p.NewPalletID, p.InitialQuantity, p.PlannedQuantity, p.ActualQuantity,
                            p.OriginalLocationID, originalLocation.MaViTriKho AS OriginalLocationCode,
                            p.ReturnLocationID, returnLocation.MaViTriKho AS ReturnLocationCode, p.Status,
+                           k.QRCode AS CurrentPalletID,
                            k.ID_ViTriKho AS CurrentLocationID, v.MaViTriKho AS CurrentLocationCode
                     FROM dbo.CraneWmsOutboundPallet p
                     JOIN dbo.TheKhoKienBTP k ON k.ID_TheKhoKienBTP=p.ID_TheKhoKienBTP

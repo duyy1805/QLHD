@@ -739,7 +739,7 @@ async function validateInvoiceReadyToSubmit(pool, hoaDonId) {
                 HasInvalidLine = CASE WHEN EXISTS (
                     SELECT 1 FROM dbo.HD_HoaDon_ChiTiet c
                     WHERE c.HoaDonId = h.HoaDonId
-                      AND (c.SoLuong IS NULL OR c.SoLuong <= 0 OR c.DonGia IS NULL OR c.DonGia < 0)
+                      AND (c.SoLuong IS NULL OR c.SoLuong = 0 OR c.DonGia IS NULL)
                 ) THEN 1 ELSE 0 END
             FROM dbo.HD_HoaDon h
             JOIN dbo.HD_TrangThai tt ON tt.TrangThaiId = h.TrangThaiId
