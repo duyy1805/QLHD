@@ -6,7 +6,7 @@ const clean = value => typeof value === 'string' ? value.trim() : '';
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 
 async function config(executor, isTest = false) {
-    if (isTest) return { warehouseID: 5, temporaryLocationID: await inbound.testPendingLocationID(executor) };
+    if (isTest) return { warehouseID: inbound.TEST_WAREHOUSE_ID, temporaryLocationID: await inbound.testPendingLocationID(executor) };
     const value = crane.getCraneConfig();
     if (!value) fail(503, 'Kho cầu trục chưa được cấu hình');
     return value;
@@ -134,6 +134,30 @@ async function confirm(pool, body, isTest = false) {
         const oldByPackage = new Map(oldPalletRows.map(row => [Number(row.ID_TheKhoKienBTP), row]));
         const oldByPallet = new Map(oldPalletRows.map(row => [String(row.PalletID), row]));
         const duplicate = Boolean(existingOrder?.CallbackJson === callbackFingerprint);
+
+        // A replay must not validate or move pallets again. This is especially
+        // important after a partial pallet has returned with a replacement QR:
+        // the original callback still identifies the old pallet ID.
+        if (duplicate) {
+            const savedEvent = (await new sql.Request(transaction)
+                .input('ID', sql.Int, orderID)
+                .query(`SELECT ResultJson FROM dbo.CraneWmsOutboundEvent WITH (UPDLOCK,HOLDLOCK)
+                        WHERE ID_PhieuXuatBTP=@ID`)).recordset[0];
+            if (savedEvent?.ResultJson) {
+                const result = { ...JSON.parse(savedEvent.ResultJson),
+                    eventID: payload.eventID || null, duplicate: true };
+                await new sql.Request(transaction)
+                    .input('Event', sql.NVarChar(255), storedEventID)
+                    .input('ID', sql.Int, orderID)
+                    .input('Payload', sql.NVarChar(sql.MAX), fingerprint)
+                    .input('Result', sql.NVarChar(sql.MAX), JSON.stringify(result))
+                    .query(`DELETE dbo.CraneWmsOutboundEvent WHERE ID_PhieuXuatBTP=@ID;
+                            INSERT dbo.CraneWmsOutboundEvent (EventID,ID_PhieuXuatBTP,PayloadJson,ResultJson)
+                            VALUES (@Event,@ID,@Payload,@Result)`);
+                await transaction.commit();
+                return result;
+            }
+        }
 
         const details = await loadDetails(transaction, orderID);
         const links = allocate(details, payload.items);
@@ -288,11 +312,16 @@ async function searchAppOrders(pool, body, isTest) {
         .input('Skip', sql.Int, pageIndex * pageSize).input('Take', sql.Int, pageSize).query(`
             SELECT p.ID_PhieuXuatBTP AS id,p.So_PhieuXuatBTP AS soPhieu,p.Ngay_XuatBTP AS ngayXuat,
                 p.ID_KhoXuat AS idKhoXuat,k.Ten_Kho AS khoXuat,h.Ten_HinhThucXuatBTP AS loaiPhieu,
-                ISNULL(p.QrStatus,0) AS trangThai,o.Status AS wmsStatus
+                ISNULL(p.QrStatus,0) AS trangThai,o.Status AS wmsStatus,
+                p.ID_DonVi AS idDonVi,p.ID_BoPhan AS idBoPhan,
+                LTRIM(RTRIM(dv.Ten_DonVi)) AS tenDonVi,
+                LTRIM(RTRIM(bp.Ten_BoPhan)) AS tenBoPhan
             FROM dbo.PhieuXuatBTP p
             JOIN dbo.DM_Kho k ON k.ID_Kho=p.ID_KhoXuat
             LEFT JOIN dbo.DM_HinhThucXuatBTP h ON h.ID_HinhThucXuatBTP=p.ID_HinhThucXuatBTP
             LEFT JOIN dbo.CraneWmsOutbound o ON o.ID_PhieuXuatBTP=p.ID_PhieuXuatBTP
+            LEFT JOIN TAG_System.dbo.DM_DonVi dv ON dv.ID_DonVi=p.ID_DonVi
+            LEFT JOIN TAG_System.dbo.DM_BoPhan bp ON bp.ID_BoPhan=p.ID_BoPhan
             WHERE p.TonTai=1 AND p.ID_KhoXuat=@Warehouse AND ISNULL(p.TrangThai,0)<>5
                 AND (@User=1 OR EXISTS(SELECT 1 FROM dbo.PQ_TaiKhoan_Kho_TM q
                     WHERE q.ID_Kho=p.ID_KhoXuat AND q.ID_TaiKhoanDangNhap=@User AND q.Quyen=1))

@@ -12,7 +12,36 @@ function getCraneConfig() {
     if (!warehouseID || !temporaryLocationID) {
         throw new Error('CRANE_WAREHOUSE_ID and CRANE_TEMP_LOCATION_ID must both be set');
     }
-    return { warehouseID, temporaryLocationID, mode: 'mock' };
+    return { warehouseID, temporaryLocationID, mode: 'wms' };
+}
+
+async function getCraneConfigStatus(pool) {
+    const config = getCraneConfig();
+    if (!config) return {
+        enabled: false,
+        warehouseID: null,
+        temporaryLocationID: null,
+        temporaryLocationCode: null,
+        mode: null,
+    };
+
+    const result = await pool.request()
+        .input('WarehouseID', sql.Int, config.warehouseID)
+        .input('LocationID', sql.Int, config.temporaryLocationID)
+        .query(`SELECT v.MaViTriKho
+                FROM dbo.DM_Kho k
+                JOIN dbo.DM_Kho_ViTri v ON v.ID_Kho=k.ID_Kho
+                WHERE k.ID_Kho=@WarehouseID AND v.ID_ViTriKho=@LocationID
+                  AND k.TonTai=1 AND k.SuDung=1
+                  AND v.TonTai=1 AND v.SuDung=1`);
+    const location = result.recordset[0];
+    return {
+        enabled: Boolean(location),
+        warehouseID: config.warehouseID,
+        temporaryLocationID: config.temporaryLocationID,
+        temporaryLocationCode: location?.MaViTriKho || null,
+        mode: config.mode,
+    };
 }
 
 function craneError(statusCode, message) {
@@ -197,5 +226,5 @@ async function dispatchMock(pool, orderID) {
     return result.recordset[0] || null;
 }
 
-module.exports = { positiveId, getCraneConfig, craneError, assertTemporaryLocation,
+module.exports = { positiveId, getCraneConfig, getCraneConfigStatus, craneError, assertTemporaryLocation,
     findCraneOrder, findActivePallet, confirmCraneOutbound, dispatchMock, reconcilePallets, outboundFingerprint };

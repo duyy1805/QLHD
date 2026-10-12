@@ -613,8 +613,12 @@ router.post('/tiendosanxuat-mocgio', async (req, res) => {
 router.get('/wms/locations', checkApiKey, async (_req, res) => {
     try {
         const pool = await tagpoolPromise;
+        const craneConfig = craneWms.getCraneConfig();
+        if (!craneConfig) {
+            return res.status(503).json({ success: false, message: 'Kho cầu trục chưa được cấu hình' });
+        }
         const result = await pool.request()
-            .input('WarehouseID', sql.SmallInt, 5)
+            .input('WarehouseID', sql.Int, craneConfig.warehouseID)
             .input('ZoneCode', sql.NVarChar(14), 'A')
             .input('BuildingCode', sql.NVarChar(10), 'Z76')
             .input('AreaCode', sql.NVarChar(10), 'CT')
@@ -646,7 +650,7 @@ router.get('/wms/locations', checkApiKey, async (_req, res) => {
 
         return res.status(200).json({
             success: true,
-            warehouseID: 5,
+            warehouseID: craneConfig.warehouseID,
             warehouseCode: 'Z76',
             count: locations.length,
             locations

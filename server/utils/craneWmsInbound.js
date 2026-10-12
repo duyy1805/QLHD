@@ -1,5 +1,6 @@
 const axios = require('axios');
 const sql = require('mssql');
+const TEST_WAREHOUSE_ID = 40;
 
 const DEFAULT_URL = 'https://z76-local.vercel.app/api/share/wmsInbound';
 
@@ -160,8 +161,8 @@ async function getWarehouseID(executor, orderID) {
 async function testPendingLocationID(executor) {
     const result = await new sql.Request(executor).query(`
         SELECT ID_ViTriKho FROM dbo.DM_Kho_ViTri
-        WHERE ID_Kho=5 AND MaViTriKho=N'CT-TEMP-TEST' AND TonTai=1 AND SuDung=1`);
-    if (result.recordset.length !== 1) throw new Error('DB test chưa có vị trí tạm CT-TEMP-TEST của kho ID 5');
+        WHERE ID_Kho=${TEST_WAREHOUSE_ID} AND MaViTriKho=N'CT-TEMP-TEST' AND TonTai=1 AND SuDung=1`);
+    if (result.recordset.length !== 1) throw new Error(`DB test chưa có vị trí tạm CT-TEMP-TEST của kho ID ${TEST_WAREHOUSE_ID}`);
     return Number(result.recordset[0].ID_ViTriKho);
 }
 
@@ -494,6 +495,6 @@ async function decorateImportDetail(pool, response, orderID) {
     return response;
 }
 
-module.exports = { buildPayload, buildPackagePayload, getWarehouseID, testPendingLocationID, stagePackages,
+module.exports = { TEST_WAREHOUSE_ID, buildPayload, buildPackagePayload, getWarehouseID, testPendingLocationID, stagePackages,
     enqueue, dispatch, status, assertPackageUnlocked, enqueuePackage, assignQrAndEnqueue, dispatchPackage,
     dispatchFailedPackages, statusWithPackages, markPackageLocated, tryFinalize, safeTryFinalize, decorateImportDetail };

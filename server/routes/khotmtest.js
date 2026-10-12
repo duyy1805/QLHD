@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken')
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const sql = require('mssql');
 const craneWmsInbound = require('../utils/craneWmsInbound');
+const TEST_WAREHOUSE_ID = craneWmsInbound.TEST_WAREHOUSE_ID;
 const checkApiKey = require('../middleware/apiKey');
 const {
     RENTAL_WAREHOUSE_ID,
@@ -675,6 +676,31 @@ const mapImportSearchRow = (row) => ({
     maDonHang: row.MaDonHang,
 });
 
+const enrichImportSearchUnits = async (pool, rows) => {
+    const ids = [...new Set(rows.map((row) => toIntOrNull(row.id)).filter(Boolean))];
+    if (!ids.length) return rows;
+
+    const request = pool.request();
+    const parameters = ids.map((id, index) => {
+        const name = `ImportUnit${index}`;
+        request.input(name, sql.Int, id);
+        return `@${name}`;
+    });
+    const result = await request.query(`
+        SELECT p.ID_PhieuNhapBTP AS id,
+               p.ID_DonVi AS idDonVi,
+               p.ID_BoPhan AS idBoPhan,
+               LTRIM(RTRIM(dv.Ten_DonVi)) AS tenDonVi,
+               LTRIM(RTRIM(bp.Ten_BoPhan)) AS tenBoPhan
+        FROM dbo.PhieuNhapBTP p
+        LEFT JOIN TAG_System.dbo.DM_DonVi dv ON dv.ID_DonVi=p.ID_DonVi
+        LEFT JOIN TAG_System.dbo.DM_BoPhan bp ON bp.ID_BoPhan=p.ID_BoPhan
+        WHERE p.ID_PhieuNhapBTP IN (${parameters.join(',')});
+    `);
+    const unitsById = new Map((result.recordset || []).map((row) => [Number(row.id), row]));
+    return rows.map((row) => ({ ...row, ...(unitsById.get(Number(row.id)) || {}) }));
+};
+
 const mapExportSearchRow = (row) => ({
     ...row,
     id: row.Id,
@@ -688,6 +714,31 @@ const mapExportSearchRow = (row) => ({
     khachHang: row.KhachHang,
     maDonHang: row.MaDonHang,
 });
+
+const enrichExportSearchUnits = async (pool, rows) => {
+    const ids = [...new Set(rows.map((row) => toIntOrNull(row.id)).filter(Boolean))];
+    if (!ids.length) return rows;
+
+    const request = pool.request();
+    const parameters = ids.map((id, index) => {
+        const name = `ExportUnit${index}`;
+        request.input(name, sql.Int, id);
+        return `@${name}`;
+    });
+    const result = await request.query(`
+        SELECT p.ID_PhieuXuatBTP AS id,
+               p.ID_DonVi AS idDonVi,
+               p.ID_BoPhan AS idBoPhan,
+               LTRIM(RTRIM(dv.Ten_DonVi)) AS tenDonVi,
+               LTRIM(RTRIM(bp.Ten_BoPhan)) AS tenBoPhan
+        FROM dbo.PhieuXuatBTP p
+        LEFT JOIN TAG_System.dbo.DM_DonVi dv ON dv.ID_DonVi=p.ID_DonVi
+        LEFT JOIN TAG_System.dbo.DM_BoPhan bp ON bp.ID_BoPhan=p.ID_BoPhan
+        WHERE p.ID_PhieuXuatBTP IN (${parameters.join(',')});
+    `);
+    const unitsById = new Map((result.recordset || []).map((row) => [Number(row.id), row]));
+    return rows.map((row) => ({ ...row, ...(unitsById.get(Number(row.id)) || {}) }));
+};
 
 const groupQuantity = (items, keys, quantityKey) => {
     const grouped = new Map();
@@ -859,7 +910,11 @@ router.post('/btp/phieunhap/tim-kiem', async (req, res) => {
             .input('Skip', sql.Int, pageIndex * pageSize)
             .input('ID_TaiKhoanDangNhap', sql.Int, toIntOrNull(body.IdTaiKhoanDangNhap) || 0)
             .query(`SELECT * FROM dbo.SearchPhieuNhapBTP(@WarehouseId, @Status, @ReviewNumber, @Type, @Take, @Skip, @ID_TaiKhoanDangNhap);`);
-        res.json({ data: (result.recordset || []).map(mapImportSearchRow), pageSize, pageIndex });
+        const rows = await enrichImportSearchUnits(
+            pool,
+            (result.recordset || []).map(mapImportSearchRow),
+        );
+        res.json({ data: rows, pageSize, pageIndex });
     } catch (error) {
         res.status(500).json({ message: 'Không tìm kiếm được phiếu nhập BTP', detail: error.message });
     }
@@ -1108,9 +1163,9 @@ router.post('/btp/phieunhap/gan-qr', async (req, res) => {
         await ensureImportEditable(pool.request(), info.recordset[0].ID_PhieuNhapBTP);
         await craneWmsInbound.assertPackageUnlocked(pool, idKien);
         if (req.body?.craneMode === true) {
-            if (Number(info.recordset[0].ID_KhoNhap) !== 5) return res.status(400).json({ message: 'Phiếu nhập demo không thuộc kho BTP test (ID 5)' });
+            if (Number(info.recordset[0].ID_KhoNhap) !== TEST_WAREHOUSE_ID) return res.status(400).json({ message: `Phiếu nhập demo không thuộc kho BTP test (ID ${TEST_WAREHOUSE_ID})` });
             const queued = await craneWmsInbound.assignQrAndEnqueue(pool, { orderID: info.recordset[0].ID_PhieuNhapBTP,
-                packageID: idKien, qrCode, warehouseID: 5 });
+                packageID: idKien, qrCode, warehouseID: TEST_WAREHOUSE_ID });
             const deferredDispatch = req.body?.dispatchWms === false;
             const wmsPackage = deferredDispatch
                 ? { ID_TheKhoKienBTP: idKien, PalletID: qrCode, DispatchStatus: 'PENDING' }
@@ -1198,7 +1253,7 @@ router.put('/btp/phieunhap/xac-nhan', async (req, res) => {
         const pool = await testpoolPromise;
         await ensureImportEditable(pool.request(), idPhieuNhap, { allowRentalTransfer: true });
         const warehouseID = isCraneInbound ? await craneWmsInbound.getWarehouseID(pool, idPhieuNhap) : null;
-        if (isCraneInbound && warehouseID !== 5) return res.status(400).json({ message: 'Phiếu nhập demo không thuộc kho BTP test (ID 5)' });
+        if (isCraneInbound && warehouseID !== TEST_WAREHOUSE_ID) return res.status(400).json({ message: `Phiếu nhập demo không thuộc kho BTP test (ID ${TEST_WAREHOUSE_ID})` });
         if (isCraneInbound) {
             const finalize = await craneWmsInbound.safeTryFinalize(pool, idPhieuNhap);
             if (!finalize.ready) return res.status(409).json({ message: 'Phiếu chưa đủ số lượng BTP hoặc vị trí WMS', finalize });
@@ -1343,7 +1398,10 @@ router.post('/btp/phieuxuat/tim-kiem', async (req, res) => {
             .input('Skip', sql.Int, pageIndex * pageSize)
             .input('ID_TaiKhoanDangNhap', sql.Int, toIntOrNull(body.IdTaiKhoanDangNhap) || 0)
             .query(`SELECT * FROM dbo.SearchPhieuXuatBTP(@WarehouseId, @Status, @ReviewNumber, @Type, @Take, @Skip, @ID_TaiKhoanDangNhap);`);
-        const rows = (result.recordset || []).map(mapExportSearchRow);
+        const rows = await enrichExportSearchUnits(
+            pool,
+            (result.recordset || []).map(mapExportSearchRow),
+        );
         const ids = rows.map(row => toIntOrNull(row.id)).filter(Boolean);
         if (ids.length) {
             const states = (await pool.request().query(`IF OBJECT_ID(N'dbo.CraneWmsOutbound',N'U') IS NOT NULL
@@ -1429,7 +1487,7 @@ router.get('/btp/phieuxuat/goi-y-kien', async (req, res) => {
                 SELECT k.QRCode FROM dbo.TheKhoKienBTP k
                 JOIN dbo.CraneWmsInbound i ON i.ID_PhieuNhapBTP=k.ID_PhieuNhapBTP
                 JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho
-                WHERE k.TonTai=1 AND v.ID_Kho=5 AND v.MaViTriKho=N'CT-TEMP-TEST'`);
+                WHERE k.TonTai=1 AND v.ID_Kho=${TEST_WAREHOUSE_ID} AND v.MaViTriKho=N'CT-TEMP-TEST'`);
             const pendingQr = new Set((pendingInbound.recordset || []).map(row => String(row.QRCode).trim().toUpperCase()));
             packages = packages.filter(item => !pendingQr.has(item.qrCode.toUpperCase()));
         }
@@ -1483,7 +1541,7 @@ router.get('/btp/cau-truc/orders/:id', async (req, res) => {
         const pool = await testpoolPromise;
         const order = (await pool.request().input('OrderID', sql.Int, orderID)
             .query(`SELECT OrderCode, Status, DispatchStatus, DispatchAttempts
-                    FROM dbo.CraneWmsOutbound WHERE ID_PhieuXuatBTP=@OrderID AND ID_Kho=5`)).recordset[0];
+                    FROM dbo.CraneWmsOutbound WHERE ID_PhieuXuatBTP=@OrderID AND ID_Kho=${TEST_WAREHOUSE_ID}`)).recordset[0];
         if (!order) return res.status(404).json({ message: 'Chưa có callback WMS thử nghiệm cho phiếu' });
         const pallets = await pool.request().input('OrderID', sql.Int, orderID)
             .query(`SELECT p.PalletID, p.NewPalletID, p.InitialQuantity, p.PlannedQuantity, p.ActualQuantity,
@@ -1596,7 +1654,7 @@ router.get('/btp/phieuxuat/kien/:qrcode/:idPhieuXuat/:idDonHangLoSanXuat', async
                 SELECT TOP (1) 1 AS Pending FROM dbo.TheKhoKienBTP k
                 JOIN dbo.CraneWmsInbound i ON i.ID_PhieuNhapBTP=k.ID_PhieuNhapBTP
                 JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho
-                WHERE k.QRCode=@PalletID AND k.TonTai=1 AND v.ID_Kho=5 AND v.MaViTriKho=N'CT-TEMP-TEST'`);
+                WHERE k.QRCode=@PalletID AND k.TonTai=1 AND v.ID_Kho=${TEST_WAREHOUSE_ID} AND v.MaViTriKho=N'CT-TEMP-TEST'`);
         if (pendingInbound.recordset?.length) return res.status(409).json({ message: 'Kiện nhập đang chờ WMS cập nhật vị trí' });
         const locked = await pool.request().input('PalletID', sql.NVarChar(255), req.params.qrcode)
             .query(`IF OBJECT_ID(N'dbo.CraneWmsOutboundPallet', N'U') IS NOT NULL
@@ -1687,7 +1745,7 @@ router.put('/btp/phieuxuat/xac-nhan', async (req, res) => {
             JOIN dbo.CraneWmsInbound i ON i.ID_PhieuNhapBTP=k.ID_PhieuNhapBTP
             JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho
             WHERE d.ID_TheKhoKienBTP_ChiTiet IN (${detailParams.join(',')})
-              AND k.TonTai=1 AND v.ID_Kho=5 AND v.MaViTriKho=N'CT-TEMP-TEST'`);
+              AND k.TonTai=1 AND v.ID_Kho=${TEST_WAREHOUSE_ID} AND v.MaViTriKho=N'CT-TEMP-TEST'`);
         if (pendingInbound.recordset?.length) return res.status(409).json({ message: 'Kiện nhập đang chờ WMS cập nhật vị trí' });
         const locked = await lockRequest.query(`IF OBJECT_ID(N'dbo.CraneWmsOutboundPallet', N'U') IS NOT NULL
             SELECT TOP (1) p.PalletID FROM dbo.CraneWmsOutboundPallet p
@@ -1786,7 +1844,7 @@ router.get('/btp/baocao/vi-tri', async (req, res) => {
 router.post('/btp/vitri/nha', async (req, res) => {
     try {
         const pool = await testpoolPromise;
-        const result = await pool.request().input('ID_TaiKhoanDangNhap', sql.Int, toIntOrNull(req.body?.idTaiKhoan) || 0).input('ID_Kho', sql.Int, toIntOrNull(req.body?.idKho) || 5).execute('App_SearchNhaKho');
+        const result = await pool.request().input('ID_TaiKhoanDangNhap', sql.Int, toIntOrNull(req.body?.idTaiKhoan) || 0).input('ID_Kho', sql.Int, toIntOrNull(req.body?.idKho) || TEST_WAREHOUSE_ID).execute('App_SearchNhaKho');
         res.json(result.recordset || []);
     } catch (error) {
         res.status(500).json({ message: 'Không tải được danh sách nhà kho', detail: error.message });
@@ -1796,7 +1854,7 @@ router.post('/btp/vitri/nha', async (req, res) => {
 router.post('/btp/vitri/day', async (req, res) => {
     try {
         const pool = await testpoolPromise;
-        const result = await pool.request().input('idKho', sql.Int, toIntOrNull(req.body?.idKho) || 5).input('MaNha', sql.NVarChar(100), req.body?.maNha || '').execute('App_GetThongTinDay_ByID_Kho');
+        const result = await pool.request().input('idKho', sql.Int, toIntOrNull(req.body?.idKho) || TEST_WAREHOUSE_ID).input('MaNha', sql.NVarChar(100), req.body?.maNha || '').execute('App_GetThongTinDay_ByID_Kho');
         res.json(result.recordset || []);
     } catch (error) {
         res.status(500).json({ message: 'Không tải được dãy kho', detail: error.message });
@@ -1807,7 +1865,7 @@ router.get('/btp/vitri/danh-sach', async (req, res) => {
     try {
         const pool = await testpoolPromise;
         const result = await pool.request()
-            .input('idKho', sql.Int, toIntOrNull(req.query.idKho) || 5)
+            .input('idKho', sql.Int, toIntOrNull(req.query.idKho) || TEST_WAREHOUSE_ID)
             .input('MaNha', sql.NVarChar(100), req.query.maNha || '')
             .input('MaDay', sql.NVarChar(100), req.query.maDay || '')
             .input('ItemCode', sql.NVarChar(255), req.query.maVatTu || 'none')

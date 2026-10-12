@@ -777,6 +777,31 @@ const mapImportSearchRow = (row) => ({
   maDonHang: row.MaDonHang,
 });
 
+const enrichImportSearchUnits = async (pool, rows) => {
+  const ids = [...new Set(rows.map((row) => toIntOrNull(row.id)).filter(Boolean))];
+  if (!ids.length) return rows;
+
+  const request = pool.request();
+  const parameters = ids.map((id, index) => {
+    const name = `ImportUnit${index}`;
+    request.input(name, sql.Int, id);
+    return `@${name}`;
+  });
+  const result = await request.query(`
+    SELECT p.ID_PhieuNhapBTP AS id,
+           p.ID_DonVi AS idDonVi,
+           p.ID_BoPhan AS idBoPhan,
+           LTRIM(RTRIM(dv.Ten_DonVi)) AS tenDonVi,
+           LTRIM(RTRIM(bp.Ten_BoPhan)) AS tenBoPhan
+    FROM dbo.PhieuNhapBTP p
+    LEFT JOIN TAG_System.dbo.DM_DonVi dv ON dv.ID_DonVi=p.ID_DonVi
+    LEFT JOIN TAG_System.dbo.DM_BoPhan bp ON bp.ID_BoPhan=p.ID_BoPhan
+    WHERE p.ID_PhieuNhapBTP IN (${parameters.join(",")});
+  `);
+  const unitsById = new Map((result.recordset || []).map((row) => [Number(row.id), row]));
+  return rows.map((row) => ({ ...row, ...(unitsById.get(Number(row.id)) || {}) }));
+};
+
 const mapExportSearchRow = (row) => ({
   ...row,
   id: row.Id,
@@ -790,6 +815,31 @@ const mapExportSearchRow = (row) => ({
   khachHang: row.KhachHang,
   maDonHang: row.MaDonHang,
 });
+
+const enrichExportSearchUnits = async (pool, rows) => {
+  const ids = [...new Set(rows.map((row) => toIntOrNull(row.id)).filter(Boolean))];
+  if (!ids.length) return rows;
+
+  const request = pool.request();
+  const parameters = ids.map((id, index) => {
+    const name = `ExportUnit${index}`;
+    request.input(name, sql.Int, id);
+    return `@${name}`;
+  });
+  const result = await request.query(`
+    SELECT p.ID_PhieuXuatBTP AS id,
+           p.ID_DonVi AS idDonVi,
+           p.ID_BoPhan AS idBoPhan,
+           LTRIM(RTRIM(dv.Ten_DonVi)) AS tenDonVi,
+           LTRIM(RTRIM(bp.Ten_BoPhan)) AS tenBoPhan
+    FROM dbo.PhieuXuatBTP p
+    LEFT JOIN TAG_System.dbo.DM_DonVi dv ON dv.ID_DonVi=p.ID_DonVi
+    LEFT JOIN TAG_System.dbo.DM_BoPhan bp ON bp.ID_BoPhan=p.ID_BoPhan
+    WHERE p.ID_PhieuXuatBTP IN (${parameters.join(",")});
+  `);
+  const unitsById = new Map((result.recordset || []).map((row) => [Number(row.id), row]));
+  return rows.map((row) => ({ ...row, ...(unitsById.get(Number(row.id)) || {}) }));
+};
 
 const groupQuantity = (items, keys, quantityKey) => {
   const grouped = new Map();
@@ -1027,8 +1077,12 @@ router.post("/btp/phieunhap/tim-kiem", async (req, res) => {
       .query(
         `SELECT * FROM dbo.SearchPhieuNhapBTP(@WarehouseId, @Status, @ReviewNumber, @Type, @Take, @Skip, @ID_TaiKhoanDangNhap);`,
       );
+    const rows = await enrichImportSearchUnits(
+      pool,
+      (result.recordset || []).map(mapImportSearchRow),
+    );
     res.json({
-      data: (result.recordset || []).map(mapImportSearchRow),
+      data: rows,
       pageSize,
       pageIndex,
     });
@@ -1705,7 +1759,10 @@ router.post("/btp/phieuxuat/tim-kiem", async (req, res) => {
       .query(
         `SELECT * FROM dbo.SearchPhieuXuatBTP(@WarehouseId, @Status, @ReviewNumber, @Type, @Take, @Skip, @ID_TaiKhoanDangNhap);`,
       );
-    const rows = (result.recordset || []).map(mapExportSearchRow);
+    const rows = await enrichExportSearchUnits(
+      pool,
+      (result.recordset || []).map(mapExportSearchRow),
+    );
     const craneConfig = craneWms.getCraneConfig();
     if (craneConfig && rows.some(row => Number(row.idKhoXuat) === craneConfig.warehouseID)) {
       const ids = rows.filter(row => Number(row.idKhoXuat) === craneConfig.warehouseID)
@@ -2177,18 +2234,7 @@ router.post('/btp/phieunhap/:id/gui-lai-kien-loi', verifyToken, async (req, res)
 
 router.get('/btp/cau-truc/config', async (_req, res) => {
   try {
-    const config = craneWms.getCraneConfig();
-    let temporaryLocationCode = null;
-    if (config?.temporaryLocationID) {
-      const pool = await tagpoolPromise;
-      const location = await pool.request()
-        .input('LocationID', sql.Int, config.temporaryLocationID)
-        .query('SELECT MaViTriKho FROM dbo.DM_Kho_ViTri WHERE ID_ViTriKho=@LocationID');
-      temporaryLocationCode = location.recordset[0]?.MaViTriKho || null;
-    }
-    res.json({ enabled: Boolean(config), warehouseID: config?.warehouseID || null,
-      temporaryLocationID: config?.temporaryLocationID || null, temporaryLocationCode,
-      mode: config?.mode || null });
+    return res.json(await craneWms.getCraneConfigStatus(await tagpoolPromise));
   } catch (error) { res.status(500).json({ message: error.message }); }
 });
 

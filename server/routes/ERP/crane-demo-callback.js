@@ -1,5 +1,6 @@
 const sql = require('mssql');
 const craneWms = require('../../utils/craneWms');
+const { TEST_WAREHOUSE_ID } = require('../../utils/craneWmsInbound');
 
 // This branch exists only under /erp-test. It lets an already-confirmed BTP
 // demo order exercise the crane callback without changing the production flow.
@@ -39,7 +40,7 @@ function createCraneDemoCallback(testpoolPromise) {
                 .input('OrderID', sql.Int, orderID)
                 .query(`SELECT So_PhieuXuatBTP, ID_KhoXuat, QrStatus FROM dbo.PhieuXuatBTP WITH (UPDLOCK, HOLDLOCK)
                         WHERE ID_PhieuXuatBTP=@OrderID AND TonTai=1`)).recordset[0];
-            if (!order || order.So_PhieuXuatBTP !== orderCode || Number(order.ID_KhoXuat) !== 5 || !order.QrStatus)
+            if (!order || order.So_PhieuXuatBTP !== orderCode || Number(order.ID_KhoXuat) !== TEST_WAREHOUSE_ID || !order.QrStatus)
                 throw craneWms.craneError(409, 'Phiếu BTP test chưa xác nhận hoặc không khớp callback');
 
             const existing = await craneWms.findCraneOrder(transaction, orderID, true);
@@ -54,7 +55,7 @@ function createCraneDemoCallback(testpoolPromise) {
 
             const tempLocation = (await new sql.Request(transaction)
                 .query(`SELECT ID_ViTriKho, MaViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
-                        WHERE ID_Kho=5 AND MaViTriKho=N'CT-TEMP-TEST' AND SuDung=1 AND TonTai=1`)).recordset;
+                        WHERE ID_Kho=${TEST_WAREHOUSE_ID} AND MaViTriKho=N'CT-TEMP-TEST' AND SuDung=1 AND TonTai=1`)).recordset;
             if (tempLocation.length !== 1)
                 throw craneWms.craneError(503, 'Chưa có vị trí CT-TEMP-TEST trên DB test');
             const temporaryLocationID = Number(tempLocation[0].ID_ViTriKho);
@@ -72,7 +73,7 @@ function createCraneDemoCallback(testpoolPromise) {
                         JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho
                         WHERE x.ID_PhieuXuatBTP=@OrderID AND k.QRCode=@PalletID
                           AND d.TonTai=1 AND k.TonTai=1`)).recordset;
-            if (saved.length !== 1 || Number(saved[0].ID_Kho) !== 5 ||
+            if (saved.length !== 1 || Number(saved[0].ID_Kho) !== TEST_WAREHOUSE_ID ||
                 Number(saved[0].ID_ViTriKho) === temporaryLocationID ||
                 String(saved[0].ItemCode || '').trim() !== itemCode ||
                 (String(saved[0].DauTuan || '').trim() || 'NO_WEEK_MARK') !== lot ||
@@ -95,7 +96,7 @@ function createCraneDemoCallback(testpoolPromise) {
             const status = remaining > 0 ? 'WAITING_RETURN' : 'COMPLETE';
             const palletStatus = remaining > 0 ? 'WAITING_RETURN' : 'EXPORTED_FULL';
             const requestJson = JSON.stringify({ orderID: String(orderID), orderCode,
-                orderType: 'OUTBOUND', warehouseID: 5,
+                orderType: 'OUTBOUND', warehouseID: TEST_WAREHOUSE_ID,
                 pallets: [{ palletID, quantity: requested }],
                 items: [{ palletID, itemCode, lot, quantity: requested }] });
 
@@ -115,7 +116,7 @@ function createCraneDemoCallback(testpoolPromise) {
                 .input('CallbackJson', sql.NVarChar(sql.MAX), fingerprint)
                 .query(`INSERT dbo.CraneWmsOutbound
                     (ID_PhieuXuatBTP,ID_Kho,OrderCode,Status,DispatchStatus,DispatchAttempts,RequestJson,CallbackJson)
-                    VALUES (@OrderID,5,@OrderCode,@Status,'MOCKED',1,@RequestJson,@CallbackJson)`);
+                    VALUES (@OrderID,${TEST_WAREHOUSE_ID},@OrderCode,@Status,'MOCKED',1,@RequestJson,@CallbackJson)`);
             await new sql.Request(transaction)
                 .input('OrderID', sql.Int, orderID)
                 .input('PackageID', sql.Int, Number(saved[0].ID_TheKhoKienBTP))
@@ -176,12 +177,12 @@ function createCraneDemoLocationCallback(testpoolPromise) {
             await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
             const order = await craneWms.findCraneOrder(transaction, sourceOrderID, true);
-            if (!order || Number(order.ID_Kho) !== 5)
+            if (!order || Number(order.ID_Kho) !== TEST_WAREHOUSE_ID)
                 throw craneWms.craneError(404, 'Không tìm thấy phiếu cầu trục demo');
             const target = (await new sql.Request(transaction)
                 .input('LocationID', sql.Int, locationID)
                 .query(`SELECT ID_ViTriKho, MaViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
-                        WHERE ID_ViTriKho=@LocationID AND ID_Kho=5 AND TonTai=1 AND SuDung=1`)).recordset;
+                        WHERE ID_ViTriKho=@LocationID AND ID_Kho=${TEST_WAREHOUSE_ID} AND TonTai=1 AND SuDung=1`)).recordset;
             if (target.length !== 1)
                 throw craneWms.craneError(400, 'Vị trí nhập lại không thuộc kho BTP test');
             const locationCode = target[0].MaViTriKho;
@@ -204,7 +205,7 @@ function createCraneDemoLocationCallback(testpoolPromise) {
 
             const tempLocation = (await new sql.Request(transaction)
                 .query(`SELECT ID_ViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
-                        WHERE ID_Kho=5 AND MaViTriKho=N'CT-TEMP-TEST' AND TonTai=1 AND SuDung=1`)).recordset;
+                        WHERE ID_Kho=${TEST_WAREHOUSE_ID} AND MaViTriKho=N'CT-TEMP-TEST' AND TonTai=1 AND SuDung=1`)).recordset;
             if (tempLocation.length !== 1 || Number(tempLocation[0].ID_ViTriKho) !== previousLocationID)
                 throw craneWms.craneError(409, 'previousLocationID không phải vị trí tạm demo');
             const current = (await new sql.Request(transaction)

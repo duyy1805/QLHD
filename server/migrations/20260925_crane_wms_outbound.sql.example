@@ -21,6 +21,7 @@ CREATE TABLE dbo.CraneWmsOutboundPallet (
     ID_PhieuXuatBTP int NOT NULL,
     ID_TheKhoKienBTP int NOT NULL,
     PalletID nvarchar(255) NOT NULL,
+    NewPalletID nvarchar(255) NULL,
     OriginalLocationID int NOT NULL,
     InitialQuantity decimal(18,2) NOT NULL,
     PlannedQuantity decimal(18,2) NOT NULL,
