@@ -1534,6 +1534,22 @@ router.post('/btp/phieunhap/:id/gui-lai-kien-loi', verifyToken, async (req, res)
     }
 });
 
+const craneOutboundDispatch = require('../utils/craneOutboundDispatch');
+router.get('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
+    const id = toIntOrNull(req.params.id);
+    if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });
+    try { return res.json({ dispatch: await craneOutboundDispatch.status(await testpoolPromise, id) }); }
+    catch (error) { return res.status(500).json({ message: error.message }); }
+});
+router.post('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
+    const id = toIntOrNull(req.params.id);
+    if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });
+    try {
+        const result = await craneOutboundDispatch.dispatch(await testpoolPromise, id, TEST_WAREHOUSE_ID);
+        return res.status(result.status).json({ ok: !result.error, ...result, message: result.error });
+    } catch (error) { return res.status(500).json({ message: error.message }); }
+});
+
 router.get('/btp/cau-truc/orders/:id', async (req, res) => {
     const orderID = toIntOrNull(req.params.id);
     if (!orderID) return res.status(400).json({ message: 'Phiếu xuất không hợp lệ' });

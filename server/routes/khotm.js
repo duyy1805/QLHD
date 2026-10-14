@@ -2267,6 +2267,24 @@ router.get('/btp/cau-truc/orders/:id', async (req, res) => {
   } catch (error) { return res.status(500).json({ message: error.message }); }
 });
 
+const craneOutboundDispatch = require('../utils/craneOutboundDispatch');
+router.get('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
+  const id = craneWms.positiveId(req.params.id);
+  if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });
+  try { return res.json({ dispatch: await craneOutboundDispatch.status(await tagpoolPromise, id) }); }
+  catch (error) { return res.status(500).json({ message: error.message }); }
+});
+router.post('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
+  const id = craneWms.positiveId(req.params.id);
+  if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });
+  try {
+    const config = craneWms.getCraneConfig();
+    if (!config) return res.status(503).json({ message: 'Chưa cấu hình kho cầu trục' });
+    const result = await craneOutboundDispatch.dispatch(await tagpoolPromise, id, config.warehouseID);
+    return res.status(result.status).json({ ok: !result.error, ...result, message: result.error });
+  } catch (error) { return res.status(500).json({ message: error.message }); }
+});
+
 router.post('/btp/cau-truc/orders/:id/retry-mock', async (req, res) => {
   const id = craneWms.positiveId(req.params.id);
   if (!id) return res.status(400).json({ message: 'Phiếu không hợp lệ' });

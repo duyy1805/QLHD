@@ -300,7 +300,10 @@ async function confirm(pool, body, isTest = false) {
 }
 
 async function searchAppOrders(pool, body, isTest) {
-    const cfg = await config(pool, isTest);
+    // Danh sách chỉ cần ID kho; không phụ thuộc vị trí tạm dùng cho callback.
+    const cfg = isTest ? { warehouseID: inbound.TEST_WAREHOUSE_ID } : crane.getCraneConfig();
+    if (!cfg) fail(503, 'Kho cầu trục chưa được cấu hình');
+    const trackingExists = (await pool.request().query("SELECT OBJECT_ID(N'dbo.CraneWmsOutbound',N'U') AS id")).recordset[0]?.id != null;
     const pageSize = Math.min(100, Math.max(1, Math.trunc(Number(body.PageSize) || 20)));
     const pageIndex = Math.max(0, Math.trunc(Number(body.PageIndex) || 0));
     if (!Number.isSafeInteger(pageIndex * pageSize) || pageIndex * pageSize > 2147483647) fail(400, 'Trang không hợp lệ');
@@ -312,14 +315,14 @@ async function searchAppOrders(pool, body, isTest) {
         .input('Skip', sql.Int, pageIndex * pageSize).input('Take', sql.Int, pageSize).query(`
             SELECT p.ID_PhieuXuatBTP AS id,p.So_PhieuXuatBTP AS soPhieu,p.Ngay_XuatBTP AS ngayXuat,
                 p.ID_KhoXuat AS idKhoXuat,k.Ten_Kho AS khoXuat,h.Ten_HinhThucXuatBTP AS loaiPhieu,
-                ISNULL(p.QrStatus,0) AS trangThai,o.Status AS wmsStatus,
+                ISNULL(p.QrStatus,0) AS trangThai,${trackingExists ? 'o.Status' : 'CAST(NULL AS varchar(24))'} AS wmsStatus,
                 p.ID_DonVi AS idDonVi,p.ID_BoPhan AS idBoPhan,
                 LTRIM(RTRIM(dv.Ten_DonVi)) AS tenDonVi,
                 LTRIM(RTRIM(bp.Ten_BoPhan)) AS tenBoPhan
             FROM dbo.PhieuXuatBTP p
             JOIN dbo.DM_Kho k ON k.ID_Kho=p.ID_KhoXuat
             LEFT JOIN dbo.DM_HinhThucXuatBTP h ON h.ID_HinhThucXuatBTP=p.ID_HinhThucXuatBTP
-            LEFT JOIN dbo.CraneWmsOutbound o ON o.ID_PhieuXuatBTP=p.ID_PhieuXuatBTP
+            ${trackingExists ? 'LEFT JOIN dbo.CraneWmsOutbound o ON o.ID_PhieuXuatBTP=p.ID_PhieuXuatBTP' : ''}
             LEFT JOIN TAG_System.dbo.DM_DonVi dv ON dv.ID_DonVi=p.ID_DonVi
             LEFT JOIN TAG_System.dbo.DM_BoPhan bp ON bp.ID_BoPhan=p.ID_BoPhan
             WHERE p.TonTai=1 AND p.ID_KhoXuat=@Warehouse AND ISNULL(p.TrangThai,0)<>5
