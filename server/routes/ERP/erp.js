@@ -896,7 +896,7 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
 
     if (
         (!isCraneReturn && (!palletID || palletID.length > 255)) ||
-        (isCraneReturn && (!oldPalletID || !newPalletID || oldPalletID.length > 255 || newPalletID.length > 255 || oldPalletID === newPalletID)) ||
+        (isCraneReturn && (!oldPalletID || !newPalletID || oldPalletID.length > 255 || newPalletID.length > 255)) ||
         !locationReference.valid ||
         (hasPreviousLocation && !validLocation(previousLocationID)) ||
         (hasPreviousLocation && locationID !== null && previousLocationID === locationID)

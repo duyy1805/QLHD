@@ -3,6 +3,7 @@ const sql = require('mssql');
 const checkApiKey = require('../../middleware/apiKey');
 const crane = require('../../utils/craneWms');
 const outbound = require('../../utils/craneWmsOutbound');
+const dispatch = require('../../utils/craneOutboundDispatch');
 
 module.exports = function createCraneOutboundRouter(poolPromise, { isTest = false } = {}) {
     const router = express.Router();
@@ -60,6 +61,10 @@ module.exports = function createCraneOutboundRouter(poolPromise, { isTest = fals
     router.post('/wms/outbound-callback', checkApiKey, async (req, res, next) => {
         try {
             const body = req.body || {}, pool = await poolPromise;
+            if (body.status === 'REJECTED') {
+                const result = await dispatch.rejectInsufficientStock(pool, body);
+                return res.status(result.status || 200).json(result);
+            }
             if (body.eventID == null) {
                 const id = crane.positiveId(body.orderID);
                 if (id) {

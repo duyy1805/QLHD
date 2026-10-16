@@ -6,6 +6,7 @@ const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const sql = require('mssql');
 const craneWmsInbound = require('../utils/craneWmsInbound');
 const TEST_WAREHOUSE_ID = craneWmsInbound.TEST_WAREHOUSE_ID;
+const TEST_TEMP_LOCATION_CODE = craneWmsInbound.TEST_TEMP_LOCATION_CODE;
 const checkApiKey = require('../middleware/apiKey');
 const {
     RENTAL_WAREHOUSE_ID,
@@ -1042,8 +1043,9 @@ router.post('/btp/phieunhap/add-chi-tiet', async (req, res) => {
     const body = req.body || {};
     const idKien = toIntOrNull(body.ID_TheKhoKienBTP);
     const idPhieuNhap = toIntOrNull(body.ID_PhieuNhapBTP);
+    const idDetail = toIntOrNull(body.ID_TheKhoKienBTP_ChiTiet);
     const btps = Array.isArray(body.bTPs) ? body.bTPs : [];
-    if (!idKien || !idPhieuNhap || btps.length !== 1) return res.status(400).json({ message: 'Mỗi kiện phải có đúng một loại BTP' });
+    if (!idKien || !idPhieuNhap || btps.length !== 1) return res.status(400).json({ message: 'Mỗi lần lưu cần đúng một dòng BTP' });
     try {
         const pool = await testpoolPromise;
         const tx = new sql.Transaction(pool);
@@ -1051,57 +1053,125 @@ router.post('/btp/phieunhap/add-chi-tiet', async (req, res) => {
         try {
             await ensureImportEditable(new sql.Request(tx), idPhieuNhap);
             await craneWmsInbound.assertPackageUnlocked(tx, idKien);
+            await new sql.Request(tx)
+                .input('ID_PhieuNhap_Lock', sql.Int, idPhieuNhap)
+                .query('SELECT ID_PhieuNhapBTP FROM PhieuNhapBTP WITH (UPDLOCK, HOLDLOCK) WHERE ID_PhieuNhapBTP = @ID_PhieuNhap_Lock;');
             const packageResult = await new sql.Request(tx)
                 .input('ID_Kien_AddDetail', sql.Int, idKien)
                 .input('ID_PhieuNhap_AddDetail', sql.Int, idPhieuNhap)
                 .query(`
                     SELECT TOP (1) ID_TheKhoKienBTP
-                    FROM TheKhoKienBTP
+                    FROM TheKhoKienBTP WITH (UPDLOCK, HOLDLOCK)
                     WHERE ID_TheKhoKienBTP = @ID_Kien_AddDetail
                       AND ID_PhieuNhapBTP = @ID_PhieuNhap_AddDetail
                       AND TonTai = 1;
                 `);
             if (!packageResult.recordset?.length) throw new Error('Kiện không thuộc phiếu nhập BTP này');
-            let savedDetailId = null;
-            for (const item of btps) {
-                const soLuong = toNumber(item.SoLuong ?? item.soLuong);
-                if (soLuong <= 0) throw new Error('Số lượng BTP phải lớn hơn 0');
-                const dauTuan = normalizeDauTuan(item.DauTuan ?? item.dauTuan);
-                const result = await new sql.Request(tx)
+            const item = btps[0];
+            const soLuong = Number(item.SoLuong ?? item.soLuong);
+            const itemCode = String(item.ItemCode || '').trim();
+            if (!Number.isFinite(soLuong) || soLuong <= 0 || !itemCode) throw new Error('BTP hoặc số lượng không hợp lệ');
+            const dauTuan = normalizeDauTuan(item.DauTuan ?? item.dauTuan);
+            if (idDetail) {
+                const existing = await new sql.Request(tx)
+                    .input('ID_Kien_ExistingDetail', sql.Int, idKien)
+                    .input('ID_ExistingDetail', sql.Int, idDetail)
+                    .query(`
+                        SELECT ItemCode, ID_KeHoachSanXuat, ID_DonHang_LoSanXuat,
+                               ID_DonHang_SanPham, ID_QuyTrinhSanXuat, ID_DonHang
+                        FROM TheKhoKienBTP_ChiTiet WITH (UPDLOCK, HOLDLOCK)
+                        WHERE ID_TheKhoKienBTP = @ID_Kien_ExistingDetail
+                          AND ID_TheKhoKienBTP_ChiTiet = @ID_ExistingDetail
+                          AND ISNULL(TonTai, 1) = 1;
+                    `);
+                const row = existing.recordset?.[0];
+                if (!row || String(row.ItemCode || '').trim().toUpperCase() !== itemCode.toUpperCase()
+                    || [['ID_KeHoachSanXuat', 'IdKeHoachSanXuat'],
+                        ['ID_DonHang_LoSanXuat', 'IdDonHangLoSanXuat'],
+                        ['ID_DonHang_SanPham', 'IdDonHangSanPham'],
+                        ['ID_QuyTrinhSanXuat', 'IdQuyTrinhSanXuat'],
+                        ['ID_DonHang', 'IdDonHang']]
+                        .some(([field, payloadField]) => (toIntOrNull(row[field]) || 0) !== (toIntOrNull(item[payloadField]) || 0))) {
+                    throw new Error('Chỉ có thể sửa số lượng và dấu tuần của dòng BTP hiện có');
+                }
+            }
+            const detailRequest = new sql.Request(tx)
                     .input('ID_TheKhoKienBTP', sql.Int, idKien)
                     .input('ID_PhieuNhapBTP', sql.Int, idPhieuNhap)
+                    .input('ID_TheKhoKienBTP_ChiTiet', sql.Int, idDetail)
                     .input('ID_KeHoachSanXuat', sql.Int, toIntOrNull(item.IdKeHoachSanXuat) || 0)
                     .input('ID_DonHang_LoSanXuat', sql.Int, toIntOrNull(item.IdDonHangLoSanXuat) || 0)
                     .input('ID_DonHang_SanPham', sql.Int, toIntOrNull(item.IdDonHangSanPham) || 0)
-                    .input('ItemCode', sql.NVarChar(255), item.ItemCode || null)
+                    .input('ItemCode', sql.NVarChar(255), itemCode)
                     .input('Ten_SanPham', sql.NVarChar(255), item.tenSanPham || item.TenSanPham || null)
                     .input('ID_QuyTrinhSanXuat', sql.Int, toIntOrNull(item.IdQuyTrinhSanXuat) || 0)
                     .input('Ten_QuyTrinhSanXuat', sql.NVarChar(255), item.Ten_QuyTrinhSanXuat || null)
                     .input('ID_DonHang', sql.Int, toIntOrNull(item.IdDonHang) || 0)
                     .input('SoLuong', sql.Decimal(18, 2), soLuong)
-                    .input('DauTuan', sql.NVarChar(50), dauTuan)
-                    .query(`
-                        MERGE TheKhoKienBTP_ChiTiet AS Target
-                        USING (SELECT @ID_TheKhoKienBTP AS ID_TheKhoKienBTP) AS Source
-                        ON Target.ID_TheKhoKienBTP = Source.ID_TheKhoKienBTP
-                           AND (Target.ItemCode = @ItemCode OR Target.ItemCode IS NULL)
-                           AND ISNULL(Target.ID_KeHoachSanXuat, 0) = @ID_KeHoachSanXuat
-                           AND ISNULL(Target.ID_DonHang_LoSanXuat, 0) = @ID_DonHang_LoSanXuat
-                           AND ISNULL(Target.ID_DonHang_SanPham, 0) = @ID_DonHang_SanPham
-                           AND ISNULL(Target.ID_PhieuNhapBTP, 0) = @ID_PhieuNhapBTP
-                           AND ISNULL(Target.ID_QuyTrinhSanXuat, 0) = @ID_QuyTrinhSanXuat
-                           AND ISNULL(Target.ID_DonHang, 0) = @ID_DonHang
-                        WHEN MATCHED THEN UPDATE SET SoLuong = @SoLuong, DauTuan = @DauTuan, TonTai = 1
-                        WHEN NOT MATCHED THEN INSERT
-                            (ID_TheKhoKienBTP, ID_PhieuNhapBTP, ID_KeHoachSanXuat, ID_DonHang_LoSanXuat, ID_DonHang_SanPham, ItemCode, Ten_SanPham, ID_QuyTrinhSanXuat, Ten_QuyTrinhSanXuat, ID_DonHang, SoLuong, TonTai, DauTuan)
-                        VALUES
-                            (@ID_TheKhoKienBTP, @ID_PhieuNhapBTP, @ID_KeHoachSanXuat, @ID_DonHang_LoSanXuat, @ID_DonHang_SanPham, @ItemCode, @Ten_SanPham, @ID_QuyTrinhSanXuat, @Ten_QuyTrinhSanXuat, @ID_DonHang, @SoLuong, 1, @DauTuan)
-                        OUTPUT inserted.ID_TheKhoKienBTP_ChiTiet AS IdDetail;
-                    `);
-                savedDetailId = result.recordset?.[0]?.IdDetail;
+                    .input('DauTuan', sql.NVarChar(50), dauTuan);
+            const result = await detailRequest.query(`
+                IF @ID_TheKhoKienBTP_ChiTiet IS NOT NULL AND NOT EXISTS (
+                    SELECT 1 FROM TheKhoKienBTP_ChiTiet WITH (UPDLOCK, HOLDLOCK)
+                    WHERE ID_TheKhoKienBTP_ChiTiet = @ID_TheKhoKienBTP_ChiTiet
+                      AND ID_TheKhoKienBTP = @ID_TheKhoKienBTP AND ISNULL(TonTai, 1) = 1
+                ) THROW 51046, N'Chi tiết kiện không còn tồn tại', 1;
+
+                IF EXISTS (
+                    SELECT 1 FROM TheKhoKienBTP_ChiTiet WITH (UPDLOCK, HOLDLOCK)
+                    WHERE ID_TheKhoKienBTP = @ID_TheKhoKienBTP AND ISNULL(TonTai, 1) = 1
+                      AND (@ID_TheKhoKienBTP_ChiTiet IS NULL OR ID_TheKhoKienBTP_ChiTiet <> @ID_TheKhoKienBTP_ChiTiet)
+                      AND UPPER(LTRIM(RTRIM(ISNULL(ItemCode, N'')))) = UPPER(@ItemCode)
+                      AND ISNULL(ID_KeHoachSanXuat, 0) = @ID_KeHoachSanXuat
+                      AND ISNULL(ID_DonHang_LoSanXuat, 0) = @ID_DonHang_LoSanXuat
+                      AND ISNULL(ID_DonHang_SanPham, 0) = @ID_DonHang_SanPham
+                      AND ISNULL(ID_QuyTrinhSanXuat, 0) = @ID_QuyTrinhSanXuat
+                      AND ISNULL(ID_DonHang, 0) = @ID_DonHang
+                      AND ISNULL(NULLIF(LTRIM(RTRIM(DauTuan)), N''), N'') = ISNULL(@DauTuan, N'')
+                ) THROW 51047, N'BTP và dấu tuần đã có trong kiện, hãy sửa dòng hiện có', 1;
+
+                IF @ID_TheKhoKienBTP_ChiTiet IS NULL
+                BEGIN
+                    INSERT INTO TheKhoKienBTP_ChiTiet
+                        (ID_TheKhoKienBTP, ID_PhieuNhapBTP, ID_KeHoachSanXuat, ID_DonHang_LoSanXuat,
+                         ID_DonHang_SanPham, ItemCode, Ten_SanPham, ID_QuyTrinhSanXuat,
+                         Ten_QuyTrinhSanXuat, ID_DonHang, SoLuong, TonTai, DauTuan)
+                    VALUES
+                        (@ID_TheKhoKienBTP, @ID_PhieuNhapBTP, @ID_KeHoachSanXuat, @ID_DonHang_LoSanXuat,
+                         @ID_DonHang_SanPham, @ItemCode, @Ten_SanPham, @ID_QuyTrinhSanXuat,
+                         @Ten_QuyTrinhSanXuat, @ID_DonHang, @SoLuong, 1, @DauTuan);
+                    SELECT CAST(SCOPE_IDENTITY() AS int) AS IdDetail;
+                END
+                ELSE
+                BEGIN
+                    UPDATE TheKhoKienBTP_ChiTiet
+                    SET SoLuong = @SoLuong, DauTuan = @DauTuan
+                    WHERE ID_TheKhoKienBTP_ChiTiet = @ID_TheKhoKienBTP_ChiTiet
+                      AND ID_TheKhoKienBTP = @ID_TheKhoKienBTP AND ISNULL(TonTai, 1) = 1;
+                    SELECT @ID_TheKhoKienBTP_ChiTiet AS IdDetail;
+                END;
+            `);
+            const importDetail = await new sql.Request(tx)
+                .input('ID_PhieuNhapBTP', sql.Int, idPhieuNhap)
+                .execute('App_PhieuNhapBTP_ThongTinChiTiet');
+            const requested = (importDetail.recordsets?.[1] || [])
+                .filter((row) => String(row.ItemCode || '').trim().toUpperCase() === itemCode.toUpperCase())
+                .reduce((sum, row) => sum + toNumber(row.SoLuong_NhapKho), 0);
+            const allocatedResult = await new sql.Request(tx)
+                .input('ID_PhieuNhap_Allocated', sql.Int, idPhieuNhap)
+                .input('ItemCode_Allocated', sql.NVarChar(255), itemCode)
+                .query(`
+                    SELECT ISNULL(SUM(ct.SoLuong), 0) AS Allocated
+                    FROM TheKhoKienBTP_ChiTiet ct
+                    INNER JOIN TheKhoKienBTP k ON k.ID_TheKhoKienBTP = ct.ID_TheKhoKienBTP
+                    WHERE k.ID_PhieuNhapBTP = @ID_PhieuNhap_Allocated
+                      AND ISNULL(k.TonTai, 1) = 1 AND ISNULL(ct.TonTai, 1) = 1
+                      AND UPPER(LTRIM(RTRIM(ct.ItemCode))) = UPPER(@ItemCode_Allocated);
+                `);
+            if (requested <= 0 || toNumber(allocatedResult.recordset?.[0]?.Allocated) > requested + 0.000001) {
+                throw new Error('Số lượng BTP vượt quá số lượng của phiếu nhập');
             }
             await tx.commit();
-            res.json({ ok: true, message: 'success', idDetail: savedDetailId });
+            res.json({ ok: true, message: 'success', idDetail: result.recordset?.[0]?.IdDetail });
         } catch (error) {
             await tx.rollback();
             throw error;
@@ -1164,6 +1234,14 @@ router.post('/btp/phieunhap/gan-qr', async (req, res) => {
         await craneWmsInbound.assertPackageUnlocked(pool, idKien);
         if (req.body?.craneMode === true) {
             if (Number(info.recordset[0].ID_KhoNhap) !== TEST_WAREHOUSE_ID) return res.status(400).json({ message: `Phiếu nhập demo không thuộc kho BTP test (ID ${TEST_WAREHOUSE_ID})` });
+            if (req.body?.deferWmsSelection === true) {
+                const saved = await craneWmsInbound.assignQrOnly(pool, {
+                    orderID: info.recordset[0].ID_PhieuNhapBTP, packageID: idKien,
+                    qrCode, warehouseID: TEST_WAREHOUSE_ID,
+                });
+                return res.json({ ok: true, message: 'success', idViTriKho: saved.idViTriKho,
+                    locationChanged: false, wmsPackage: null, dispatchToken: null });
+            }
             const queued = await craneWmsInbound.assignQrAndEnqueue(pool, { orderID: info.recordset[0].ID_PhieuNhapBTP,
                 packageID: idKien, qrCode, warehouseID: TEST_WAREHOUSE_ID });
             const deferredDispatch = req.body?.dispatchWms === false;
@@ -1186,6 +1264,22 @@ router.post('/btp/phieunhap/gan-qr', async (req, res) => {
         });
     } catch (error) {
         res.status(400).json({ message: error.message });
+    }
+});
+
+router.post('/btp/phieunhap/:id/gui-wms-kien', async (req, res) => {
+    const orderID = toIntOrNull(req.params.id);
+    const packageIDs = [...new Set((Array.isArray(req.body?.packageIds) ? req.body.packageIds : [])
+        .map(toIntOrNull).filter(Boolean))];
+    if (!orderID || !packageIDs.length)
+        return res.status(400).json({ message: 'Phiếu nhập hoặc danh sách kiện không hợp lệ' });
+    try {
+        const result = await craneWmsInbound.dispatchSelectedPackages(
+            await testpoolPromise, orderID, packageIDs, TEST_WAREHOUSE_ID,
+        );
+        return res.json({ ok: true, ...result });
+    } catch (error) {
+        return res.status(400).json({ message: error.message });
     }
 });
 
@@ -1487,7 +1581,7 @@ router.get('/btp/phieuxuat/goi-y-kien', async (req, res) => {
                 SELECT k.QRCode FROM dbo.TheKhoKienBTP k
                 JOIN dbo.CraneWmsInbound i ON i.ID_PhieuNhapBTP=k.ID_PhieuNhapBTP
                 JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho
-                WHERE k.TonTai=1 AND v.ID_Kho=${TEST_WAREHOUSE_ID} AND v.MaViTriKho=N'CT-TEMP-TEST'`);
+                WHERE k.TonTai=1 AND v.ID_Kho=${TEST_WAREHOUSE_ID} AND v.MaViTriKho=N'${TEST_TEMP_LOCATION_CODE}'`);
             const pendingQr = new Set((pendingInbound.recordset || []).map(row => String(row.QRCode).trim().toUpperCase()));
             packages = packages.filter(item => !pendingQr.has(item.qrCode.toUpperCase()));
         }
@@ -1522,7 +1616,10 @@ router.post('/btp/phieunhap/:id/gui-lai-wms', checkApiKey, async (req, res) => {
     }
 });
 
-router.post('/btp/phieunhap/:id/gui-lai-kien-loi', verifyToken, async (req, res) => {
+// Các API thao tác phiếu nhập của môi trường test dùng chung cơ chế truy cập nội bộ.
+// Không dùng verifyToken ở riêng route retry vì app đăng nhập qua CORE_API_BASE_URL;
+// token đó có thể không được ký bằng ACCESS_TOKEN_SECRET của backend local.
+router.post('/btp/phieunhap/:id/gui-lai-kien-loi', async (req, res) => {
     const orderID = Number(req.params.id);
     if (!Number.isSafeInteger(orderID) || orderID <= 0) return res.status(400).json({ message: 'ID phiếu nhập không hợp lệ' });
     try {
@@ -1535,6 +1632,15 @@ router.post('/btp/phieunhap/:id/gui-lai-kien-loi', verifyToken, async (req, res)
 });
 
 const craneOutboundDispatch = require('../utils/craneOutboundDispatch');
+router.get('/btp/cau-truc/orders/:id/available-lots', async (req, res) => {
+    const id = toIntOrNull(req.params.id);
+    if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });
+    try {
+        const lots = await craneOutboundDispatch.availableLots(await testpoolPromise, id, TEST_WAREHOUSE_ID);
+        if (lots === null) return res.status(404).json({ message: 'Phiếu không thuộc kho cầu trục thử nghiệm' });
+        return res.json({ lots });
+    } catch (error) { return res.status(500).json({ message: error.message }); }
+});
 router.get('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
     const id = toIntOrNull(req.params.id);
     if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });
@@ -1545,7 +1651,7 @@ router.post('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
     const id = toIntOrNull(req.params.id);
     if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });
     try {
-        const result = await craneOutboundDispatch.dispatch(await testpoolPromise, id, TEST_WAREHOUSE_ID);
+        const result = await craneOutboundDispatch.dispatch(await testpoolPromise, id, TEST_WAREHOUSE_ID, undefined, req.body?.skipLot);
         return res.status(result.status).json({ ok: !result.error, ...result, message: result.error });
     } catch (error) { return res.status(500).json({ message: error.message }); }
 });
@@ -1670,7 +1776,7 @@ router.get('/btp/phieuxuat/kien/:qrcode/:idPhieuXuat/:idDonHangLoSanXuat', async
                 SELECT TOP (1) 1 AS Pending FROM dbo.TheKhoKienBTP k
                 JOIN dbo.CraneWmsInbound i ON i.ID_PhieuNhapBTP=k.ID_PhieuNhapBTP
                 JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho
-                WHERE k.QRCode=@PalletID AND k.TonTai=1 AND v.ID_Kho=${TEST_WAREHOUSE_ID} AND v.MaViTriKho=N'CT-TEMP-TEST'`);
+                WHERE k.QRCode=@PalletID AND k.TonTai=1 AND v.ID_Kho=${TEST_WAREHOUSE_ID} AND v.MaViTriKho=N'${TEST_TEMP_LOCATION_CODE}'`);
         if (pendingInbound.recordset?.length) return res.status(409).json({ message: 'Kiện nhập đang chờ WMS cập nhật vị trí' });
         const locked = await pool.request().input('PalletID', sql.NVarChar(255), req.params.qrcode)
             .query(`IF OBJECT_ID(N'dbo.CraneWmsOutboundPallet', N'U') IS NOT NULL
@@ -1761,7 +1867,7 @@ router.put('/btp/phieuxuat/xac-nhan', async (req, res) => {
             JOIN dbo.CraneWmsInbound i ON i.ID_PhieuNhapBTP=k.ID_PhieuNhapBTP
             JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho
             WHERE d.ID_TheKhoKienBTP_ChiTiet IN (${detailParams.join(',')})
-              AND k.TonTai=1 AND v.ID_Kho=${TEST_WAREHOUSE_ID} AND v.MaViTriKho=N'CT-TEMP-TEST'`);
+              AND k.TonTai=1 AND v.ID_Kho=${TEST_WAREHOUSE_ID} AND v.MaViTriKho=N'${TEST_TEMP_LOCATION_CODE}'`);
         if (pendingInbound.recordset?.length) return res.status(409).json({ message: 'Kiện nhập đang chờ WMS cập nhật vị trí' });
         const locked = await lockRequest.query(`IF OBJECT_ID(N'dbo.CraneWmsOutboundPallet', N'U') IS NOT NULL
             SELECT TOP (1) p.PalletID FROM dbo.CraneWmsOutboundPallet p

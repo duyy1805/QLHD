@@ -1453,6 +1453,14 @@ router.post("/btp/phieunhap/gan-qr", async (req, res) => {
       const config = craneWms.getCraneConfig();
       if (!config || Number(info.recordset[0].ID_KhoNhap) !== config.warehouseID)
         return res.status(400).json({ message: 'Phiếu nhập không thuộc kho cầu trục đã cấu hình' });
+      if (req.body?.deferWmsSelection === true) {
+        const saved = await craneWmsInbound.assignQrOnly(pool, {
+          orderID: info.recordset[0].ID_PhieuNhapBTP, packageID: idKien,
+          qrCode, warehouseID: config.warehouseID,
+        });
+        return res.json({ ok: true, message: 'success', idViTriKho: saved.idViTriKho,
+          locationChanged: false, wmsPackage: null, dispatchToken: null });
+      }
       const queued = await craneWmsInbound.assignQrAndEnqueue(pool, {
         orderID: info.recordset[0].ID_PhieuNhapBTP, packageID: idKien, qrCode, warehouseID: config.warehouseID,
       });
@@ -1479,6 +1487,24 @@ router.post("/btp/phieunhap/gan-qr", async (req, res) => {
     });
   } catch (error) {
     res.status(400).json({ message: error.message });
+  }
+});
+
+router.post('/btp/phieunhap/:id/gui-wms-kien', async (req, res) => {
+  const orderID = craneWms.positiveId(req.params.id);
+  const packageIDs = [...new Set((Array.isArray(req.body?.packageIds) ? req.body.packageIds : [])
+    .map(craneWms.positiveId).filter(Boolean))];
+  if (!orderID || !packageIDs.length)
+    return res.status(400).json({ message: 'Phiếu nhập hoặc danh sách kiện không hợp lệ' });
+  try {
+    const config = craneWms.getCraneConfig();
+    if (!config) return res.status(503).json({ message: 'Chưa cấu hình kho cầu trục' });
+    const result = await craneWmsInbound.dispatchSelectedPackages(
+      await tagpoolPromise, orderID, packageIDs, config.warehouseID,
+    );
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
   }
 });
 
@@ -2268,6 +2294,17 @@ router.get('/btp/cau-truc/orders/:id', async (req, res) => {
 });
 
 const craneOutboundDispatch = require('../utils/craneOutboundDispatch');
+router.get('/btp/cau-truc/orders/:id/available-lots', async (req, res) => {
+  const id = craneWms.positiveId(req.params.id);
+  if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });
+  try {
+    const config = craneWms.getCraneConfig();
+    if (!config) return res.status(503).json({ message: 'Chưa cấu hình kho cầu trục' });
+    const lots = await craneOutboundDispatch.availableLots(await tagpoolPromise, id, config.warehouseID);
+    if (lots === null) return res.status(404).json({ message: 'Phiếu không thuộc kho cầu trục' });
+    return res.json({ lots });
+  } catch (error) { return res.status(500).json({ message: error.message }); }
+});
 router.get('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
   const id = craneWms.positiveId(req.params.id);
   if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });
@@ -2280,7 +2317,7 @@ router.post('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
   try {
     const config = craneWms.getCraneConfig();
     if (!config) return res.status(503).json({ message: 'Chưa cấu hình kho cầu trục' });
-    const result = await craneOutboundDispatch.dispatch(await tagpoolPromise, id, config.warehouseID);
+    const result = await craneOutboundDispatch.dispatch(await tagpoolPromise, id, config.warehouseID, undefined, req.body?.skipLot);
     return res.status(result.status).json({ ok: !result.error, ...result, message: result.error });
   } catch (error) { return res.status(500).json({ message: error.message }); }
 });

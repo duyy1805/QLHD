@@ -1,16 +1,19 @@
 const axios = require('axios');
 const sql = require('mssql');
 const TEST_WAREHOUSE_ID = 40;
+const TEST_TEMP_LOCATION_CODE = 'CT-TEMP';
 
 const DEFAULT_URL = 'https://z76-local.vercel.app/api/share/wmsInbound';
 
 function getDispatchErrorMessage(error) {
     const data = error?.response?.data;
-    return String(data?.message || data?.detail || data?.error || error?.message || 'Không gửi được WMS').slice(0, 1000);
+    const description = data?.detail || data?.details || data?.errors;
+    const detail = typeof description === 'string' ? description : description ? JSON.stringify(description) : '';
+    const message = [data?.message || data?.error, detail].filter(Boolean).join(' | ');
+    return String(message || (typeof data === 'string' ? data : '') || error?.message || 'Không gửi được WMS').slice(0, 1000);
 }
 
 function buildPayload(header, rows) {
-    const date = new Date(header.Ngay_NhapBTP);
     const pallets = new Map();
     for (const row of rows) {
         const palletID = String(row.QRCode || '').trim();
@@ -24,14 +27,13 @@ function buildPayload(header, rows) {
         if (!pallets.has(palletID)) pallets.set(palletID, { palletID, items: [] });
         pallets.get(palletID).items.push({ itemCode, itemName, Lot, quantity });
     }
-    if (!header.So_PhieuNhapBTP || !Number.isFinite(date.getTime()) || !pallets.size) {
-        throw new Error('Phiếu nhập cầu trục thiếu mã phiếu, ngày nhập hoặc kiện để gửi WMS');
+    if (!header.So_PhieuNhapBTP || !pallets.size) {
+        throw new Error('Phiếu nhập cầu trục thiếu mã phiếu hoặc kiện để gửi WMS');
     }
     return {
         orderID: String(header.ID_PhieuNhapBTP),
         orderCode: String(header.So_PhieuNhapBTP),
         orderType: 'INBOUND',
-        date: date.toISOString(),
         pallets: [...pallets.values()],
     };
 }
@@ -70,6 +72,37 @@ async function assertPackageUnlocked(executor, packageID) {
     if (result.recordset?.length) throw new Error('Kiện đã gửi WMS, không thể sửa hoặc xóa');
 }
 
+async function assignQrOnly(pool, { orderID, packageID, qrCode, warehouseID }) {
+    const tx = new sql.Transaction(pool);
+    await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    try {
+        await assertPackageUnlocked(tx, packageID);
+        const result = await new sql.Request(tx)
+            .input('OrderID', sql.Int, orderID)
+            .input('PackageID', sql.Int, packageID)
+            .input('WarehouseID', sql.Int, warehouseID)
+            .input('QRCode', sql.NVarChar(100), qrCode)
+            .query(`
+                IF NOT EXISTS (SELECT 1 FROM dbo.PhieuNhapBTP WITH (UPDLOCK,HOLDLOCK)
+                    WHERE ID_PhieuNhapBTP=@OrderID AND ID_KhoNhap=@WarehouseID
+                      AND TonTai=1 AND ISNULL(QrStatus,0)=0)
+                    THROW 51072, N'Phiếu nhập không hợp lệ hoặc đã xác nhận', 1;
+                IF NOT EXISTS (SELECT 1 FROM dbo.TheKhoKienBTP WITH (UPDLOCK,HOLDLOCK)
+                    WHERE ID_TheKhoKienBTP=@PackageID AND ID_PhieuNhapBTP=@OrderID AND TonTai=1)
+                    THROW 51073, N'Kiện không thuộc phiếu nhập', 1;
+                IF EXISTS (SELECT 1 FROM dbo.TheKhoKienBTP WITH (UPDLOCK,HOLDLOCK)
+                    WHERE QRCode=@QRCode AND ID_TheKhoKienBTP<>@PackageID AND TonTai=1)
+                    THROW 51074, N'QRCode đã tồn tại ở kiện khác', 1;
+                UPDATE dbo.TheKhoKienBTP SET QRCode=@QRCode WHERE ID_TheKhoKienBTP=@PackageID;
+                SELECT ID_ViTriKho FROM dbo.TheKhoKienBTP WHERE ID_TheKhoKienBTP=@PackageID;`);
+        await tx.commit();
+        return { idViTriKho: result.recordset?.[0]?.ID_ViTriKho ?? null };
+    } catch (error) {
+        try { await tx.rollback(); } catch (_) { /* noop */ }
+        throw error;
+    }
+}
+
 async function enqueuePackage(executor, orderID, packageID, warehouseID) {
     const result = await new sql.Request(executor)
         .input('OrderID', sql.Int, orderID)
@@ -78,7 +111,7 @@ async function enqueuePackage(executor, orderID, packageID, warehouseID) {
                        k.ID_TheKhoKienBTP,k.QRCode,d.ItemCode,d.Ten_SanPham,d.DauTuan,d.SoLuong
                 FROM dbo.PhieuNhapBTP p
                 JOIN dbo.TheKhoKienBTP k ON k.ID_PhieuNhapBTP=p.ID_PhieuNhapBTP AND k.TonTai=1
-                JOIN dbo.TheKhoKienBTP_ChiTiet d ON d.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP AND d.TonTai=1
+                LEFT JOIN dbo.TheKhoKienBTP_ChiTiet d ON d.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP AND d.TonTai=1
                 WHERE p.ID_PhieuNhapBTP=@OrderID AND k.ID_TheKhoKienBTP=@PackageID AND p.TonTai=1
                 ORDER BY d.ID_TheKhoKienBTP_ChiTiet`);
     const header = result.recordset[0];
@@ -161,8 +194,9 @@ async function getWarehouseID(executor, orderID) {
 async function testPendingLocationID(executor) {
     const result = await new sql.Request(executor).query(`
         SELECT ID_ViTriKho FROM dbo.DM_Kho_ViTri
-        WHERE ID_Kho=${TEST_WAREHOUSE_ID} AND MaViTriKho=N'CT-TEMP-TEST' AND TonTai=1 AND SuDung=1`);
-    if (result.recordset.length !== 1) throw new Error(`DB test chưa có vị trí tạm CT-TEMP-TEST của kho ID ${TEST_WAREHOUSE_ID}`);
+        WHERE ID_Kho=${TEST_WAREHOUSE_ID} AND MaViTriKho=N'${TEST_TEMP_LOCATION_CODE}' AND TonTai=1 AND SuDung=1`);
+    if (result.recordset.length !== 1) throw craneWms.craneError(503,
+        `DB test chưa có vị trí tạm ${TEST_TEMP_LOCATION_CODE} của kho ID ${TEST_WAREHOUSE_ID}`);
     return Number(result.recordset[0].ID_ViTriKho);
 }
 
@@ -233,16 +267,37 @@ async function dispatch(pool, orderID, post = axios.post) {
     let responseStatus = null;
     let dispatchError = null;
     try {
-        const response = await post(process.env.WMS_INBOUND_URL || DEFAULT_URL,
-            JSON.parse(claimed.recordset[0].RequestJson), {
-                timeout: 10000,
-                headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `inbound-${orderID}` },
-            });
-        responseStatus = response.status;
-        if (responseStatus < 200 || responseStatus >= 300) throw new Error(`WMS HTTP ${responseStatus}`);
+        const payload = JSON.parse(claimed.recordset[0].RequestJson);
+        delete payload.date; // Legacy order-level date is not the pallet dispatch timestamp.
+        if (!Array.isArray(payload.pallets) || !payload.pallets.length ||
+            payload.pallets.some(p => !p || typeof p.palletID !== 'string' || !p.palletID.trim()) ||
+            new Set(payload.pallets.map(p => p.palletID.trim())).size !== payload.pallets.length)
+            throw new Error('Phiếu nhập WMS thiếu hoặc trùng mã kiện');
+        for (const pallet of payload.pallets) {
+            try {
+                if (!pallet.date) {
+                    pallet.date = new Date().toISOString();
+                    await pool.request().input('OrderID', sql.Int, orderID)
+                        .input('Payload', sql.NVarChar(sql.MAX), JSON.stringify(payload))
+                        .query(`UPDATE dbo.CraneWmsInbound SET RequestJson=@Payload,UpdatedAt=SYSUTCDATETIME()
+                                WHERE ID_PhieuNhapBTP=@OrderID AND DispatchStatus='SENDING'`);
+                }
+                const response = await post(process.env.WMS_INBOUND_URL || DEFAULT_URL,
+                    { ...payload, pallets: [pallet] }, {
+                        timeout: 10000,
+                        headers: { 'Content-Type': 'application/json',
+                            'Idempotency-Key': `inbound-${orderID}-${pallet.palletID.trim()}` },
+                    });
+                responseStatus = response.status;
+                if (responseStatus < 200 || responseStatus >= 300) throw new Error(`WMS HTTP ${responseStatus}`);
+            } catch (error) {
+                error.palletID = pallet.palletID;
+                throw error;
+            }
+        }
     } catch (error) {
         responseStatus = error.response?.status || responseStatus;
-        dispatchError = getDispatchErrorMessage(error);
+        dispatchError = `${error.palletID ? `Kiện ${error.palletID}: ` : ''}${getDispatchErrorMessage(error)}`.slice(0, 1000);
     }
     await pool.request().input('OrderID', sql.Int, orderID)
         .input('NextStatus', sql.VarChar(12), dispatchError ? 'FAILED' : 'SENT')
@@ -296,8 +351,20 @@ async function dispatchPackage(pool, orderID, packageID, post = axios.post) {
     let responseStatus = null;
     let dispatchError = null;
     try {
+        const payload = JSON.parse(row.RequestJson);
+        delete payload.date;
+        if (!Array.isArray(payload.pallets) || payload.pallets.length !== 1 ||
+            payload.pallets[0].palletID !== row.PalletID) throw new Error('Dữ liệu kiện WMS không hợp lệ');
+        if (!payload.pallets[0].date) {
+            payload.pallets[0].date = new Date().toISOString();
+            await pool.request().input('OrderID', sql.Int, orderID)
+                .input('PackageID', sql.Int, packageID)
+                .input('Payload', sql.NVarChar(sql.MAX), JSON.stringify(payload))
+                .query(`UPDATE dbo.CraneWmsInboundPackage SET RequestJson=@Payload,UpdatedAt=SYSUTCDATETIME()
+                        WHERE ID_PhieuNhapBTP=@OrderID AND ID_TheKhoKienBTP=@PackageID AND DispatchStatus='SENDING'`);
+        }
         const response = await post(process.env.WMS_INBOUND_URL || DEFAULT_URL,
-            JSON.parse(row.RequestJson), { timeout: 10000, headers: {
+            payload, { timeout: 10000, headers: {
                 'Content-Type': 'application/json',
                 'Idempotency-Key': `inbound-${orderID}-${row.PalletID}`,
             } });
@@ -305,7 +372,7 @@ async function dispatchPackage(pool, orderID, packageID, post = axios.post) {
         if (responseStatus < 200 || responseStatus >= 300) throw new Error(`WMS HTTP ${responseStatus}`);
     } catch (error) {
         responseStatus = error.response?.status || responseStatus;
-        dispatchError = getDispatchErrorMessage(error);
+        dispatchError = `${responseStatus ? `HTTP ${responseStatus}: ` : ''}${getDispatchErrorMessage(error)}`.slice(0, 1000);
     }
     await pool.request().input('OrderID', sql.Int, orderID).input('PackageID', sql.Int, packageID)
         .input('NextStatus', sql.VarChar(12), dispatchError ? 'FAILED' : 'SENT')
@@ -329,6 +396,66 @@ async function dispatchFailedPackages(pool, orderID, post = axios.post) {
     const packages = [];
     for (const row of result.recordset) packages.push(await dispatchPackage(pool, orderID, row.ID_TheKhoKienBTP, post));
     return { packages, wmsInbound: await statusWithPackages(pool, orderID) };
+}
+
+async function runSelectedPackageDispatch(packageIDs, { prepare, send }) {
+    const results = [];
+    for (const packageID of packageIDs) {
+        try {
+            const prepared = await prepare(packageID);
+            if (prepared?.result) {
+                results.push({ idPackage: packageID, ...prepared });
+                continue;
+            }
+            const dispatched = await send(packageID);
+            const dispatchStatus = dispatched?.DispatchStatus;
+            if (dispatchStatus === 'SENT') {
+                results.push({ idPackage: packageID, result: 'SENT' });
+            } else if (dispatchStatus === 'FAILED') {
+                results.push({ idPackage: packageID, result: 'FAILED',
+                    message: dispatched.DispatchError || 'Không gửi được WMS' });
+            } else {
+                results.push({ idPackage: packageID, result: 'SKIPPED',
+                    message: dispatchStatus === 'SENDING' ? 'Kiện đang được gửi WMS' : 'Kiện chưa sẵn sàng để gửi WMS' });
+            }
+        } catch (error) {
+            results.push({ idPackage: packageID, result: 'SKIPPED', message: error.message });
+        }
+    }
+    return results;
+}
+
+async function dispatchSelectedPackages(pool, orderID, packageIDs, warehouseID, post = axios.post) {
+    const order = (await pool.request().input('OrderID', sql.Int, orderID)
+        .input('WarehouseID', sql.Int, warehouseID).query(`
+            SELECT ID_PhieuNhapBTP FROM dbo.PhieuNhapBTP
+            WHERE ID_PhieuNhapBTP=@OrderID AND ID_KhoNhap=@WarehouseID
+              AND TonTai=1 AND ISNULL(QrStatus,0)=0`)).recordset[0];
+    if (!order) throw new Error('Phiếu nhập không hợp lệ, sai kho cầu trục hoặc đã xác nhận');
+
+    const results = await runSelectedPackageDispatch(packageIDs, {
+        prepare: async (packageID) => {
+            const existing = await packageStatus(pool, orderID, packageID);
+            if (existing?.DispatchStatus === 'SENT') return { result: 'SENT' };
+            if (existing?.DispatchStatus === 'SENDING') {
+                return { result: 'SKIPPED', message: 'Kiện đang được gửi WMS' };
+            }
+            if (existing) return null;
+
+            const tx = new sql.Transaction(pool);
+            await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+            try {
+                await enqueuePackage(tx, orderID, packageID, warehouseID);
+                await tx.commit();
+                return null;
+            } catch (error) {
+                try { await tx.rollback(); } catch (_) { /* noop */ }
+                throw error;
+            }
+        },
+        send: (packageID) => dispatchPackage(pool, orderID, packageID, post),
+    });
+    return { results, wmsInbound: await statusWithPackages(pool, orderID) };
 }
 
 async function statusWithPackages(pool, orderID) {
@@ -495,6 +622,7 @@ async function decorateImportDetail(pool, response, orderID) {
     return response;
 }
 
-module.exports = { TEST_WAREHOUSE_ID, buildPayload, buildPackagePayload, getWarehouseID, testPendingLocationID, stagePackages,
-    enqueue, dispatch, status, assertPackageUnlocked, enqueuePackage, assignQrAndEnqueue, dispatchPackage,
-    dispatchFailedPackages, statusWithPackages, markPackageLocated, tryFinalize, safeTryFinalize, decorateImportDetail };
+module.exports = { TEST_WAREHOUSE_ID, TEST_TEMP_LOCATION_CODE, buildPayload, buildPackagePayload, getWarehouseID, testPendingLocationID, stagePackages,
+    enqueue, dispatch, status, assertPackageUnlocked, assignQrOnly, enqueuePackage, assignQrAndEnqueue, dispatchPackage,
+    runSelectedPackageDispatch, dispatchSelectedPackages, dispatchFailedPackages, statusWithPackages,
+    markPackageLocated, tryFinalize, safeTryFinalize, decorateImportDetail };

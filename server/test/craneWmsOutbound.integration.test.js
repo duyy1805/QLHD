@@ -24,15 +24,15 @@ test('WMS HTTP + DB: validation, confirmation, concurrency, rollback and return'
     try {
         await pool.request().batch(fs.readFileSync(path.join(__dirname, '../migrations/20260929_crane_wms_events.sql'), 'utf8'));
         const cfg = await outbound.config(pool, true);
-        const templates = (await pool.request().query(`
-            SELECT TOP 1 ID_PhieuXuatBTP FROM dbo.PhieuXuatBTP WHERE TonTai=1 AND ID_KhoXuat=5
+        const templates = (await pool.request().input('WarehouseID',sql.Int,cfg.warehouseID).query(`
+            SELECT TOP 1 ID_PhieuXuatBTP FROM dbo.PhieuXuatBTP WHERE TonTai=1 AND ID_KhoXuat=@WarehouseID
                 AND EXISTS(SELECT 1 FROM dbo.PhieuXuatBTP_ChiTiet d WHERE d.ID_PhieuXuatBTP=PhieuXuatBTP.ID_PhieuXuatBTP)
                 ORDER BY ID_PhieuXuatBTP DESC;
             SELECT TOP 1 k.ID_TheKhoKienBTP,k.ID_ViTriKho,d.ID_TheKhoKienBTP_ChiTiet
                 FROM dbo.TheKhoKienBTP k JOIN dbo.TheKhoKienBTP_ChiTiet d ON d.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP
                 JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho
-                WHERE k.TonTai=1 AND d.TonTai=1 AND v.ID_Kho=5 AND v.TonTai=1 AND v.SuDung=1
-                    AND v.MaViTriKho<>N'CT-TEMP-TEST' ORDER BY k.ID_TheKhoKienBTP DESC;`)).recordsets;
+                WHERE k.TonTai=1 AND d.TonTai=1 AND v.ID_Kho=@WarehouseID AND v.TonTai=1 AND v.SuDung=1
+                    AND v.MaViTriKho NOT IN (N'CT-TEMP',N'CT-TEMP-TEST') ORDER BY k.ID_TheKhoKienBTP DESC;`)).recordsets;
         const sourceID=templates[0][0].ID_PhieuXuatBTP, source=templates[1][0];
         const sourceLine=(await outbound.loadDetails(pool, sourceID))[0];
         assert.ok(sourceLine?.ItemCode);
@@ -109,14 +109,22 @@ test('WMS HTTP + DB: validation, confirmation, concurrency, rollback and return'
         const locked=await fixture('locked');locked.body.items[0].pallets[0].palletID=a.qr;
         assert.equal((await callback(locked.body)).code,409);
         const wrongWarehouse=await fixture('warehouse');
-        const otherWarehouse=(await pool.request().query('SELECT TOP 1 ID_Kho FROM DM_Kho WHERE ID_Kho<>5 ORDER BY ID_Kho')).recordset[0].ID_Kho;
+        const otherWarehouse=(await pool.request().input('WarehouseID',sql.Int,cfg.warehouseID)
+            .query('SELECT TOP 1 ID_Kho FROM DM_Kho WHERE ID_Kho<>@WarehouseID ORDER BY ID_Kho')).recordset[0].ID_Kho;
         await pool.request().input('ID',sql.Int,wrongWarehouse.id).input('Warehouse',sql.Int,otherWarehouse)
             .query('UPDATE PhieuXuatBTP SET ID_KhoXuat=@Warehouse WHERE ID_PhieuXuatBTP=@ID');
         assert.equal((await callback(wrongWarehouse.body)).code,409);
-        const returned={reason:'RETURN_AFTER_PARTIAL_OUTBOUND',sourceOrderID:String(a.id),palletID:a.qr,
+        const returned={reason:'RETURN_AFTER_PARTIAL_OUTBOUND',sourceOrderID:String(a.id),oldPalletID:a.qr,newPalletID:a.qr,
             eventID:a.code+'-RETURN',previousLocationID:cfg.temporaryLocationID,locationID:source.ID_ViTriKho};
         assert.equal((await send('/erp-test/wms/location-callback',returned)).body.updated,true);
         assert.equal((await send('/erp-test/wms/location-callback',returned)).body.updated,false);
+        const returnedState=(await pool.request().input('Package',sql.Int,a.pkg).input('OrderID',sql.Int,a.id).query(`
+            SELECT QRCode,ID_ViTriKho FROM TheKhoKienBTP WHERE ID_TheKhoKienBTP=@Package;
+            SELECT NewPalletID,Status FROM CraneWmsOutboundPallet WHERE ID_PhieuXuatBTP=@OrderID AND ID_TheKhoKienBTP=@Package;`)).recordsets;
+        assert.equal(returnedState[0][0].QRCode,a.qr);
+        assert.equal(returnedState[0][0].ID_ViTriKho,source.ID_ViTriKho);
+        assert.equal(returnedState[1][0].NewPalletID,a.qr);
+        assert.equal(returnedState[1][0].Status,'RETURNED');
         assert.equal((await callback(a.body)).body.duplicate,true);
         await pool.request().input('ID',sql.Int,a.id).query('UPDATE PhieuXuatBTP SET TrangThai=5 WHERE ID_PhieuXuatBTP=@ID');
         assert.equal((await callback(a.body)).code,409);
@@ -169,7 +177,7 @@ test('WMS HTTP + DB: validation, confirmation, concurrency, rollback and return'
         const legacy=await fixture('legacy-crane');
         const oldWarehouse=process.env.CRANE_WAREHOUSE_ID,oldLocation=process.env.CRANE_TEMP_LOCATION_ID;
         try {
-            process.env.CRANE_WAREHOUSE_ID='5';process.env.CRANE_TEMP_LOCATION_ID=String(cfg.temporaryLocationID);
+            process.env.CRANE_WAREHOUSE_ID=String(cfg.warehouseID);process.env.CRANE_TEMP_LOCATION_ID=String(cfg.temporaryLocationID);
             await require('../utils/craneWms').confirmCraneOutbound(pool,legacy.id,[{
                 IdTheKhoKienBTPChiTiet:legacy.detail,IdDonHang:sourceLine.ID_DonHang,IdDonHangLoSanXuat:sourceLine.ID_DonHang_LoSanXuat,
                 IdDonHangSanPham:sourceLine.ID_DonHang_SanPham,SoLuongXuatKho:300}]);

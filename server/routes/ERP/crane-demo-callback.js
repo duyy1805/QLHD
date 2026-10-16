@@ -1,6 +1,6 @@
 const sql = require('mssql');
 const craneWms = require('../../utils/craneWms');
-const { TEST_WAREHOUSE_ID } = require('../../utils/craneWmsInbound');
+const { TEST_WAREHOUSE_ID, TEST_TEMP_LOCATION_CODE } = require('../../utils/craneWmsInbound');
 
 // This branch exists only under /erp-test. It lets an already-confirmed BTP
 // demo order exercise the crane callback without changing the production flow.
@@ -55,9 +55,9 @@ function createCraneDemoCallback(testpoolPromise) {
 
             const tempLocation = (await new sql.Request(transaction)
                 .query(`SELECT ID_ViTriKho, MaViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
-                        WHERE ID_Kho=${TEST_WAREHOUSE_ID} AND MaViTriKho=N'CT-TEMP-TEST' AND SuDung=1 AND TonTai=1`)).recordset;
+                        WHERE ID_Kho=${TEST_WAREHOUSE_ID} AND MaViTriKho=N'${TEST_TEMP_LOCATION_CODE}' AND SuDung=1 AND TonTai=1`)).recordset;
             if (tempLocation.length !== 1)
-                throw craneWms.craneError(503, 'Chưa có vị trí CT-TEMP-TEST trên DB test');
+                throw craneWms.craneError(503, `Chưa có vị trí ${TEST_TEMP_LOCATION_CODE} trên DB test`);
             const temporaryLocationID = Number(tempLocation[0].ID_ViTriKho);
             const temporaryLocationCode = tempLocation[0].MaViTriKho;
 
@@ -205,7 +205,7 @@ function createCraneDemoLocationCallback(testpoolPromise) {
 
             const tempLocation = (await new sql.Request(transaction)
                 .query(`SELECT ID_ViTriKho FROM dbo.DM_Kho_ViTri WITH (HOLDLOCK)
-                        WHERE ID_Kho=${TEST_WAREHOUSE_ID} AND MaViTriKho=N'CT-TEMP-TEST' AND TonTai=1 AND SuDung=1`)).recordset;
+                        WHERE ID_Kho=${TEST_WAREHOUSE_ID} AND MaViTriKho=N'${TEST_TEMP_LOCATION_CODE}' AND TonTai=1 AND SuDung=1`)).recordset;
             if (tempLocation.length !== 1 || Number(tempLocation[0].ID_ViTriKho) !== previousLocationID)
                 throw craneWms.craneError(409, 'previousLocationID không phải vị trí tạm demo');
             const current = (await new sql.Request(transaction)
