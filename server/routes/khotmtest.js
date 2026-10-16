@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken')
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const sql = require('mssql');
 const craneWmsInbound = require('../utils/craneWmsInbound');
+const craneWmsReports = require('../utils/craneWmsReports');
 const TEST_WAREHOUSE_ID = craneWmsInbound.TEST_WAREHOUSE_ID;
 const TEST_TEMP_LOCATION_CODE = craneWmsInbound.TEST_TEMP_LOCATION_CODE;
 const checkApiKey = require('../middleware/apiKey');
@@ -1655,6 +1656,46 @@ router.post('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
         return res.status(result.status).json({ ok: !result.error, ...result, message: result.error });
     } catch (error) { return res.status(500).json({ message: error.message }); }
 });
+
+const craneReportHandler = (loader) => async (req, res) => {
+    try {
+        const pool = await testpoolPromise;
+        return res.json(await loader(pool, TEST_WAREHOUSE_ID, req.query, await craneWmsInbound.testPendingLocationID(pool)));
+    } catch (error) {
+        return res.status(error.status || 500).json({ message: error.message || 'Không tải được báo cáo kho cầu trục' });
+    }
+};
+
+router.get('/btp/cau-truc/summary', async (_req, res) => {
+    try {
+        const pool = await testpoolPromise;
+        const result = await pool.request().input('WarehouseID',sql.Int,TEST_WAREHOUSE_ID).query(`
+            SELECT SUM(CASE WHEN p.Status IN ('WAITING_WMS','FAILED_RETRY') THEN 1 ELSE 0 END) waitingWms,
+              SUM(CASE WHEN p.Status IN ('WAITING_WMS','FAILED_RETRY') THEN p.PlannedQuantity ELSE 0 END) waitingWmsQuantity,
+              SUM(CASE WHEN p.Status='WAITING_RETURN' THEN 1 ELSE 0 END) waitingReturn,
+              SUM(CASE WHEN p.Status='WAITING_RETURN' THEN p.InitialQuantity-p.ActualQuantity ELSE 0 END) waitingReturnQuantity
+            FROM dbo.CraneWmsOutboundPallet p JOIN dbo.CraneWmsOutbound o ON o.ID_PhieuXuatBTP=p.ID_PhieuXuatBTP
+            WHERE o.ID_Kho=@WarehouseID`);
+        const row=result.recordset[0]||{};
+        return res.json({enabled:true,waitingWms:Number(row.waitingWms||0),waitingWmsQuantity:Number(row.waitingWmsQuantity||0),
+            waitingReturn:Number(row.waitingReturn||0),waitingReturnQuantity:Number(row.waitingReturnQuantity||0)});
+    } catch (error) { return res.status(500).json({message:error.message}); }
+});
+
+router.get('/btp/cau-truc/reports/overview', craneReportHandler(
+    (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.overview(pool, warehouseID, temporaryLocationID, query)));
+router.get('/btp/cau-truc/reports/inbound', craneReportHandler(
+    (pool, warehouseID, query) => craneWmsReports.inbound(pool, warehouseID, query)));
+router.get('/btp/cau-truc/reports/outbound', craneReportHandler(
+    (pool, warehouseID, query) => craneWmsReports.outbound(pool, warehouseID, query)));
+router.get('/btp/cau-truc/reports/alerts', craneReportHandler(
+    (pool, warehouseID, query) => craneWmsReports.alerts(pool, warehouseID, query)));
+router.get('/btp/cau-truc/reports/inventory/aisles', craneReportHandler(
+    (pool, warehouseID, _query, temporaryLocationID) => craneWmsReports.inventoryAisles(pool, warehouseID, temporaryLocationID)));
+router.get('/btp/cau-truc/reports/inventory/location', craneReportHandler(
+    (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.inventoryLocationByQr(pool, warehouseID, temporaryLocationID, query.qrCode)));
+router.get('/btp/cau-truc/reports/inventory', craneReportHandler(
+    (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.inventory(pool, warehouseID, temporaryLocationID, query)));
 
 router.get('/btp/cau-truc/orders/:id', async (req, res) => {
     const orderID = toIntOrNull(req.params.id);

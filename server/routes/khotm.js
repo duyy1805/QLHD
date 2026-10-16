@@ -8,6 +8,7 @@ const { tagpoolPromise } = require("../db2");
 const sql = require("mssql");
 const craneWms = require('../utils/craneWms');
 const craneWmsInbound = require('../utils/craneWmsInbound');
+const craneWmsReports = require('../utils/craneWmsReports');
 const checkApiKey = require('../middleware/apiKey');
 const {
   RENTAL_WAREHOUSE_ID,
@@ -2357,6 +2358,31 @@ router.get('/btp/cau-truc/summary', async (_req, res) => {
       waitingReturnQuantity: Number(result.recordset[0]?.waitingReturnQuantity || 0) });
   } catch (error) { return res.status(500).json({ message: error.message }); }
 });
+
+const craneReportHandler = (loader) => async (req, res) => {
+  try {
+    const config = craneWms.getCraneConfig();
+    if (!config) return res.status(503).json({ message: 'Chưa cấu hình kho cầu trục' });
+    return res.json(await loader(await tagpoolPromise, config.warehouseID, req.query, config.temporaryLocationID));
+  } catch (error) {
+    return res.status(error.status || 500).json({ message: error.message || 'Không tải được báo cáo kho cầu trục' });
+  }
+};
+
+router.get('/btp/cau-truc/reports/overview', craneReportHandler(
+  (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.overview(pool, warehouseID, temporaryLocationID, query)));
+router.get('/btp/cau-truc/reports/inbound', craneReportHandler(
+  (pool, warehouseID, query) => craneWmsReports.inbound(pool, warehouseID, query)));
+router.get('/btp/cau-truc/reports/outbound', craneReportHandler(
+  (pool, warehouseID, query) => craneWmsReports.outbound(pool, warehouseID, query)));
+router.get('/btp/cau-truc/reports/alerts', craneReportHandler(
+  (pool, warehouseID, query) => craneWmsReports.alerts(pool, warehouseID, query)));
+router.get('/btp/cau-truc/reports/inventory/aisles', craneReportHandler(
+  (pool, warehouseID, _query, temporaryLocationID) => craneWmsReports.inventoryAisles(pool, warehouseID, temporaryLocationID)));
+router.get('/btp/cau-truc/reports/inventory/location', craneReportHandler(
+  (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.inventoryLocationByQr(pool, warehouseID, temporaryLocationID, query.qrCode)));
+router.get('/btp/cau-truc/reports/inventory', craneReportHandler(
+  (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.inventory(pool, warehouseID, temporaryLocationID, query)));
 
 router.get("/btp/baocao/vi-tri", async (req, res) => {
   try {
