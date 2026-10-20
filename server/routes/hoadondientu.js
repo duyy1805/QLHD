@@ -2706,6 +2706,125 @@ router.post('/hoa-don/:id/xac-nhan-da-xuat', async (req, res) => {
 
 /* ========================= DASHBOARD / PHU TRACH ========================= */
 
+function dashboardDateOnly(value) {
+    if (!value) return null;
+    if (typeof value === 'string') return value.slice(0, 10);
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function dashboardNumber(value) {
+    const number = Number(value ?? 0);
+    return Number.isFinite(number) ? number : 0;
+}
+
+function dashboardCsvValues(value) {
+    const rawValues = Array.isArray(value) ? value : [value];
+    return [...new Set(rawValues
+        .flatMap((item) => String(item || '').split(','))
+        .map((item) => item.trim())
+        .filter(Boolean))];
+}
+
+router.get('/dashboard/doanh-thu', async (req, res) => {
+    try {
+        const requester = getRequester(req);
+        if (!requester.userId || !requester.idDonVi) {
+            return res.status(400).json({ message: 'Thiếu userId hoặc idDonVi.' });
+        }
+
+        const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+        const dateFrom = req.query.dateFrom || null;
+        const dateTo = req.query.dateTo || null;
+        if ((dateFrom && !datePattern.test(dateFrom)) || (dateTo && !datePattern.test(dateTo))) {
+            return res.status(400).json({ message: 'Ngày báo cáo phải có định dạng YYYY-MM-DD.' });
+        }
+        if (dateFrom && dateTo && dateFrom > dateTo) {
+            return res.status(400).json({ message: 'Từ ngày không được lớn hơn đến ngày.' });
+        }
+
+        const revenueTypes = dashboardCsvValues(req.query.revenueTypes);
+        const invoiceTypes = dashboardCsvValues(req.query.invoiceTypes);
+        const departmentValues = dashboardCsvValues(req.query.departmentIds);
+        const departmentIds = departmentValues.map(Number);
+        if (departmentIds.some((value) => !Number.isInteger(value) || value <= 0)) {
+            return res.status(400).json({ message: 'Danh sách bộ phận đăng ký không hợp lệ.' });
+        }
+
+        const pool = await poolPromise;
+        const rs = await addCommonInvoiceInputs(pool.request(), requester)
+            .input('DateFrom', sql.Date, dateFrom)
+            .input('DateTo', sql.Date, dateTo)
+            .input('LoaiHinhDoanhThuJson', sql.NVarChar(sql.MAX), revenueTypes.length ? JSON.stringify(revenueTypes) : null)
+            .input('MaLoaiHoaDonJson', sql.NVarChar(sql.MAX), invoiceTypes.length ? JSON.stringify(invoiceTypes) : null)
+            .input('IdDonViJson', sql.NVarChar(sql.MAX), departmentIds.length ? JSON.stringify(departmentIds) : null)
+            .execute('HD_sp_HoaDon_DashboardDoanhThu');
+
+        const summaryRow = firstRecordset(rs, 0)[0] || {};
+        const mapAggregate = (row) => ({
+            invoiceCount: dashboardNumber(row.SoHoaDon),
+            revenueVnd: dashboardNumber(row.TongDoanhThuVND),
+            missingConvertedCount: dashboardNumber(row.SoHoaDonThieuQuyDoi),
+        });
+
+        return res.json({
+            period: {
+                dateFrom: dashboardDateOnly(summaryRow.DateFrom),
+                dateTo: dashboardDateOnly(summaryRow.DateTo),
+                dateField: 'NgayHoaDon',
+            },
+            appliedFilters: {
+                revenueTypes,
+                invoiceTypes,
+                departmentIds,
+            },
+            summary: mapAggregate(summaryRow),
+            byRevenueType: firstRecordset(rs, 1).map((row) => ({
+                revenueType: row.LoaiHinhDoanhThu,
+                ...mapAggregate(row),
+            })),
+            byDepartment: firstRecordset(rs, 2).map((row) => ({
+                revenueType: row.LoaiHinhDoanhThu,
+                departmentId: row.IdDonVi == null ? null : Number(row.IdDonVi),
+                departmentName: row.TenDonVi,
+                ...mapAggregate(row),
+            })),
+            exportByCurrency: firstRecordset(rs, 3).map((row) => ({
+                currencyCode: row.MaLoaiTien,
+                invoiceCount: dashboardNumber(row.SoHoaDon),
+                originalAmount: dashboardNumber(row.TongNguyenTe),
+                revenueVnd: dashboardNumber(row.TongQuyDoiVND),
+                missingConvertedCount: dashboardNumber(row.SoHoaDonThieuQuyDoi),
+            })),
+            exportByCustomer: firstRecordset(rs, 4).map((row) => ({
+                customerKey: row.KhachHangKey,
+                customerName: row.TenKhachHang,
+                taxCode: row.MaSoThue || null,
+                currencyCode: row.MaLoaiTien,
+                invoiceCount: dashboardNumber(row.SoHoaDon),
+                originalAmount: dashboardNumber(row.TongNguyenTe),
+                revenueVnd: dashboardNumber(row.TongQuyDoiVND),
+                missingConvertedCount: dashboardNumber(row.SoHoaDonThieuQuyDoi),
+            })),
+            filterOptions: {
+                revenueTypes: firstRecordset(rs, 5).map((row) => ({
+                    value: row.LoaiHinhDoanhThu,
+                })),
+                invoiceTypes: firstRecordset(rs, 6).map((row) => ({
+                    value: row.MaLoaiHoaDon,
+                    label: row.TenLoaiHoaDon,
+                })),
+                departments: firstRecordset(rs, 7).map((row) => ({
+                    id: Number(row.IdDonVi),
+                    label: row.TenDonVi,
+                })),
+            },
+        });
+    } catch (err) {
+        return httpError(res, err, 'Có lỗi khi lấy Dashboard doanh thu hóa đơn.');
+    }
+});
+
 router.get('/dashboard', async (req, res) => {
     try {
         const requester = getRequester(req);

@@ -7,7 +7,6 @@ const path = require('path');
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const { hrpoolPromise } = require('../db1');
 const sql = require('mssql');
-const { deriveLeaveWorkflowState } = require('../utils/leaveWorkflowStatus');
 
 
 async function generateApplyLeaveID(pool) {
@@ -149,27 +148,41 @@ router.get('/apply-leaves/:employeeId', async (req, res) => {
 
         const processResult = await pool.request()
             .input('EmployeeID', sql.VarChar(20), employeeId)
-            .query(`
-                SELECT p.RowGuid, p.RecordGuid, p.JobTitleName, p.SortOrder
-                FROM HR.ApplyLeaveProcess p
-                INNER JOIN HR.ApplyLeaves al ON al.RowGuid = p.RecordGuid
-                WHERE al.EmployeeID = @EmployeeID
-            `);
-
-        const processByRecord = processResult.recordset.reduce((groups, process) => {
-            const recordGuid = String(process.RecordGuid).toLowerCase();
-            if (!groups.has(recordGuid)) groups.set(recordGuid, []);
-            groups.get(recordGuid).push(process);
-            return groups;
-        }, new Map());
-
-        const data = result.recordset.map((leave) => ({
-            ...leave,
-            ...deriveLeaveWorkflowState(
-                leave.Status,
-                processByRecord.get(String(leave.RowGuid).toLowerCase()) || []
-            ),
-        }));
+            .query(`SELECT p.RecordGuid, p.LoginName, p.EmployeeName, p.JobTitleName,
+                           p.WFStatusID, p.SortOrder
+                    FROM HR.ApplyLeaveProcess p
+                    JOIN HR.ApplyLeaves al ON al.RowGuid = p.RecordGuid
+                    WHERE al.EmployeeID = @EmployeeID`);
+        const byRecord = new Map();
+        for (const step of processResult.recordset) {
+            const key = String(step.RecordGuid).toLowerCase();
+            if (!byRecord.has(key)) byRecord.set(key, []);
+            byRecord.get(key).push(step);
+        }
+        const data = result.recordset.map(leave => {
+            const steps = byRecord.get(String(leave.RowGuid).toLowerCase()) || [];
+            const creator = steps.filter(step => Number(step.SortOrder) === 0
+                && step.LoginName === leave.EmployeeID);
+            const waitingCreator = creator.some(step => step.JobTitleName === 'W');
+            const submittedCreator = creator.some(step => step.JobTitleName === 'Y');
+            const waitingApprovers = steps.filter(step => step.JobTitleName === 'W' && Number(step.SortOrder) > 0);
+            let ApprovalStatus = 'UNKNOWN';
+            if (leave.Status === 'Y') ApprovalStatus = 'APPROVED';
+            else if (leave.Status === 'R') ApprovalStatus = 'REJECTED';
+            else if (leave.Status === 'W' && submittedCreator) ApprovalStatus = 'PENDING_APPROVAL';
+            else if (leave.Status === 'W' && waitingCreator) ApprovalStatus = 'NOT_SUBMITTED';
+            return {
+                ...leave,
+                ApprovalStatus,
+                CanSubmit: ApprovalStatus === 'NOT_SUBMITTED',
+                CurrentApprovers: ApprovalStatus === 'PENDING_APPROVAL'
+                    ? waitingApprovers.map(step => ({
+                        LoginName: step.LoginName,
+                        EmployeeName: step.EmployeeName,
+                        SortOrder: step.SortOrder
+                    })) : []
+            };
+        });
 
         res.json({
             success: true,
@@ -185,12 +198,12 @@ router.get('/apply-leaves/:employeeId', async (req, res) => {
 });
 
 router.post('/approve-leave', async (req, res) => {
-    const { RowGuid, ProcessRowGuid, SortOrder, LoginName, Comment } = req.body;
+    const { RowGuid, LoginName, Comment } = req.body;
 
-    if (!RowGuid || !ProcessRowGuid || !LoginName || !Number.isInteger(Number(SortOrder))) {
+    if (!RowGuid || !LoginName) {
         return res.status(400).json({
             success: false,
-            message: 'Thiếu RowGuid, ProcessRowGuid, SortOrder hoặc LoginName'
+            message: 'Thiếu RowGuid hoặc LoginName'
         });
     }
 
@@ -202,18 +215,18 @@ router.post('/approve-leave', async (req, res) => {
 
         const currentProcess = await new sql.Request(transaction)
             .input('RowGuid', sql.UniqueIdentifier, RowGuid)
-            .input('ProcessRowGuid', sql.UniqueIdentifier, ProcessRowGuid)
             .input('LoginName', sql.NVarChar(50), LoginName)
-            .input('SortOrder', sql.Int, Number(SortOrder))
             .query(`
                 SELECT p.RowGuid
                 FROM HR.ApplyLeaveProcess p WITH (UPDLOCK, HOLDLOCK)
-                WHERE p.RowGuid = @ProcessRowGuid
-                  AND p.RecordGuid = @RowGuid
+                JOIN HR.ApplyLeaves al WITH (UPDLOCK, HOLDLOCK)
+                  ON al.RowGuid = p.RecordGuid
+                WHERE p.RecordGuid = @RowGuid
                   AND p.LoginName = @LoginName
-                  AND p.SortOrder = @SortOrder
-                  AND p.JobTitleName = 'W'
-            `);
+                  AND al.EmployeeID = @LoginName
+                  AND al.Status = 'W'
+                  AND p.SortOrder = 0
+                  AND p.JobTitleName = 'W'             `);
 
         if (currentProcess.recordset.length === 0) {
             await transaction.rollback();

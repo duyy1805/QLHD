@@ -89,7 +89,8 @@ async function availableLots(pool, id, warehouseID) {
         return `@Item${index}`;
     });
     const result = await request.query(`
-        SELECT d.ItemCode AS itemCode, LTRIM(RTRIM(d.DauTuan)) AS weekMark
+        SELECT d.ItemCode AS itemCode, LTRIM(RTRIM(d.DauTuan)) AS weekMark,
+               SUM(d.SoLuong-ISNULL(used.DaXuat,0)) AS stockQuantity
         FROM dbo.TheKhoKienBTP_ChiTiet d
         INNER JOIN dbo.TheKhoKienBTP k ON k.ID_TheKhoKienBTP=d.ID_TheKhoKienBTP AND ISNULL(k.TonTai,1)=1
         INNER JOIN dbo.DM_Kho_ViTri vt ON vt.ID_ViTriKho=k.ID_ViTriKho AND vt.ID_Kho=@WarehouseID
