@@ -13,28 +13,37 @@
 @khoTmBaseUrl = http://localhost:5000/khotmtest
 
 # Dữ liệu test
-@inboundOrderId = 256963
-@inboundOrderCode = PNBTP-2026-07-1816
-@inboundPallet1 = BTP0000000173
-@inboundPallet2 = BTP0000000174
-@inboundPalletFailed = BTP0000000175
+@inboundOrderId = 256996
+@inboundOrderCode = PN-CT-ML-261016
+@inboundPallet1 = ct-multilot-261016-01
+@inboundPallet2 = ct-partial-261016-02
+@inboundPalletFailed = ct-retry-261016-01
 
-@outboundOrderId = 327199
-@outboundOrderCode = PXBTP-2026-07-2644
-@outboundItemCode = 40217955.M
-@outboundItemName = San pham BTP
-@outboundLot = 4
-@outboundLot2 = 05
-@outboundRequestedQuantity = 3672
-@outboundLot1RequestedQuantity = 1000
-@outboundLot2RequestedQuantity = 2672
-@outboundPallet1 = BP0000556913
-@outboundPallet2 = BP0000556710
-@outboundPallet3 = BP0000556712
-@outboundPallet4 = BP0000556713
-@outboundPallet5 = BP0000556910
-@outboundPallet6 = BP0000556709
-@outboundPallet7 = BP0000556909
+@outboundOrderId = 327344
+@outboundOrderCode = PX-CT-FULL-261016
+@outboundItemCode = 10056770.B
+@outboundItemName = DIMPA stor bag 65x22x65 transparent
+@outboundLot = 2647
+@outboundLot2 = 2648
+@outboundRequestedQuantity = 200
+@outboundLot1RequestedQuantity = 120
+@outboundLot2RequestedQuantity = 80
+@outboundPallet1 = ct-multilot-261016-01
+@outboundPallet2 = ct-partial-261016-01
+@outboundPallet3 = ct-partial-261016-02
+@outboundPallet4 = ct-batch-261016-01
+@outboundPallet5 = ct-batch-261016-02
+@outboundPallet6 = ct-batch-261016-03
+@outboundPallet7 = ct-batch-261016-04
+
+# Bộ case mới sau khi làm sạch DB test
+@inboundMultiLotId = 256996
+@inboundPartialId = 256997
+@inboundBatchId = 256998
+@inboundRetryId = 256999
+@outboundFullId = 327344
+@outboundPartialId = 327345
+@outboundSkipLotId = 327346
 
 @currentLocationId = 32149
 @targetLocationId = 32148
@@ -477,7 +486,9 @@ Content-Type: application/json
 }
 
 ### G08a - Nhập lại kiện lẻ về vị trí cũ
-# 200 updated=true; giữ nguyên ID_TheKhoKienBTP, đổi QR từ wfPallet sang wfReturnPallet. Không cộng tồn.
+# 200 updated=true; giữ nguyên ID_TheKhoKienBTP và QR. Không cộng tồn.
+# WMS được phép đổi QR: thay newPalletID bằng {{wfReturnPallet}} (QR mới chưa được kiện khác sử dụng),
+# rồi dùng cùng giá trị đó khi gửi lặp ở G08b.
 POST {{wfErpBaseUrl}}/wms/location-callback
 x-api-key: {{apiKey}}
 Content-Type: application/json
@@ -486,7 +497,7 @@ Content-Type: application/json
   "reason": "RETURN_AFTER_PARTIAL_OUTBOUND",
   "sourceOrderID": "{{wfOrderId}}",
   "oldPalletID": "{{wfPallet}}",
-  "newPalletID": "{{wfReturnPallet}}",
+  "newPalletID": "{{wfPallet}}",
   "eventID": "{{wfReturnEventId}}",
   "previousLocationID": {{wfTempLocation}},
   "locationID": {{wfOriginalLocation}}
@@ -502,14 +513,14 @@ Content-Type: application/json
   "reason": "RETURN_AFTER_PARTIAL_OUTBOUND",
   "sourceOrderID": "{{wfOrderId}}",
   "oldPalletID": "{{wfPallet}}",
-  "newPalletID": "{{wfReturnPallet}}",
+  "newPalletID": "{{wfPallet}}",
   "eventID": "{{wfReturnEventId}}",
   "previousLocationID": {{wfTempLocation}},
   "locationID": {{wfOriginalLocation}}
 }
 
 ### G08c - Kiểm tra sau nhập lại
-# Kiện RETURNED, PalletID=QR cũ, NewPalletID=QR mới, vị trí thật, số tồn không đổi.
+# Kiện RETURNED, NewPalletID bằng QR WMS gửi về (có thể giữ nguyên hoặc đổi), vị trí thật, số tồn không đổi.
 GET {{wfKhoBaseUrl}}/btp/cau-truc/orders/{{wfOrderId}}
 x-api-key: {{apiKey}}
 Accept: application/json
@@ -531,7 +542,7 @@ Content-Type: application/json
 }
 
 ### G08e - Pallet đã RETURNED nhưng WMS gửi lại QR mới khác
-# Chạy sau G08a. Kỳ vọng 409 vì oldPalletID đã được nhập lại bằng wfReturnPallet.
+# Chạy sau G08a. Kỳ vọng 409 vì pallet đã hoàn tất nhập lại với QR đã xác nhận.
 POST {{wfErpBaseUrl}}/wms/location-callback
 x-api-key: {{apiKey}}
 Content-Type: application/json
@@ -801,9 +812,41 @@ Content-Type: application/json
     {
       "itemCode": "{{outboundItemCode}}",
       "itemName": "{{outboundItemName}}",
+      "skipLot": ["04", "05"],
       "quantity": {{outboundRequestedQuantity}}
     }
   ]
+}
+
+# B04 sử dụng skipLot để WMS loại trừ các dấu tuần trong danh sách khi tự chọn lot.
+# WMS phải triển khai và xác nhận hỗ trợ trường items[].skipLot trước khi dùng thực tế.
+
+### B04a - ERP gửi phiếu xuất cầu trục, loại trừ dấu tuần theo ItemCode
+# POST body có thể dùng {"skipLot": ["04", "05"]} để áp dụng cho tất cả mã hàng.
+# Ví dụ này chỉ loại trừ dấu tuần của mã {{outboundItemCode}}.
+POST {{khoTmBaseUrl}}/btp/cau-truc/orders/{{outboundOrderId}}/dispatch
+Content-Type: application/json
+
+{
+  "skipLot": {
+    "{{outboundItemCode}}": ["04", "05"]
+  }
+}
+
+### B04b - WMS xác nhận từ chối phiếu xuất vì thiếu tồn (chỉ gửi khi CHƯA xuất kiện)
+# Sau callback này, ERP mở lại skipLot cho người dùng sửa và gửi lại.
+# Khi gửi lại, ERP giữ Idempotency-Key: outbound-{orderID} theo hợp đồng WMS.
+POST {{erpBaseUrl}}/wms/outbound-callback
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+
+{
+  "eventID": "OUTBOUND-REJECT-{{outboundOrderId}}-1",
+  "orderID": "{{outboundOrderId}}",
+  "orderType": "OUTBOUND",
+  "status": "REJECTED",
+  "reasonCode": "INSUFFICIENT_STOCK",
+  "message": "Không đủ tồn sau khi loại trừ dấu tuần"
 }
 
 ### B05 - Đồng bộ tồn kho với WMS
@@ -1823,3 +1866,46 @@ x-api-key: {{apiKey}}
   "errorCode": "INVALID_QUANTITY",
   "sourcePalletID": "{{inboundPallet1}}"
 }
+
+
+# R. BÁO CÁO KHO CẦU TRỤ
+
+### R01 - Tổng quan 30 ngày và cảnh báo quá 30 phút
+GET {{khoTmBaseUrl}}/btp/cau-truc/reports/overview?from=2026-09-16T00:00:00.000Z&to=2026-10-17T00:00:00.000Z&slaMinutes=30
+Accept: application/json
+
+### R02 - Danh sách kiện nhập WMS
+GET {{khoTmBaseUrl}}/btp/cau-truc/reports/inbound?from=2026-09-16T00:00:00.000Z&to=2026-10-17T00:00:00.000Z&pageIndex=0&pageSize=20
+Accept: application/json
+
+### R03 - Chỉ xem kiện nhập gửi lỗi
+GET {{khoTmBaseUrl}}/btp/cau-truc/reports/inbound?status=FAILED&pageIndex=0&pageSize=20
+Accept: application/json
+
+### R04 - Danh sách phiếu xuất WMS
+GET {{khoTmBaseUrl}}/btp/cau-truc/reports/outbound?from=2026-09-16T00:00:00.000Z&to=2026-10-17T00:00:00.000Z&pageIndex=0&pageSize=20
+Accept: application/json
+
+### R05 - Phiếu đang chờ nhập lại
+GET {{khoTmBaseUrl}}/btp/cau-truc/reports/outbound?status=WAITING_RETURN&pageIndex=0&pageSize=20
+Accept: application/json
+
+### R06 - Cảnh báo hiện tại
+GET {{khoTmBaseUrl}}/btp/cau-truc/reports/alerts?slaMinutes=30&pageIndex=0&pageSize=20
+Accept: application/json
+
+### R07 - Danh sách dãy kho cầu trục (không cần chọn nhà kho)
+GET {{khoTmBaseUrl}}/btp/cau-truc/reports/inventory/aisles
+Accept: application/json
+
+### R08 - Tất cả vị trí và tồn kho cầu trục
+GET {{khoTmBaseUrl}}/btp/cau-truc/reports/inventory
+Accept: application/json
+
+### R09 - Lọc theo dãy và dấu tuần
+GET {{khoTmBaseUrl}}/btp/cau-truc/reports/inventory?aisle=A&lot=2642
+Accept: application/json
+
+### R10 - Tìm vị trí bằng QR hoặc mã vị trí
+GET {{khoTmBaseUrl}}/btp/cau-truc/reports/inventory/location?qrCode=A-1-1-02
+Accept: application/json
