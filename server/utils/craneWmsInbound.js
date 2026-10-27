@@ -1,6 +1,6 @@
 const axios = require('axios');
 const sql = require('mssql');
-const TEST_WAREHOUSE_ID = 40;
+const TEST_WAREHOUSE_ID = 5;
 const TEST_TEMP_LOCATION_CODE = 'CT-TEMP';
 
 const DEFAULT_URL = 'https://z76-local.vercel.app/api/share/wmsInbound';
@@ -30,10 +30,15 @@ function buildPayload(header, rows) {
     if (!header.So_PhieuNhapBTP || !pallets.size) {
         throw new Error('Phiếu nhập cầu trục thiếu mã phiếu hoặc kiện để gửi WMS');
     }
+    const orderDate = new Date(header.Ngay_NhapBTP);
+    if (!Number.isFinite(orderDate.getTime())) {
+        throw new Error('Phiếu nhập cầu trục thiếu ngày nhập hợp lệ để gửi WMS');
+    }
     return {
         orderID: String(header.ID_PhieuNhapBTP),
         orderCode: String(header.So_PhieuNhapBTP),
         orderType: 'INBOUND',
+        date: orderDate.toISOString(),
         pallets: [...pallets.values()],
     };
 }
@@ -85,6 +90,7 @@ async function assignQrOnly(pool, { orderID, packageID, qrCode, warehouseID }) {
             .query(`
                 IF NOT EXISTS (SELECT 1 FROM dbo.PhieuNhapBTP WITH (UPDLOCK,HOLDLOCK)
                     WHERE ID_PhieuNhapBTP=@OrderID AND ID_KhoNhap=@WarehouseID
+                      AND CHARINDEX(N'cautruc',LOWER(ISNULL(GhiChu,N'')))>0
                       AND TonTai=1 AND ISNULL(QrStatus,0)=0)
                     THROW 51072, N'Phiếu nhập không hợp lệ hoặc đã xác nhận', 1;
                 IF NOT EXISTS (SELECT 1 FROM dbo.TheKhoKienBTP WITH (UPDLOCK,HOLDLOCK)
@@ -116,6 +122,7 @@ async function enqueuePackage(executor, orderID, packageID, warehouseID) {
                 ORDER BY d.ID_TheKhoKienBTP_ChiTiet`);
     const header = result.recordset[0];
     if (!header || Number(header.ID_KhoNhap) !== Number(warehouseID)) throw new Error('Kiện không thuộc phiếu nhập kho cầu trục');
+    await require('./craneDocument').assertCraneDocument(executor, 'inbound', orderID, warehouseID);
     const planned = await new sql.Request(executor).input('ID_PhieuNhapBTP', sql.Int, orderID)
         .execute('App_PhieuNhapBTP_ThongTinChiTiet');
     const requestedByItem = new Map();
@@ -157,7 +164,8 @@ async function assignQrAndEnqueue(pool, { orderID, packageID, qrCode, warehouseI
             .input('OrderID', sql.Int, orderID).input('PackageID', sql.Int, packageID)
             .input('WarehouseID', sql.Int, warehouseID).input('QRCode', sql.NVarChar(100), qrCode).query(`
                 IF NOT EXISTS (SELECT 1 FROM dbo.PhieuNhapBTP WITH (UPDLOCK,HOLDLOCK)
-                    WHERE ID_PhieuNhapBTP=@OrderID AND ID_KhoNhap=@WarehouseID AND TonTai=1 AND ISNULL(QrStatus,0)=0)
+                    WHERE ID_PhieuNhapBTP=@OrderID AND ID_KhoNhap=@WarehouseID AND TonTai=1 AND ISNULL(QrStatus,0)=0
+                      AND CHARINDEX(N'cautruc',LOWER(ISNULL(GhiChu,N'')))>0)
                     THROW 51072, N'Phiếu nhập không hợp lệ hoặc đã xác nhận', 1;
                 IF NOT EXISTS (SELECT 1 FROM dbo.TheKhoKienBTP WITH (UPDLOCK,HOLDLOCK)
                     WHERE ID_TheKhoKienBTP=@PackageID AND ID_PhieuNhapBTP=@OrderID AND TonTai=1)
@@ -236,6 +244,7 @@ async function enqueue(executor, orderID, warehouseID) {
                 ORDER BY k.ID_TheKhoKienBTP, d.ID_TheKhoKienBTP_ChiTiet`);
     const header = result.recordset[0];
     if (!header || Number(header.ID_KhoNhap) !== warehouseID) throw new Error('Phiếu nhập không thuộc kho cầu trục');
+    await require('./craneDocument').assertCraneDocument(executor, 'inbound', orderID, warehouseID);
     const payload = buildPayload(header, result.recordset);
     await new sql.Request(executor)
         .input('OrderID', sql.Int, orderID)
@@ -268,7 +277,7 @@ async function dispatch(pool, orderID, post = axios.post) {
     let dispatchError = null;
     try {
         const payload = JSON.parse(claimed.recordset[0].RequestJson);
-        delete payload.date; // Legacy order-level date is not the pallet dispatch timestamp.
+        if (!payload.date) payload.date = new Date().toISOString();
         if (!Array.isArray(payload.pallets) || !payload.pallets.length ||
             payload.pallets.some(p => !p || typeof p.palletID !== 'string' || !p.palletID.trim()) ||
             new Set(payload.pallets.map(p => p.palletID.trim())).size !== payload.pallets.length)
@@ -352,7 +361,7 @@ async function dispatchPackage(pool, orderID, packageID, post = axios.post) {
     let dispatchError = null;
     try {
         const payload = JSON.parse(row.RequestJson);
-        delete payload.date;
+        if (!payload.date) payload.date = new Date().toISOString();
         if (!Array.isArray(payload.pallets) || payload.pallets.length !== 1 ||
             payload.pallets[0].palletID !== row.PalletID) throw new Error('Dữ liệu kiện WMS không hợp lệ');
         if (!payload.pallets[0].date) {
@@ -430,6 +439,7 @@ async function dispatchSelectedPackages(pool, orderID, packageIDs, warehouseID, 
         .input('WarehouseID', sql.Int, warehouseID).query(`
             SELECT ID_PhieuNhapBTP FROM dbo.PhieuNhapBTP
             WHERE ID_PhieuNhapBTP=@OrderID AND ID_KhoNhap=@WarehouseID
+              AND CHARINDEX(N'cautruc',LOWER(ISNULL(GhiChu,N'')))>0
               AND TonTai=1 AND ISNULL(QrStatus,0)=0`)).recordset[0];
     if (!order) throw new Error('Phiếu nhập không hợp lệ, sai kho cầu trục hoặc đã xác nhận');
 

@@ -76,8 +76,8 @@ async function status(pool, id) {
 
 async function availableLots(pool, id, warehouseID) {
     const order = (await pool.request().input('ID', sql.Int, id)
-        .query('SELECT ID_KhoXuat FROM dbo.PhieuXuatBTP WHERE ID_PhieuXuatBTP=@ID AND TonTai=1')).recordset[0];
-    if (!order || Number(order.ID_KhoXuat) !== warehouseID) return null;
+        .query('SELECT ID_KhoXuat, GhiChu FROM dbo.PhieuXuatBTP WHERE ID_PhieuXuatBTP=@ID AND TonTai=1')).recordset[0];
+    if (!order || Number(order.ID_KhoXuat) !== warehouseID || !require('./craneDocument').isCraneNote(order.GhiChu)) return null;
     const details = await pool.request().input('ID_PhieuXuatBTP', sql.Int, id)
         .execute('dbo.App_BTP_PhieuXuat_ThongTinChiTiet');
     const codes = [...new Set((details.recordsets?.[1] || [])
@@ -117,9 +117,9 @@ async function availableLots(pool, id, warehouseID) {
 
 async function dispatch(pool, id, warehouseID, post = axios.post, requestedSkipLot) {
     const order = (await pool.request().input('ID', sql.Int, id).query(`
-        SELECT ID_PhieuXuatBTP, ID_KhoXuat, So_PhieuXuatBTP, Ngay_XuatBTP, QrStatus
+        SELECT ID_PhieuXuatBTP, ID_KhoXuat, So_PhieuXuatBTP, Ngay_XuatBTP, QrStatus, GhiChu
         FROM dbo.PhieuXuatBTP WHERE ID_PhieuXuatBTP=@ID AND TonTai=1 AND ISNULL(TrangThai,0)<>5`)).recordset[0];
-    if (!order || Number(order.ID_KhoXuat) !== warehouseID) return { error: 'Phiếu không thuộc kho cầu trục', status: 404 };
+    if (!order || Number(order.ID_KhoXuat) !== warehouseID || !require('./craneDocument').isCraneNote(order.GhiChu)) return { error: 'Phiếu không thuộc kho cầu trục', status: 404 };
     if (order.QrStatus) return { error: 'Phiếu đã xác nhận ERP, không thể gửi yêu cầu xuất mới', status: 409 };
     const previous = (await pool.request().input('ID', sql.Int, id)
         .query('SELECT RequestJson, DispatchStatus FROM dbo.CraneWmsOutboundDispatch WHERE ID_PhieuXuatBTP=@ID')).recordset[0];

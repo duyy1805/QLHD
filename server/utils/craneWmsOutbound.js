@@ -116,7 +116,7 @@ async function confirm(pool, body, isTest = false) {
             SELECT * FROM dbo.PhieuXuatBTP WITH (UPDLOCK,HOLDLOCK) WHERE ID_PhieuXuatBTP=@ID AND TonTai=1`)).recordset[0];
         if (!order) fail(404, 'Không tìm thấy phiếu xuất');
         if (order.So_PhieuXuatBTP !== payload.orderCode) fail(409, 'Mã phiếu không khớp ID phiếu');
-        if (Number(order.ID_KhoXuat) !== cfg.warehouseID) fail(409, 'Phiếu không thuộc kho cầu trục');
+        if (Number(order.ID_KhoXuat) !== cfg.warehouseID || !String(order.GhiChu || '').toLowerCase().includes('cautruc')) fail(409, 'Phiếu không thuộc kho cầu trục');
         if (Number(order.TrangThai) === 5) fail(409, 'Phiếu đã ghi thẻ kho và không được phép cập nhật');
 
         const eventCollision = (await new sql.Request(transaction)
@@ -326,6 +326,7 @@ async function searchAppOrders(pool, body, isTest) {
             LEFT JOIN TAG_System.dbo.DM_DonVi dv ON dv.ID_DonVi=p.ID_DonVi
             LEFT JOIN TAG_System.dbo.DM_BoPhan bp ON bp.ID_BoPhan=p.ID_BoPhan
             WHERE p.TonTai=1 AND p.ID_KhoXuat=@Warehouse AND ISNULL(p.TrangThai,0)<>5
+                AND CHARINDEX(N'cautruc', LOWER(ISNULL(p.GhiChu,N'')))>0
                 AND (@User=1 OR EXISTS(SELECT 1 FROM dbo.PQ_TaiKhoan_Kho_TM q
                     WHERE q.ID_Kho=p.ID_KhoXuat AND q.ID_TaiKhoanDangNhap=@User AND q.Quyen=1))
                 AND (@Search='' OR p.So_PhieuXuatBTP LIKE '%'+@Search+'%')

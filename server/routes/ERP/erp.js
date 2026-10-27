@@ -44,6 +44,8 @@ async function resolveActiveWarehouseLocation(executor, reference, warehouseID) 
             WHERE ID_Kho = @WarehouseID
               AND TonTai = 1
               AND SuDung = 1
+              AND MaNha = N'Z76'
+              AND MaKhuVuc = N'CT'
               AND (@LocationID IS NULL OR ID_ViTriKho = @LocationID)
               AND (@LocationCode IS NULL OR MaViTriKho = @LocationCode);
         `);
@@ -777,6 +779,7 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
         }
 
         const warehouseID = Number(orderResult.recordset[0].ID_KhoNhap);
+        await require('../../utils/craneDocument').assertCraneDocument(transaction, 'inbound', idPhieuNhap, craneWms.getCraneConfig()?.warehouseID);
         let updatedCount = 0;
 
         for (const pallet of normalizedPallets) {

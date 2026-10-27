@@ -6,6 +6,7 @@ const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const sql = require('mssql');
 const craneWmsInbound = require('../utils/craneWmsInbound');
 const craneWmsReports = require('../utils/craneWmsReports');
+const { isCraneNote, assertCraneDocument } = require('../utils/craneDocument');
 const TEST_WAREHOUSE_ID = craneWmsInbound.TEST_WAREHOUSE_ID;
 const TEST_TEMP_LOCATION_CODE = craneWmsInbound.TEST_TEMP_LOCATION_CODE;
 const checkApiKey = require('../middleware/apiKey');
@@ -703,6 +704,45 @@ const enrichImportSearchUnits = async (pool, rows) => {
     return rows.map((row) => ({ ...row, ...(unitsById.get(Number(row.id)) || {}) }));
 };
 
+async function searchClassifiedDocuments(pool, body, kind, warehouseIds, pageIndex, pageSize) {
+    const inbound = kind === 'inbound';
+    const table = inbound ? 'PhieuNhapBTP' : 'PhieuXuatBTP';
+    const key = inbound ? 'ID_PhieuNhapBTP' : 'ID_PhieuXuatBTP';
+    const fn = inbound ? 'SearchPhieuNhapBTP' : 'SearchPhieuXuatBTP';
+    const expectedCrane = body.craneMode === true;
+    const targetStart = pageIndex * pageSize;
+    const take = 100;
+    const matches = [];
+
+    for (let skip = 0; skip <= 2147483647 - take; skip += take) {
+        const batch = await pool.request()
+            .input('WarehouseId', sql.NVarChar(200), warehouseIds)
+            .input('Status', sql.Bit, body.trangThai ?? null)
+            .input('ReviewNumber', sql.NVarChar(255), String(body.soPhieu || '').trim())
+            .input('Type', sql.Int, toIntOrNull(body.loaiPhieu))
+            .input('Take', sql.Int, take)
+            .input('Skip', sql.Int, skip)
+            .input('ID_TaiKhoanDangNhap', sql.Int, toIntOrNull(body.IdTaiKhoanDangNhap) || 0)
+            .query(`SELECT * FROM dbo.${fn}(@WarehouseId,@Status,@ReviewNumber,@Type,@Take,@Skip,@ID_TaiKhoanDangNhap);`);
+        const rows = batch.recordset || [];
+        const ids = rows.map((row) => toIntOrNull(row.Id)).filter(Boolean);
+        if (ids.length) {
+            const request = pool.request();
+            const parameters = ids.map((id, index) => {
+                request.input(`Document${index}`, sql.Int, id);
+                return `@Document${index}`;
+            });
+            const notes = await request.query(`SELECT ${key} AS id,GhiChu FROM dbo.${table} WHERE ${key} IN (${parameters.join(',')}) AND TonTai=1`);
+            const noteById = new Map((notes.recordset || []).map((row) => [Number(row.id), row.GhiChu]));
+            rows.forEach((row) => {
+                if (noteById.has(Number(row.Id)) && isCraneNote(noteById.get(Number(row.Id))) === expectedCrane) matches.push(row);
+            });
+        }
+        if (matches.length >= targetStart + pageSize || rows.length < take) break;
+    }
+    return matches.slice(targetStart, targetStart + pageSize);
+}
+
 const mapExportSearchRow = (row) => ({
     ...row,
     id: row.Id,
@@ -903,18 +943,10 @@ router.post('/btp/phieunhap/tim-kiem', async (req, res) => {
         const pageIndex = Math.max(0, Number(body.PageIndex || body.pageIndex || 0));
         const warehouseIds = (Array.isArray(body.idKho) ? body.idKho : []).map(Number).filter(Number.isInteger).join(',');
         const pool = await testpoolPromise;
-        const result = await pool.request()
-            .input('WarehouseId', sql.NVarChar(200), warehouseIds)
-            .input('Status', sql.Bit, body.trangThai ?? null)
-            .input('ReviewNumber', sql.NVarChar(255), String(body.soPhieu || '').trim())
-            .input('Type', sql.Int, toIntOrNull(body.loaiPhieu))
-            .input('Take', sql.Int, pageSize)
-            .input('Skip', sql.Int, pageIndex * pageSize)
-            .input('ID_TaiKhoanDangNhap', sql.Int, toIntOrNull(body.IdTaiKhoanDangNhap) || 0)
-            .query(`SELECT * FROM dbo.SearchPhieuNhapBTP(@WarehouseId, @Status, @ReviewNumber, @Type, @Take, @Skip, @ID_TaiKhoanDangNhap);`);
+        const result = await searchClassifiedDocuments(pool, body, 'inbound', warehouseIds, pageIndex, pageSize);
         const rows = await enrichImportSearchUnits(
             pool,
-            (result.recordset || []).map(mapImportSearchRow),
+            result.map(mapImportSearchRow),
         );
         res.json({ data: rows, pageSize, pageIndex });
     } catch (error) {
@@ -1227,10 +1259,13 @@ router.post('/btp/phieunhap/gan-qr', async (req, res) => {
         const qrCode = String(req.body?.qrCode || '').trim();
         if (!idKien || !qrCode) return res.status(400).json({ message: 'QR hoặc kiện không hợp lệ' });
         const pool = await testpoolPromise;
-        const info = await pool.request().input('ID_Kien_QR', sql.Int, idKien).query(`SELECT k.ID_PhieuNhapBTP,p.ID_KhoNhap
+        const info = await pool.request().input('ID_Kien_QR', sql.Int, idKien).query(`SELECT k.ID_PhieuNhapBTP,p.ID_KhoNhap,p.GhiChu
             FROM TheKhoKienBTP k JOIN PhieuNhapBTP p ON p.ID_PhieuNhapBTP=k.ID_PhieuNhapBTP
             WHERE k.ID_TheKhoKienBTP=@ID_Kien_QR AND k.TonTai=1;`);
         if (!info.recordset?.length) return res.status(404).json({ message: 'Không tìm thấy kiện BTP' });
+        if (isCraneNote(info.recordset[0].GhiChu) !== (req.body?.craneMode === true)) {
+            return res.status(409).json({ message: 'Chế độ xử lý không khớp nghiệp vụ của phiếu nhập' });
+        }
         await ensureImportEditable(pool.request(), info.recordset[0].ID_PhieuNhapBTP);
         await craneWmsInbound.assertPackageUnlocked(pool, idKien);
         if (req.body?.craneMode === true) {
@@ -1347,6 +1382,7 @@ router.put('/btp/phieunhap/xac-nhan', async (req, res) => {
         if (!positiveDetails.length) return res.status(400).json({ message: 'Phiếu nhập chưa có số lượng BTP' });
         const pool = await testpoolPromise;
         await ensureImportEditable(pool.request(), idPhieuNhap, { allowRentalTransfer: true });
+        await assertCraneDocument(pool, 'inbound', idPhieuNhap, null, isCraneInbound);
         const warehouseID = isCraneInbound ? await craneWmsInbound.getWarehouseID(pool, idPhieuNhap) : null;
         if (isCraneInbound && warehouseID !== TEST_WAREHOUSE_ID) return res.status(400).json({ message: `Phiếu nhập demo không thuộc kho BTP test (ID ${TEST_WAREHOUSE_ID})` });
         if (isCraneInbound) {
@@ -1484,18 +1520,10 @@ router.post('/btp/phieuxuat/tim-kiem', async (req, res) => {
         const pageIndex = Math.max(0, Number(body.PageIndex || 0));
         const warehouseIds = (Array.isArray(body.idKho) ? body.idKho : []).map(Number).filter(Number.isInteger).join(',');
         const pool = await testpoolPromise;
-        const result = await pool.request()
-            .input('WarehouseId', sql.NVarChar(200), warehouseIds)
-            .input('Status', sql.Bit, body.trangThai ?? null)
-            .input('ReviewNumber', sql.NVarChar(255), String(body.soPhieu || '').trim())
-            .input('Type', sql.Int, toIntOrNull(body.loaiPhieu))
-            .input('Take', sql.Int, pageSize)
-            .input('Skip', sql.Int, pageIndex * pageSize)
-            .input('ID_TaiKhoanDangNhap', sql.Int, toIntOrNull(body.IdTaiKhoanDangNhap) || 0)
-            .query(`SELECT * FROM dbo.SearchPhieuXuatBTP(@WarehouseId, @Status, @ReviewNumber, @Type, @Take, @Skip, @ID_TaiKhoanDangNhap);`);
+        const result = await searchClassifiedDocuments(pool, body, 'outbound', warehouseIds, pageIndex, pageSize);
         const rows = await enrichExportSearchUnits(
             pool,
-            (result.recordset || []).map(mapExportSearchRow),
+            result.map(mapExportSearchRow),
         );
         const ids = rows.map(row => toIntOrNull(row.id)).filter(Boolean);
         if (ids.length) {

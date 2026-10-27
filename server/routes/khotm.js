@@ -9,6 +9,7 @@ const sql = require("mssql");
 const craneWms = require('../utils/craneWms');
 const craneWmsInbound = require('../utils/craneWmsInbound');
 const craneWmsReports = require('../utils/craneWmsReports');
+const { isCraneNote, assertCraneDocument } = require('../utils/craneDocument');
 const checkApiKey = require('../middleware/apiKey');
 const {
   RENTAL_WAREHOUSE_ID,
@@ -1042,6 +1043,45 @@ router.get("/btp/phieunhap/khos", async (_req, res) => {
   }
 });
 
+// Filter before page slicing: the existing TVFs page by warehouse alone.
+async function searchClassifiedDocuments(pool, body, kind, warehouseIds, pageIndex, pageSize) {
+  const inbound = kind === 'inbound';
+  const table = inbound ? 'PhieuNhapBTP' : 'PhieuXuatBTP';
+  const key = inbound ? 'ID_PhieuNhapBTP' : 'ID_PhieuXuatBTP';
+  const fn = inbound ? 'SearchPhieuNhapBTP' : 'SearchPhieuXuatBTP';
+  const expectedCrane = body.craneMode === true;
+  const targetStart = pageIndex * pageSize;
+  if (!Number.isSafeInteger(targetStart) || targetStart > 2147483647) throw new Error('Trang không hợp lệ');
+  const take = 100;
+  const matches = [];
+  for (let skip = 0; skip <= 2147483647 - take; skip += take) {
+    const batch = await pool.request()
+      .input('WarehouseId', sql.NVarChar(200), warehouseIds)
+      .input('Status', sql.Bit, body.trangThai ?? null)
+      .input('ReviewNumber', sql.NVarChar(255), String(body.soPhieu || '').trim())
+      .input('Type', sql.Int, toIntOrNull(body.loaiPhieu))
+      .input('Take', sql.Int, take).input('Skip', sql.Int, skip)
+      .input('ID_TaiKhoanDangNhap', sql.Int, toIntOrNull(body.IdTaiKhoanDangNhap) || 0)
+      .query(`SELECT * FROM dbo.${fn}(@WarehouseId,@Status,@ReviewNumber,@Type,@Take,@Skip,@ID_TaiKhoanDangNhap)`);
+    const rows = batch.recordset || [];
+    const ids = rows.map(row => toIntOrNull(row.Id)).filter(Boolean);
+    if (ids.length) {
+      const request = pool.request();
+      const params = ids.map((id, i) => { request.input(`Doc${i}`, sql.Int, id); return `@Doc${i}`; });
+      const marked = await request.query(`SELECT ${key} AS id,GhiChu FROM dbo.${table} WHERE ${key} IN (${params.join(',')}) AND TonTai=1`);
+      const noteById = new Map(marked.recordset.map(row => [Number(row.id), row.GhiChu]));
+      for (const row of rows) {
+        const id = Number(row.Id);
+        if (noteById.has(id) && isCraneNote(noteById.get(id)) === expectedCrane) {
+          matches.push(row);
+        }
+      }
+    }
+    if (matches.length >= targetStart + pageSize || rows.length < take) break;
+  }
+  return { recordset: matches.slice(targetStart, targetStart + pageSize) };
+}
+
 router.post("/btp/phieunhap/tim-kiem", async (req, res) => {
   try {
     const body = req.body || {};
@@ -1058,26 +1098,7 @@ router.post("/btp/phieunhap/tim-kiem", async (req, res) => {
       .filter(Number.isInteger)
       .join(",");
     const pool = await tagpoolPromise;
-    const result = await pool
-      .request()
-      .input("WarehouseId", sql.NVarChar(200), warehouseIds)
-      .input("Status", sql.Bit, body.trangThai ?? null)
-      .input(
-        "ReviewNumber",
-        sql.NVarChar(255),
-        String(body.soPhieu || "").trim(),
-      )
-      .input("Type", sql.Int, toIntOrNull(body.loaiPhieu))
-      .input("Take", sql.Int, pageSize)
-      .input("Skip", sql.Int, pageIndex * pageSize)
-      .input(
-        "ID_TaiKhoanDangNhap",
-        sql.Int,
-        toIntOrNull(body.IdTaiKhoanDangNhap) || 0,
-      )
-      .query(
-        `SELECT * FROM dbo.SearchPhieuNhapBTP(@WarehouseId, @Status, @ReviewNumber, @Type, @Take, @Skip, @ID_TaiKhoanDangNhap);`,
-      );
+    const result = await searchClassifiedDocuments(pool, body, 'inbound', warehouseIds, pageIndex, pageSize);
     const rows = await enrichImportSearchUnits(
       pool,
       (result.recordset || []).map(mapImportSearchRow),
@@ -1440,11 +1461,13 @@ router.post("/btp/phieunhap/gan-qr", async (req, res) => {
       .request()
       .input("ID_Kien_QR", sql.Int, idKien)
       .query(
-        `SELECT k.ID_PhieuNhapBTP,p.ID_KhoNhap FROM TheKhoKienBTP k JOIN PhieuNhapBTP p
+        `SELECT k.ID_PhieuNhapBTP,p.ID_KhoNhap,p.GhiChu FROM TheKhoKienBTP k JOIN PhieuNhapBTP p
          ON p.ID_PhieuNhapBTP=k.ID_PhieuNhapBTP WHERE k.ID_TheKhoKienBTP=@ID_Kien_QR AND k.TonTai=1;`,
       );
     if (!info.recordset?.length)
       return res.status(404).json({ message: "Không tìm thấy kiện BTP" });
+    if (isCraneNote(info.recordset[0].GhiChu) !== (req.body?.craneMode === true))
+      return res.status(409).json({ message: 'Chế độ xử lý không khớp nghiệp vụ của phiếu nhập' });
     await ensureImportEditable(
       pool.request(),
       info.recordset[0].ID_PhieuNhapBTP,
@@ -1500,8 +1523,10 @@ router.post('/btp/phieunhap/:id/gui-wms-kien', async (req, res) => {
   try {
     const config = craneWms.getCraneConfig();
     if (!config) return res.status(503).json({ message: 'Chưa cấu hình kho cầu trục' });
+    const pool = await tagpoolPromise;
+    await assertCraneDocument(pool, 'inbound', orderID, config.warehouseID);
     const result = await craneWmsInbound.dispatchSelectedPackages(
-      await tagpoolPromise, orderID, packageIDs, config.warehouseID,
+      pool, orderID, packageIDs, config.warehouseID,
     );
     return res.json({ ok: true, ...result });
   } catch (error) {
@@ -1602,6 +1627,7 @@ router.put('/btp/phieunhap/xac-nhan', async (req, res) => {
         }
         const pool = await tagpoolPromise;
         await ensureImportEditable(pool.request(), idPhieuNhap, { allowRentalTransfer: true });
+        await assertCraneDocument(pool, 'inbound', idPhieuNhap, null, isCraneInbound);
         const craneConfig = isCraneInbound ? craneWms.getCraneConfig() : null;
         const warehouseID = isCraneInbound ? await craneWmsInbound.getWarehouseID(pool, idPhieuNhap) : null;
         if (isCraneInbound && (!craneConfig || warehouseID !== craneConfig.warehouseID)) return res.status(400).json({ message: 'Phiếu nhập không thuộc kho cầu trục đã cấu hình' });
@@ -1766,26 +1792,7 @@ router.post("/btp/phieuxuat/tim-kiem", async (req, res) => {
       .filter(Number.isInteger)
       .join(",");
     const pool = await tagpoolPromise;
-    const result = await pool
-      .request()
-      .input("WarehouseId", sql.NVarChar(200), warehouseIds)
-      .input("Status", sql.Bit, body.trangThai ?? null)
-      .input(
-        "ReviewNumber",
-        sql.NVarChar(255),
-        String(body.soPhieu || "").trim(),
-      )
-      .input("Type", sql.Int, toIntOrNull(body.loaiPhieu))
-      .input("Take", sql.Int, pageSize)
-      .input("Skip", sql.Int, pageIndex * pageSize)
-      .input(
-        "ID_TaiKhoanDangNhap",
-        sql.Int,
-        toIntOrNull(body.IdTaiKhoanDangNhap) || 0,
-      )
-      .query(
-        `SELECT * FROM dbo.SearchPhieuXuatBTP(@WarehouseId, @Status, @ReviewNumber, @Type, @Take, @Skip, @ID_TaiKhoanDangNhap);`,
-      );
+    const result = await searchClassifiedDocuments(pool, body, 'outbound', warehouseIds, pageIndex, pageSize);
     const rows = await enrichExportSearchUnits(
       pool,
       (result.recordset || []).map(mapExportSearchRow),
@@ -2175,7 +2182,8 @@ router.put("/btp/phieuxuat/xac-nhan", async (req, res) => {
     const exportHeader = statusResult.recordset[0];
     const craneConfig = craneWms.getCraneConfig();
     if (craneConfig) {
-      if (Number(exportHeader.ID_KhoXuat) === craneConfig.warehouseID) {
+      if (Number(exportHeader.ID_KhoXuat) === craneConfig.warehouseID &&
+          String(exportHeader.GhiChu || '').toLowerCase().includes('cautruc')) {
         return res.status(409).json({ message: 'Phiếu kho cầu trục được xác nhận bằng callback WMS' });
       }
     }
@@ -2301,7 +2309,9 @@ router.get('/btp/cau-truc/orders/:id/available-lots', async (req, res) => {
   try {
     const config = craneWms.getCraneConfig();
     if (!config) return res.status(503).json({ message: 'Chưa cấu hình kho cầu trục' });
-    const lots = await craneOutboundDispatch.availableLots(await tagpoolPromise, id, config.warehouseID);
+    const pool = await tagpoolPromise;
+    await assertCraneDocument(pool, 'outbound', id, config.warehouseID);
+    const lots = await craneOutboundDispatch.availableLots(pool, id, config.warehouseID);
     if (lots === null) return res.status(404).json({ message: 'Phiếu không thuộc kho cầu trục' });
     return res.json({ lots });
   } catch (error) { return res.status(500).json({ message: error.message }); }
@@ -2318,7 +2328,9 @@ router.post('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
   try {
     const config = craneWms.getCraneConfig();
     if (!config) return res.status(503).json({ message: 'Chưa cấu hình kho cầu trục' });
-    const result = await craneOutboundDispatch.dispatch(await tagpoolPromise, id, config.warehouseID, undefined, req.body?.skipLot);
+    const pool = await tagpoolPromise;
+    await assertCraneDocument(pool, 'outbound', id, config.warehouseID);
+    const result = await craneOutboundDispatch.dispatch(pool, id, config.warehouseID, undefined, req.body?.skipLot);
     return res.status(result.status).json({ ok: !result.error, ...result, message: result.error });
   } catch (error) { return res.status(500).json({ message: error.message }); }
 });

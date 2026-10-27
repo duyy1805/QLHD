@@ -72,7 +72,7 @@ async function overview(pool, warehouseID, temporaryLocationID, query) {
               (inbound.ID_TheKhoKienBTP IS NOT NULL AND (inbound.DispatchStatus<>'SENT' OR inbound.LocationID IS NULL))
               THEN 1 ELSE 0 END) IsLocked
           FROM dbo.TheKhoKienBTP k
-          JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho AND v.ID_Kho=@WarehouseID
+          JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho AND v.ID_Kho=@WarehouseID AND v.MaNha=N'Z76' AND v.MaKhuVuc IN (N'CT',N'CTT')
           JOIN dbo.TheKhoKienBTP_ChiTiet d ON d.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP AND ISNULL(d.TonTai,1)=1
           LEFT JOIN Exported e ON e.ID_TheKhoKienBTP_ChiTiet=d.ID_TheKhoKienBTP_ChiTiet
           LEFT JOIN ActivePallet active ON active.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP
@@ -230,7 +230,7 @@ async function alerts(pool, warehouseID, query) {
 async function inventoryAisles(pool, warehouseID, temporaryLocationID) {
     const result=await pool.request().input('WarehouseID',sql.Int,warehouseID).input('TemporaryLocationID',sql.Int,temporaryLocationID).query(`
       SELECT v.MaDay maDay,MAX(v.TenDay) tenDay,MAX(v.MaNha) maNha,MAX(v.TenNha) tenNha,COUNT(*) locationCount
-      FROM dbo.DM_Kho_ViTri v WHERE v.ID_Kho=@WarehouseID AND v.TonTai=1 AND v.SuDung=1
+      FROM dbo.DM_Kho_ViTri v WHERE v.ID_Kho=@WarehouseID AND v.MaNha=N'Z76' AND v.MaKhuVuc=N'CT' AND v.TonTai=1 AND v.SuDung=1
         AND v.ID_ViTriKho<>@TemporaryLocationID AND NULLIF(LTRIM(RTRIM(v.MaDay)),N'') IS NOT NULL
       GROUP BY v.MaDay ORDER BY v.MaDay`);
     return {items:result.recordset||[]};
@@ -271,7 +271,7 @@ async function inventory(pool, warehouseID, temporaryLocationID, query={}) {
         ISNULL(SUM(CASE WHEN line.IsLocked=0 THEN line.Quantity ELSE 0 END),0) tonKhaDung,
         COUNT(DISTINCT CASE WHEN line.Quantity>0 AND line.IsLocked=1 THEN line.ID_TheKhoKienBTP END) kienDangKhoa
       FROM dbo.DM_Kho_ViTri v LEFT JOIN Lines line ON line.ID_ViTriKho=v.ID_ViTriKho
-      WHERE v.ID_Kho=@WarehouseID AND v.TonTai=1 AND v.SuDung=1 AND v.ID_ViTriKho<>@TemporaryLocationID
+      WHERE v.ID_Kho=@WarehouseID AND v.MaNha=N'Z76' AND v.MaKhuVuc=N'CT' AND v.TonTai=1 AND v.SuDung=1 AND v.ID_ViTriKho<>@TemporaryLocationID
         AND (@Aisle='' OR v.MaDay=@Aisle)
       GROUP BY v.ID_ViTriKho,v.MaViTriKho,v.QRCode,v.TenViTriKho,v.MaNha,v.TenNha,v.MaDay,v.TenDay,v.MaTang,v.TenTang,v.MaKe,v.TenKe
       HAVING (@ItemCode='' AND @Lot='') OR ISNULL(SUM(line.Quantity),0)>0
@@ -286,7 +286,7 @@ async function inventoryLocationByQr(pool, warehouseID, temporaryLocationID, qrC
     const result=await pool.request().input('WarehouseID',sql.Int,warehouseID).input('TemporaryLocationID',sql.Int,temporaryLocationID)
       .input('QRCode',sql.NVarChar(255),qr).query(`SELECT TOP (1) ID_ViTriKho idViTriKho,MaViTriKho maViTriKho,QRCode qrCode,
         TenViTriKho,MaNha maNha,TenNha,MaDay maDay,TenDay,MaTang,TenTang,MaKe,TenKe
-        FROM dbo.DM_Kho_ViTri WHERE ID_Kho=@WarehouseID AND TonTai=1 AND SuDung=1 AND ID_ViTriKho<>@TemporaryLocationID
+        FROM dbo.DM_Kho_ViTri WHERE ID_Kho=@WarehouseID AND MaNha=N'Z76' AND MaKhuVuc=N'CT' AND TonTai=1 AND SuDung=1 AND ID_ViTriKho<>@TemporaryLocationID
           AND (QRCode=@QRCode OR MaViTriKho=@QRCode)`);
     if (!result.recordset[0]) throw Object.assign(new Error('Không tìm thấy vị trí thuộc kho cầu trục'),{status:404});
     return result.recordset[0];

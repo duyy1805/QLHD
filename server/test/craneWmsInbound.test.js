@@ -17,7 +17,7 @@ test('inbound payload groups persisted detail rows by pallet and keeps each Lot'
     const payload = buildPayload(header, rows);
     assert.equal(payload.orderType, 'INBOUND');
     assert.equal(payload.orderID, '12');
-    assert.equal(Object.hasOwn(payload, 'date'), false);
+    assert.equal(payload.date, '2026-09-28T08:00:00.000Z');
     assert.equal(payload.pallets.length, 2);
     assert.deepEqual(payload.pallets[0].items.map(item => [item.Lot, item.quantity]), [['W1', 30], ['W2', 20]]);
     assert.deepEqual(payload.pallets[1].items.map(item => [item.Lot, item.quantity]), [['W1', 10]]);
@@ -74,7 +74,7 @@ test('dispatch sends each pallet with its own idempotency key and does not resen
     const post = async (_url, payload, options) => {
         posts++;
         assert.equal(payload.orderID, '12');
-        assert.equal(Object.hasOwn(payload, 'date'), false);
+        assert.match(payload.date, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
         assert.equal(payload.pallets.length, 1);
         assert.match(payload.pallets[0].date, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
         assert.equal(options.headers['Idempotency-Key'], `inbound-12-${payload.pallets[0].palletID}`);
@@ -104,7 +104,7 @@ test('failed WMS send keeps request retryable', async () => {
     assert.equal(retryDates[0], firstDates[0]);
     assert.equal(retryDates.length, 2);
     assert.notEqual(retryDates[0], undefined);
-    assert.equal(Object.hasOwn(JSON.parse(pool.state.RequestJson), 'date'), false);
+    assert.match(JSON.parse(pool.state.RequestJson).date, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
 });
 
 test('selected inbound packages are sent sequentially while invalid packages are skipped', async () => {
