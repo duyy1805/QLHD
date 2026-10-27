@@ -681,6 +681,7 @@ function mapHoaDon(row) {
         nhomImportId: row.NhomImportId || null,
         maNhomImport: row.MaNhomImport || null,
         soThuTuTrongNhom: row.SoThuTuTrongNhom || null,
+        isReturned: Boolean(row.IsReturned),
         isImportIncomplete: row.MaLoaiHoaDon === UNCLASSIFIED_INVOICE_TYPE || !row.LoaiHinhDoanhThu || !row.HanThanhToan,
     };
 }
@@ -802,7 +803,7 @@ async function getImportGroupForUser(pool, nhomImportId, requester) {
                             WHERE scope.IdDonVi = h.IdDonVi
                         ))
                         OR @CanExport = 1
-                        OR (@CanViewExported = 1 AND tt.MaTrangThai = N'DaXuat')
+                        OR (@CanViewExported = 1 AND tt.MaTrangThai IN (N'DaXuat', N'HoanThanh'))
                         OR EXISTS (
                             SELECT 1 FROM dbo.HD_NguoiPhuTrach p
                             WHERE p.UserId = @RequesterUserId
@@ -842,7 +843,7 @@ async function listGroupInvoiceIdsForUser(pool, nhomImportId, requester, creator
                             WHERE scope.IdDonVi = h.IdDonVi
                         ))
                         OR @CanExport = 1
-                        OR (@CanViewExported = 1 AND tt.MaTrangThai = N'DaXuat')
+                        OR (@CanViewExported = 1 AND tt.MaTrangThai IN (N'DaXuat', N'HoanThanh'))
                         OR EXISTS (
                             SELECT 1 FROM dbo.HD_NguoiPhuTrach p
                             WHERE p.UserId = @RequesterUserId
@@ -1402,6 +1403,20 @@ router.get('/hoa-don', async (req, res) => {
             });
         }
         const standaloneInvoiceRows = invoiceRows.filter((row) => !importedInvoiceIds.has(Number(row.HoaDonId)));
+        if (standaloneInvoiceRows.length) {
+            const returnedRs = await pool.request()
+                .input('HoaDonIdsJson', sql.NVarChar(sql.MAX), JSON.stringify(standaloneInvoiceRows.map((row) => row.HoaDonId)))
+                .query(`
+                    SELECT DISTINCT l.HoaDonId
+                    FROM dbo.HD_HoaDon_LichSu l
+                    JOIN OPENJSON(@HoaDonIdsJson) ids ON l.HoaDonId = TRY_CONVERT(INT, ids.[value])
+                    WHERE l.HanhDong = N'TraLai';
+                `);
+            const returnedIds = new Set((returnedRs.recordset || []).map((row) => Number(row.HoaDonId)));
+            standaloneInvoiceRows.forEach((row) => {
+                row.IsReturned = row.MaTrangThai === 'KhoiTao' && returnedIds.has(Number(row.HoaDonId));
+            });
+        }
         res.json(standaloneInvoiceRows.map(mapHoaDon));
     } catch (err) {
         return httpError(res, err, 'Có lỗi khi lấy danh sách hóa đơn.');
@@ -2134,6 +2149,7 @@ router.get('/nhom-import', async (req, res) => {
                     soChoDuyetTBP = SUM(CASE WHEN tt.MaTrangThai = N'ChoDuyet_TBP' AND h.IsDeleted = 0 THEN 1 ELSE 0 END),
                     soChoXuLy = SUM(CASE WHEN tt.MaTrangThai = N'ChoXuLy_HoaDon' AND h.IsDeleted = 0 THEN 1 ELSE 0 END),
                     soSanSangXuat = SUM(CASE WHEN tt.MaTrangThai = N'SanSangXuat' AND h.IsDeleted = 0 THEN 1 ELSE 0 END),
+                    soDaXuat = SUM(CASE WHEN tt.MaTrangThai = N'DaXuat' AND h.IsDeleted = 0 THEN 1 ELSE 0 END),
                     soHoanTat = SUM(CASE WHEN tt.MaTrangThai IN (N'DaXuat', N'HoanThanh') AND h.IsDeleted = 0 THEN 1 ELSE 0 END),
                     soTuChoi = SUM(CASE WHEN tt.MaTrangThai = N'TuChoi' AND h.IsDeleted = 0 THEN 1 ELSE 0 END),
                     soDaXoa = SUM(CASE WHEN h.IsDeleted = 1 THEN 1 ELSE 0 END)
@@ -2153,7 +2169,7 @@ router.get('/nhom-import', async (req, res) => {
                                 WHERE scope.IdDonVi = h.IdDonVi
                             ))
                             OR @CanExport = 1
-                        OR (@CanViewExported = 1 AND tt.MaTrangThai = N'DaXuat')
+                        OR (@CanViewExported = 1 AND tt.MaTrangThai IN (N'DaXuat', N'HoanThanh'))
                             OR EXISTS (
                                 SELECT 1 FROM dbo.HD_NguoiPhuTrach p
                                 WHERE p.UserId = @RequesterUserId
@@ -2337,6 +2353,10 @@ router.get('/nhom-import/:id', async (req, res) => {
                 .input('NhomImportId', sql.BigInt, nhomImportId)
                 .query(`
                     SELECT v.*, m.NhomImportId, n.MaNhom AS MaNhomImport,
+                           IsReturned = CONVERT(bit, CASE WHEN v.MaTrangThai = N'KhoiTao' AND EXISTS (
+                               SELECT 1 FROM dbo.HD_HoaDon_LichSu l
+                               WHERE l.HoaDonId = v.HoaDonId AND l.HanhDong = N'TraLai'
+                           ) THEN 1 ELSE 0 END),
                            m.SoThuTuHoaDon AS SoThuTuTrongNhom
                     FROM dbo.HD_NhomImport_HoaDon m
                     JOIN dbo.HD_NhomImport n ON n.NhomImportId = m.NhomImportId AND n.IsDeleted = 0
@@ -2764,6 +2784,8 @@ router.get('/dashboard/doanh-thu', async (req, res) => {
         const mapAggregate = (row) => ({
             invoiceCount: dashboardNumber(row.SoHoaDon),
             revenueVnd: dashboardNumber(row.TongDoanhThuVND),
+            taxVnd: dashboardNumber(row.TongTienThueVND),
+            totalVnd: dashboardNumber(row.TongThanhToanVND),
             missingConvertedCount: dashboardNumber(row.SoHoaDonThieuQuyDoi),
         });
 
@@ -2792,8 +2814,12 @@ router.get('/dashboard/doanh-thu', async (req, res) => {
             exportByCurrency: firstRecordset(rs, 3).map((row) => ({
                 currencyCode: row.MaLoaiTien,
                 invoiceCount: dashboardNumber(row.SoHoaDon),
-                originalAmount: dashboardNumber(row.TongNguyenTe),
-                revenueVnd: dashboardNumber(row.TongQuyDoiVND),
+                revenueOriginal: dashboardNumber(row.TongDoanhThuNguyenTe),
+                taxOriginal: dashboardNumber(row.TongTienThueNguyenTe),
+                totalOriginal: dashboardNumber(row.TongThanhToanNguyenTe),
+                revenueVnd: dashboardNumber(row.TongDoanhThuVND),
+                taxVnd: dashboardNumber(row.TongTienThueVND),
+                totalVnd: dashboardNumber(row.TongThanhToanVND),
                 missingConvertedCount: dashboardNumber(row.SoHoaDonThieuQuyDoi),
             })),
             exportByCustomer: firstRecordset(rs, 4).map((row) => ({
@@ -2802,8 +2828,12 @@ router.get('/dashboard/doanh-thu', async (req, res) => {
                 taxCode: row.MaSoThue || null,
                 currencyCode: row.MaLoaiTien,
                 invoiceCount: dashboardNumber(row.SoHoaDon),
-                originalAmount: dashboardNumber(row.TongNguyenTe),
-                revenueVnd: dashboardNumber(row.TongQuyDoiVND),
+                revenueOriginal: dashboardNumber(row.TongDoanhThuNguyenTe),
+                taxOriginal: dashboardNumber(row.TongTienThueNguyenTe),
+                totalOriginal: dashboardNumber(row.TongThanhToanNguyenTe),
+                revenueVnd: dashboardNumber(row.TongDoanhThuVND),
+                taxVnd: dashboardNumber(row.TongTienThueVND),
+                totalVnd: dashboardNumber(row.TongThanhToanVND),
                 missingConvertedCount: dashboardNumber(row.SoHoaDonThieuQuyDoi),
             })),
             filterOptions: {
