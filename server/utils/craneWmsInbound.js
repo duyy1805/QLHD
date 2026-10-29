@@ -3,7 +3,7 @@ const sql = require('mssql');
 const TEST_WAREHOUSE_ID = 5;
 const TEST_TEMP_LOCATION_CODE = 'CT-TEMP';
 
-const DEFAULT_URL = 'https://z76-local.vercel.app/api/share/wmsInbound';
+const DEFAULT_URL = 'https://camera-grimacing-recolor.ngrok-free.dev/api/share/wmsInbound';
 
 function getDispatchErrorMessage(error) {
     const data = error?.response?.data;
@@ -14,6 +14,11 @@ function getDispatchErrorMessage(error) {
 }
 
 function buildPayload(header, rows) {
+    const orderDate = new Date(header.Ngay_NhapBTP);
+    if (!Number.isFinite(orderDate.getTime())) {
+        throw new Error('Phiếu nhập cầu trục thiếu ngày nhập hợp lệ để gửi WMS');
+    }
+    const palletDate = orderDate.toISOString();
     const pallets = new Map();
     for (const row of rows) {
         const palletID = String(row.QRCode || '').trim();
@@ -24,21 +29,19 @@ function buildPayload(header, rows) {
         if (!palletID || !itemCode || !itemName || !Lot || !Number.isFinite(quantity) || quantity <= 0) {
             throw new Error('Kiện nhập cầu trục thiếu QR, mã/tên hàng, dấu tuần hoặc số lượng để gửi WMS');
         }
-        if (!pallets.has(palletID)) pallets.set(palletID, { palletID, items: [] });
+        if (!/^\d{4}$/.test(Lot)) {
+            throw new Error(`Dấu tuần ${Lot} không hợp lệ; WMS yêu cầu đúng 4 chữ số theo dạng YYWW`);
+        }
+        if (!pallets.has(palletID)) pallets.set(palletID, { palletID, date: palletDate, items: [] });
         pallets.get(palletID).items.push({ itemCode, itemName, Lot, quantity });
     }
     if (!header.So_PhieuNhapBTP || !pallets.size) {
         throw new Error('Phiếu nhập cầu trục thiếu mã phiếu hoặc kiện để gửi WMS');
     }
-    const orderDate = new Date(header.Ngay_NhapBTP);
-    if (!Number.isFinite(orderDate.getTime())) {
-        throw new Error('Phiếu nhập cầu trục thiếu ngày nhập hợp lệ để gửi WMS');
-    }
     return {
         orderID: String(header.ID_PhieuNhapBTP),
         orderCode: String(header.So_PhieuNhapBTP),
         orderType: 'INBOUND',
-        date: orderDate.toISOString(),
         pallets: [...pallets.values()],
     };
 }
@@ -277,20 +280,19 @@ async function dispatch(pool, orderID, post = axios.post) {
     let dispatchError = null;
     try {
         const payload = JSON.parse(claimed.recordset[0].RequestJson);
-        if (!payload.date) payload.date = new Date().toISOString();
+        const fallbackDate = payload.date || new Date().toISOString();
+        delete payload.date;
         if (!Array.isArray(payload.pallets) || !payload.pallets.length ||
             payload.pallets.some(p => !p || typeof p.palletID !== 'string' || !p.palletID.trim()) ||
             new Set(payload.pallets.map(p => p.palletID.trim())).size !== payload.pallets.length)
             throw new Error('Phiếu nhập WMS thiếu hoặc trùng mã kiện');
         for (const pallet of payload.pallets) {
             try {
-                if (!pallet.date) {
-                    pallet.date = new Date().toISOString();
-                    await pool.request().input('OrderID', sql.Int, orderID)
-                        .input('Payload', sql.NVarChar(sql.MAX), JSON.stringify(payload))
-                        .query(`UPDATE dbo.CraneWmsInbound SET RequestJson=@Payload,UpdatedAt=SYSUTCDATETIME()
-                                WHERE ID_PhieuNhapBTP=@OrderID AND DispatchStatus='SENDING'`);
-                }
+                if (!pallet.date) pallet.date = fallbackDate;
+                await pool.request().input('OrderID', sql.Int, orderID)
+                    .input('Payload', sql.NVarChar(sql.MAX), JSON.stringify(payload))
+                    .query(`UPDATE dbo.CraneWmsInbound SET RequestJson=@Payload,UpdatedAt=SYSUTCDATETIME()
+                            WHERE ID_PhieuNhapBTP=@OrderID AND DispatchStatus='SENDING'`);
                 const response = await post(process.env.WMS_INBOUND_URL || DEFAULT_URL,
                     { ...payload, pallets: [pallet] }, {
                         timeout: 10000,
@@ -361,17 +363,16 @@ async function dispatchPackage(pool, orderID, packageID, post = axios.post) {
     let dispatchError = null;
     try {
         const payload = JSON.parse(row.RequestJson);
-        if (!payload.date) payload.date = new Date().toISOString();
+        const fallbackDate = payload.date || new Date().toISOString();
+        delete payload.date;
         if (!Array.isArray(payload.pallets) || payload.pallets.length !== 1 ||
             payload.pallets[0].palletID !== row.PalletID) throw new Error('Dữ liệu kiện WMS không hợp lệ');
-        if (!payload.pallets[0].date) {
-            payload.pallets[0].date = new Date().toISOString();
-            await pool.request().input('OrderID', sql.Int, orderID)
-                .input('PackageID', sql.Int, packageID)
-                .input('Payload', sql.NVarChar(sql.MAX), JSON.stringify(payload))
-                .query(`UPDATE dbo.CraneWmsInboundPackage SET RequestJson=@Payload,UpdatedAt=SYSUTCDATETIME()
-                        WHERE ID_PhieuNhapBTP=@OrderID AND ID_TheKhoKienBTP=@PackageID AND DispatchStatus='SENDING'`);
-        }
+        if (!payload.pallets[0].date) payload.pallets[0].date = fallbackDate;
+        await pool.request().input('OrderID', sql.Int, orderID)
+            .input('PackageID', sql.Int, packageID)
+            .input('Payload', sql.NVarChar(sql.MAX), JSON.stringify(payload))
+            .query(`UPDATE dbo.CraneWmsInboundPackage SET RequestJson=@Payload,UpdatedAt=SYSUTCDATETIME()
+                    WHERE ID_PhieuNhapBTP=@OrderID AND ID_TheKhoKienBTP=@PackageID AND DispatchStatus='SENDING'`);
         const response = await post(process.env.WMS_INBOUND_URL || DEFAULT_URL,
             payload, { timeout: 10000, headers: {
                 'Content-Type': 'application/json',

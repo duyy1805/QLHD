@@ -97,6 +97,22 @@ function mapPhieuSec(r) {
     };
 }
 
+async function getLatestRejection(pool, phieuSecId) {
+    const result = await pool.request()
+        .input("PhieuSecId", sql.Int, Number(phieuSecId))
+        .query(`
+            SELECT TOP 1
+                d.GhiChu AS LyDoTuChoi,
+                d.ThoiDiem AS TuChoi_Time,
+                d.TenNguoiDuyet AS NguoiTuChoi
+            FROM dbo.SS_PhieuSec_Duyet d
+            WHERE d.PhieuSecId = @PhieuSecId
+              AND d.TrangThai = N'Rejected'
+            ORDER BY d.PheDuyetId DESC;
+        `);
+    return result.recordset?.[0] || {};
+}
+
 async function userHasDbPermission(pool, userId, permissionCode) {
     if (!Number(userId)) return false;
     const rs = await pool.request()
@@ -640,6 +656,7 @@ router.get("/phieu/:id", /* verifyToken, */ async (req, res) => {
         if (!r) return res.status(404).json({ message: "Không tìm thấy phiếu" });
 
         // Map về shape FE đang dùng
+        const latestRejection = await getLatestRejection(pool, phieuId);
         const mapped = {
             id: r.PhieuSecId,
             maSoSec: r.MaSoSec,               // << quan trọng
@@ -662,6 +679,9 @@ router.get("/phieu/:id", /* verifyToken, */ async (req, res) => {
             gdTime: r.GD_Time,
             traLaiTime: r.TraLai_Time,
             lyDoTraLai: r.LyDoTraLai,
+            tuChoiTime: latestRejection.TuChoi_Time ?? null,
+            lyDoTuChoi: latestRejection.LyDoTuChoi ?? null,
+            nguoiTuChoi: latestRejection.NguoiTuChoi ?? null,
             tenDonVi: r.TenDonVi,
             tenChuyenKhoanHuongThu: r.TenChuyenKhoan ?? null,
             soTaiKhoanHuongThu: r.SoTaiKhoan ?? null,
@@ -985,6 +1005,8 @@ router.post("/phieu/:id/approve", async (req, res) => {
         }
         if (!r) return res.status(404).json({ message: "Không tìm thấy phiếu sau khi duyệt" });
 
+        const latestRejection = await getLatestRejection(pool, Number(id));
+
         // 💾 Đảm bảo proc SS_sp_PhieuSec_DanhSach trả thêm:
         // r.MaSoSec, r.TBPUserId, r.KTTUserId, r.GDUserId, r.NguoiDangKyId, ...
 
@@ -1007,6 +1029,9 @@ router.post("/phieu/:id/approve", async (req, res) => {
             gdTime: r.GD_Time,
             traLaiTime: r.TraLai_Time,
             lyDoTraLai: r.LyDoTraLai,
+            tuChoiTime: latestRejection.TuChoi_Time ?? null,
+            lyDoTuChoi: latestRejection.LyDoTuChoi ?? null,
+            nguoiTuChoi: latestRejection.NguoiTuChoi ?? null,
             tenDonVi: r.TenDonVi,
             tenChuyenKhoanHuongThu: r.TenChuyenKhoan ?? null,
             soTaiKhoanHuongThu: r.SoTaiKhoan ?? null,

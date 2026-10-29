@@ -19,7 +19,14 @@ if (!testConfigured || sameDatabase) {
     const { testpoolPromise } = require('../../dbtest');
     const checkApiKey = require('../../middleware/apiKey');
     const { createCraneDemoCallback, createCraneDemoLocationCallback } = require('./crane-demo-callback');
+    const outboundRequest = require('../../utils/wmsOutboundRequest');
     const router = express.Router();
+    router.post('/wms/outbound-callback', checkApiKey, async (req, res, next) => {
+        if (req.body?.sourceType !== outboundRequest.SOURCE_TYPE &&
+            !/^YCX-\d{8}-\d{6}$/.test(String(req.body?.orderCode || ''))) return next();
+        try { return res.json(await outboundRequest.confirm(await testpoolPromise, req.body)); }
+        catch (error) { return res.status(error.statusCode || 500).json({ success: false, message: error.message }); }
+    });
     router.post('/wms/outbound-callback', checkApiKey, createCraneDemoCallback(testpoolPromise));
     router.post('/wms/location-callback', checkApiKey, createCraneDemoLocationCallback(testpoolPromise));
     router.use(createRouter(testpoolPromise, { isTest: true }));

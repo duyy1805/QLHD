@@ -11,6 +11,7 @@ const craneWmsInbound = require('../utils/craneWmsInbound');
 const craneWmsReports = require('../utils/craneWmsReports');
 const { isCraneNote, assertCraneDocument } = require('../utils/craneDocument');
 const checkApiKey = require('../middleware/apiKey');
+const createWmsOutboundRequestRouter = require('./wmsOutboundRequests');
 const {
   RENTAL_WAREHOUSE_ID,
   RENTAL_FACTORY_WAREHOUSE_ID,
@@ -2303,6 +2304,11 @@ router.get('/btp/cau-truc/orders/:id', async (req, res) => {
 });
 
 const craneOutboundDispatch = require('../utils/craneOutboundDispatch');
+router.use(createWmsOutboundRequestRouter(tagpoolPromise, async () => {
+  const config = craneWms.getCraneConfig();
+  if (!config) { const error = new Error('Chưa cấu hình kho cầu trục'); error.statusCode = 503; throw error; }
+  return config.warehouseID;
+}));
 router.get('/btp/cau-truc/orders/:id/available-lots', async (req, res) => {
   const id = craneWms.positiveId(req.params.id);
   if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });

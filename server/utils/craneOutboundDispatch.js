@@ -1,6 +1,6 @@
 const axios = require('axios');
 const sql = require('mssql');
-const DEFAULT_URL = 'https://z76-local.vercel.app/api/share/wmsOutbound';
+const DEFAULT_URL = 'https://camera-grimacing-recolor.ngrok-free.dev/api/share/wmsOutbound';
 
 function getDispatchErrorMessage(error) {
     const data = error?.response?.data;
