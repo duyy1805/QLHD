@@ -1,5 +1,6 @@
 const axios = require('axios');
 const sql = require('mssql');
+const db = require('./wmsOutboundRequestDb');
 
 const DEFAULT_URL = 'https://camera-grimacing-recolor.ngrok-free.dev/api/share/wmsOutbound';
 const SOURCE_TYPE = 'WMS_OUTBOUND_REQUEST';
@@ -67,8 +68,8 @@ function dispatchError(error) {
 async function dispatch(pool, id, post = axios.post) {
     id = positiveId(id);
     if (!id) fail(400, 'ID yêu cầu xuất không hợp lệ');
-    const order = (await pool.request().input('ID', sql.Int, id).query(`
-        SELECT * FROM dbo.YeuCauXuatWMS WHERE ID_YeuCauXuatWMS=@ID`)).recordset[0];
+    const order = (await db.request(pool).input('ID_YeuCauXuatWMS', sql.Int, id)
+        .execute(db.PROCEDURES.dispatchRead)).recordset[0];
     if (!order) fail(404, 'Không tìm thấy yêu cầu xuất');
     if (order.TrangThai === 'COMPLETED' || order.TrangThai === 'CANCELLED')
         fail(409, 'Yêu cầu xuất đã hoàn tất hoặc đã hủy');
@@ -83,21 +84,14 @@ async function dispatch(pool, id, post = axios.post) {
         delete payload.sourceType;
         serialized = JSON.stringify(payload);
     } else {
-        const rows = (await pool.request().input('ID', sql.Int, id).query(`
-            SELECT ItemCode,ItemName,Lot,SoLuong,SkipLotJson FROM dbo.YeuCauXuatWMS_ChiTiet
-            WHERE ID_YeuCauXuatWMS=@ID ORDER BY ThuTu,ID_YeuCauXuatWMS_ChiTiet`)).recordset;
+        const rows = (await db.request(pool).input('ID_YeuCauXuatWMS', sql.Int, id)
+            .execute(db.PROCEDURES.dispatchRead)).recordsets[1] || [];
         payload = buildPayload(order, rows);
         serialized = JSON.stringify(payload);
     }
 
-    const claimed = await pool.request().input('ID', sql.Int, id)
-        .input('Payload', sql.NVarChar(sql.MAX), serialized).query(`
-        UPDATE dbo.YeuCauXuatWMS WITH (UPDLOCK,ROWLOCK)
-        SET TrangThai='SENDING',RequestJson=@Payload,DispatchAttempts=DispatchAttempts+1,
-            DispatchError=NULL,UpdatedAt=SYSUTCDATETIME(),
-            Revision=Revision+CASE WHEN TrangThai='REJECTED' THEN 1 ELSE 0 END
-        OUTPUT inserted.DispatchAttempts
-        WHERE ID_YeuCauXuatWMS=@ID AND TrangThai IN ('DRAFT','FAILED','REJECTED');`);
+    const claimed = await db.request(pool).input('ID_YeuCauXuatWMS', sql.Int, id)
+        .input('PayloadJson', sql.NVarChar(sql.MAX), serialized).execute(db.PROCEDURES.dispatchClaim);
     if (!claimed.recordset.length) fail(409, 'Trạng thái yêu cầu đã thay đổi; hãy tải lại');
 
     let error = null;
@@ -110,13 +104,9 @@ async function dispatch(pool, id, post = axios.post) {
     } catch (cause) {
         error = dispatchError(cause);
     }
-    await pool.request().input('ID', sql.Int, id)
-        .input('State', sql.VarChar(20), error ? 'FAILED' : 'SENT')
-        .input('Error', sql.NVarChar(1000), error).query(`
-        UPDATE dbo.YeuCauXuatWMS SET TrangThai=@State,DispatchError=@Error,
-            SentAt=CASE WHEN @State='SENT' THEN SYSUTCDATETIME() ELSE SentAt END,
-            UpdatedAt=SYSUTCDATETIME()
-        WHERE ID_YeuCauXuatWMS=@ID AND TrangThai='SENDING';`);
+    await db.request(pool).input('ID_YeuCauXuatWMS', sql.Int, id)
+        .input('ThanhCong', sql.Bit, !error).input('Loi', sql.NVarChar(1000), error)
+        .execute(db.PROCEDURES.dispatchFinish);
     return { ok: !error, status: error ? 'FAILED' : 'SENT', error };
 }
 
@@ -164,77 +154,23 @@ async function confirm(pool, body) {
     // WMS outbound callbacks currently leave eventID empty. Keep the same
     // idempotent fallback used by the existing crane-outbound flow.
     const storedEventID = callback.eventID || `LEGACY-OUTBOUND:${callback.id}`;
-    const transaction = new sql.Transaction(pool);
-    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
     try {
-        const request = () => new sql.Request(transaction);
-        const order = (await request().input('ID', sql.Int, callback.id).query(`
-            SELECT * FROM dbo.YeuCauXuatWMS WITH (UPDLOCK,HOLDLOCK) WHERE ID_YeuCauXuatWMS=@ID`)).recordset[0];
-        if (!order) fail(404, 'Không tìm thấy yêu cầu xuất');
-        if (order.MaYeuCau !== callback.orderCode) fail(409, 'orderCode không khớp yêu cầu xuất');
-        const existing = (await request().input('Event', sql.NVarChar(255), storedEventID).query(`
-            SELECT ID_YeuCauXuatWMS,PayloadJson,ResultJson FROM dbo.YeuCauXuatWMS_Event WITH (UPDLOCK,HOLDLOCK)
-            WHERE EventID=@Event`)).recordset[0];
-        if (existing) {
-            if (Number(existing.ID_YeuCauXuatWMS) !== callback.id || existing.PayloadJson !== payloadJson)
-                fail(409, 'eventID đã được dùng với nội dung khác');
-            await transaction.commit();
-            return { ...JSON.parse(existing.ResultJson), duplicate: true };
-        }
-        if (order.TrangThai === 'COMPLETED') fail(409, 'Yêu cầu đã nhận một callback hoàn tất khác');
-        if (!['SENT', 'FAILED', 'REJECTED'].includes(order.TrangThai)) fail(409, 'Yêu cầu chưa ở trạng thái chờ WMS');
-
-        if (callback.status === 'REJECTED') {
-            const result = { success: true, orderID: String(callback.id), eventID: callback.eventID || null, status: 'REJECTED' };
-            await request().input('ID', sql.Int, callback.id).input('Reason', sql.NVarChar(1000), callback.reason)
-                .input('Callback', sql.NVarChar(sql.MAX), JSON.stringify(body)).query(`
-                UPDATE dbo.YeuCauXuatWMS SET TrangThai='REJECTED',DispatchError=@Reason,CallbackJson=@Callback,
-                    UpdatedAt=SYSUTCDATETIME() WHERE ID_YeuCauXuatWMS=@ID;`);
-            await request().input('Event', sql.NVarChar(255), storedEventID).input('ID', sql.Int, callback.id)
-                .input('Payload', sql.NVarChar(sql.MAX), payloadJson).input('Result', sql.NVarChar(sql.MAX), JSON.stringify(result)).query(`
-                INSERT dbo.YeuCauXuatWMS_Event(EventID,ID_YeuCauXuatWMS,PayloadJson,ResultJson)
-                VALUES(@Event,@ID,@Payload,@Result);`);
-            await transaction.commit();
-            return result;
-        }
-
-        const expectedRows = (await request().input('ID', sql.Int, callback.id).query(`
-            SELECT ItemCode,ISNULL(Lot,'') AS Lot,SoLuong,SkipLotJson FROM dbo.YeuCauXuatWMS_ChiTiet WITH (HOLDLOCK)
-            WHERE ID_YeuCauXuatWMS=@ID`)).recordset;
-        const exclusions = new Map(expectedRows.map(row => [row.ItemCode, new Set(row.SkipLotJson ? JSON.parse(row.SkipLotJson) : [])]));
-        if (callback.items.some(item => exclusions.get(item.itemCode)?.has(item.lot)))
-            fail(422, 'WMS đã xuất dấu tuần nằm trong danh sách không xuất');
-        const expected = new Map();
-        for (const row of expectedRows) expected.set(row.ItemCode, (expected.get(row.ItemCode) || 0) + Number(row.SoLuong));
-        const actual = new Map();
-        for (const item of callback.items) actual.set(item.itemCode, (actual.get(item.itemCode) || 0) + item.requestedQuantity);
-        if (expected.size !== actual.size || [...expected].some(([key, qty]) => actual.get(key) !== qty))
-            fail(422, 'Mã hàng hoặc tổng số lượng callback không khớp yêu cầu đã gửi');
-
-        await request().input('ID', sql.Int, callback.id).query(`
-            DELETE dbo.YeuCauXuatWMS_KetQuaPallet WHERE ID_YeuCauXuatWMS=@ID;`);
-        for (const item of callback.items) for (const pallet of item.pallets) {
-            await request().input('ID', sql.Int, callback.id)
-                .input('ItemCode', sql.NVarChar(255), item.itemCode).input('Lot', sql.NVarChar(50), item.lot)
-                .input('Requested', sql.Int, item.requestedQuantity).input('Exported', sql.Int, item.exportedQuantity)
-                .input('PalletID', sql.NVarChar(255), pallet.palletID).input('Quantity', sql.Int, pallet.quantity).query(`
-                INSERT dbo.YeuCauXuatWMS_KetQuaPallet
-                    (ID_YeuCauXuatWMS,ItemCode,Lot,RequestedQuantity,ExportedQuantity,PalletID,PalletQuantity)
-                VALUES(@ID,@ItemCode,@Lot,@Requested,@Exported,@PalletID,@Quantity);`);
-        }
         const result = { success: true, orderID: String(callback.id), eventID: callback.eventID || null,
-            status: 'COMPLETED', duplicate: false };
-        await request().input('ID', sql.Int, callback.id).input('Callback', sql.NVarChar(sql.MAX), JSON.stringify(body)).query(`
-            UPDATE dbo.YeuCauXuatWMS SET TrangThai='COMPLETED',CallbackJson=@Callback,DispatchError=NULL,
-                CompletedAt=SYSUTCDATETIME(),UpdatedAt=SYSUTCDATETIME() WHERE ID_YeuCauXuatWMS=@ID;`);
-        await request().input('Event', sql.NVarChar(255), storedEventID).input('ID', sql.Int, callback.id)
-            .input('Payload', sql.NVarChar(sql.MAX), payloadJson).input('Result', sql.NVarChar(sql.MAX), JSON.stringify(result)).query(`
-            INSERT dbo.YeuCauXuatWMS_Event(EventID,ID_YeuCauXuatWMS,PayloadJson,ResultJson)
-            VALUES(@Event,@ID,@Payload,@Result);`);
-        await transaction.commit();
-        return result;
+            status: callback.status, duplicate: false };
+        const saved = await db.request(pool).input('ID_YeuCauXuatWMS', sql.Int, callback.id)
+            .input('MaYeuCau', sql.NVarChar(50), callback.orderCode)
+            .input('EventID', sql.NVarChar(255), storedEventID).input('TrangThai', sql.VarChar(20), callback.status)
+            .input('LyDo', sql.NVarChar(1000), callback.reason || null)
+            .input('CallbackJson', sql.NVarChar(sql.MAX), JSON.stringify(body))
+            .input('PayloadJson', sql.NVarChar(sql.MAX), payloadJson)
+            .input('ResultJson', sql.NVarChar(sql.MAX), JSON.stringify(result))
+            .input('Pallets', db.callbackTable(callback.items)).execute(db.PROCEDURES.callback);
+        const duplicate = Boolean(saved.recordset?.[0]?.duplicate);
+        if (callback.status === 'COMPLETED') {
+            await db.request(pool).input('ID_YeuCauXuatWMS', sql.Int, callback.id).execute(db.PROCEDURES.postErp);
+        }
+        return { ...result, duplicate, erpStatus: callback.status === 'COMPLETED' ? 'ERP_POSTED' : undefined };
     } catch (error) {
-        try { await transaction.rollback(); } catch (_) { /* preserve original error */ }
         throw error;
     }
 }

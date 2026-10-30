@@ -779,7 +779,11 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
         }
 
         const warehouseID = Number(orderResult.recordset[0].ID_KhoNhap);
-        await require('../../utils/craneDocument').assertCraneDocument(transaction, 'inbound', idPhieuNhap, craneWms.getCraneConfig()?.warehouseID);
+        const inboundWarehouseID = options.isTest
+            ? craneWmsInbound.TEST_WAREHOUSE_ID
+            : craneWms.getCraneConfig()?.warehouseID;
+        await require('../../utils/craneDocument').assertCraneDocument(
+            transaction, 'inbound', idPhieuNhap, inboundWarehouseID);
         let updatedCount = 0;
 
         for (const pallet of normalizedPallets) {
@@ -868,13 +872,14 @@ router.post('/wms/inbound-callback', checkApiKey, async (req, res) => {
         console.error('[POST /wms/inbound-callback] error:', error);
 
         const sqlErrorNumber = error.number ?? error.originalError?.info?.number;
-        const statusCode = error.statusCode === 400 || [51041, 51042, 51043].includes(sqlErrorNumber)
-            ? 400
-            : 500;
+        const explicitStatus = Number(error.statusCode);
+        const statusCode = explicitStatus >= 400 && explicitStatus < 500
+            ? explicitStatus
+            : [51041, 51042, 51043].includes(sqlErrorNumber) ? 400 : 500;
         return res.status(statusCode).json({
             success: false,
             orderID: orderID || null,
-            message: statusCode === 400 ? error.message : 'Internal Server Error'
+            message: statusCode < 500 ? error.message : 'Internal Server Error'
         });
     }
 });
@@ -930,7 +935,15 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
                 (hasPreviousLocation && previousLocationID !== config.temporaryLocationID)) {
                 throw craneWms.craneError(400, 'Thông tin nhập lại pallet không hợp lệ');
             }
-            const order = await craneWms.findCraneOrder(transaction, sourceOrderID, true);
+            processingStage = 'resolve-crane-return-order';
+            const resolved = await new sql.Request(transaction)
+                .input('SourceOrderID', sql.Int, sourceOrderID)
+                .input('PalletID', sql.NVarChar(255), oldPalletID)
+                .execute('dbo.pr_WMS_YeuCauXuat_Return_Resolve');
+            const resolvedOrderID = Number(resolved.recordset[0]?.ID_PhieuXuatBTP);
+            if (!Number.isInteger(resolvedOrderID) || resolvedOrderID <= 0)
+                throw craneWms.craneError(404, 'Không tìm thấy phiếu sở hữu pallet chờ nhập lại');
+            const order = await craneWms.findCraneOrder(transaction, resolvedOrderID, true);
             if (!order) throw craneWms.craneError(404, 'Không tìm thấy phiếu cầu trục');
             const targetLocation = await resolveActiveWarehouseLocation(
                 transaction,
@@ -942,7 +955,7 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
             if (locationID === config.temporaryLocationID)
                 throw craneWms.craneError(400, 'Thông tin nhập lại pallet không hợp lệ');
             const rowResult = await new sql.Request(transaction)
-                .input('OrderID', sql.Int, sourceOrderID)
+                .input('OrderID', sql.Int, resolvedOrderID)
                 .input('OldPalletID', sql.NVarChar(255), oldPalletID)
                 .query(`SELECT p.* FROM dbo.CraneWmsOutboundPallet p WITH (UPDLOCK, HOLDLOCK)
                         WHERE p.ID_PhieuXuatBTP=@OrderID AND p.PalletID=@OldPalletID`);
@@ -953,7 +966,8 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
                 await transaction.commit();
                 transactionFinished = true;
                 return res.status(200).json({
-                    success: true, oldPalletID, newPalletID, locationID, locationCode, updated: false
+                    success: true, oldPalletID, newPalletID, locationID, locationCode,
+                    idPhieuXuatBTP: resolvedOrderID, updated: false
                 });
             }
             if (cycle.Status === 'RETURNED')
@@ -992,7 +1006,7 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
                         SET QRCode=@NewPalletID
                         WHERE ID_TheKhoKienBTP=@PackageID AND TonTai=1`);
             await new sql.Request(transaction)
-                .input('OrderID', sql.Int, sourceOrderID)
+                .input('OrderID', sql.Int, resolvedOrderID)
                 .input('PackageID', sql.Int, cycle.ID_TheKhoKienBTP)
                 .input('EventID', sql.NVarChar(255), eventID)
                 .input('LocationID', sql.Int, locationID)
@@ -1006,7 +1020,8 @@ router.post('/wms/location-callback', checkApiKey, async (req, res) => {
             await transaction.commit();
             transactionFinished = true;
             return res.status(200).json({
-                success: true, oldPalletID, newPalletID, locationID, locationCode, updated: true
+                success: true, oldPalletID, newPalletID, locationID, locationCode,
+                idPhieuXuatBTP: resolvedOrderID, updated: true
             });
         }
 
