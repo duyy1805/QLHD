@@ -628,6 +628,11 @@ async function getAttachmentForDelete(pool, taiLieuId, requesterUserId) {
 function mapHoaDon(row) {
     if (!row) return null;
     const invoiceType = row.MaLoaiHoaDon === UNCLASSIFIED_INVOICE_TYPE ? null : row.MaLoaiHoaDon;
+    const isVnd = String(row.MaLoaiTien || 'VND').toUpperCase() === 'VND';
+    const moneyValue = (originalValue, convertedValue) => {
+        const value = isVnd && convertedValue != null ? convertedValue : originalValue;
+        return value == null ? null : Number(value);
+    };
     return {
         id: row.HoaDonId,
         hoaDonId: row.HoaDonId,
@@ -660,9 +665,13 @@ function mapHoaDon(row) {
         tyGia: row.TyGia == null ? null : Number(row.TyGia),
         mauHoaDonDuKien: row.MauHoaDonDuKien,
         kyHieuDuKien: row.KyHieuDuKien,
-        tongTienHang: row.TongTienHang == null ? null : Number(row.TongTienHang),
-        tongTienThue: row.TongTienThue == null ? null : Number(row.TongTienThue),
-        tongTienThanhToan: row.TongTienThanhToan == null ? null : Number(row.TongTienThanhToan),
+        // Với VND, các cột quy đổi là số tiền đã chốt sau khi làm tròn/điều chỉnh.
+        // Không dùng cột nguyên tệ còn phần lẻ vì có thể làm hiển thị và lần lưu sau lệch 1 đồng.
+        tongTienHang: moneyValue(row.TongTienHang, row.TongTienHangQuyDoi),
+        tongTienThue: moneyValue(row.TongTienThue, row.TongTienThueQuyDoi),
+        tongTienThanhToan: moneyValue(row.TongTienThanhToan, row.TongThanhToanQuyDoi),
+        tongTienHangQuyDoi: row.TongTienHangQuyDoi == null ? null : Number(row.TongTienHangQuyDoi),
+        tongTienThueQuyDoi: row.TongTienThueQuyDoi == null ? null : Number(row.TongTienThueQuyDoi),
         tongThanhToanQuyDoi: row.TongThanhToanQuyDoi == null ? null : Number(row.TongThanhToanQuyDoi),
         ghiChu: row.GhiChu,
         nguoiDangKyId: row.NguoiDangKyId,
@@ -1437,6 +1446,16 @@ router.get('/hoa-don/:id', async (req, res) => {
             .execute('HD_sp_HoaDon_GetById');
 
         const headerRow = firstRecordset(rs, 0)[0];
+        const convertedTotalsRs = await pool.request()
+            .input('HoaDonId', sql.Int, hoaDonId)
+            .query(`
+                SELECT TongTienHangQuyDoi, TongTienThueQuyDoi, TongThanhToanQuyDoi
+                FROM dbo.HD_HoaDon
+                WHERE HoaDonId = @HoaDonId AND IsDeleted = 0;
+            `);
+        if (headerRow && convertedTotalsRs.recordset?.[0]) {
+            Object.assign(headerRow, convertedTotalsRs.recordset[0]);
+        }
         const supplementalRs = await pool.request()
             .input('HoaDonId', sql.Int, hoaDonId)
             .execute('HD_sp_HoaDon_LayThongTinBoSung');
