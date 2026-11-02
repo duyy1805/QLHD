@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('node:crypto');
 const sql = require('mssql');
 const db = require('./wmsOutboundRequestDb');
 
@@ -148,12 +149,20 @@ function normalizeCallback(body) {
         processedAt: new Date(body.processedAt).toISOString(), items };
 }
 
+function callbackEventID(callback) {
+    if (callback.eventID) return callback.eventID;
+    const identity = JSON.stringify({ id: callback.id, orderCode: callback.orderCode,
+        status: callback.status, reason: callback.reason || null, items: callback.items || [] });
+    return `OUTBOUND:${callback.id}:${crypto.createHash('sha256').update(identity).digest('hex')}`;
+}
+
 async function confirm(pool, body) {
     const callback = normalizeCallback(body);
     const payloadJson = JSON.stringify(callback);
-    // WMS outbound callbacks currently leave eventID empty. Keep the same
-    // idempotent fallback used by the existing crane-outbound flow.
-    const storedEventID = callback.eventID || `LEGACY-OUTBOUND:${callback.id}`;
+    // WMS may report each pallet in a separate callback and may omit eventID.
+    // Hash the canonical event so independent pallet callbacks remain distinct,
+    // while an exact retry remains idempotent.
+    const storedEventID = callbackEventID(callback);
     try {
         const result = { success: true, orderID: String(callback.id), eventID: callback.eventID || null,
             status: callback.status, duplicate: false };
@@ -166,13 +175,18 @@ async function confirm(pool, body) {
             .input('ResultJson', sql.NVarChar(sql.MAX), JSON.stringify(result))
             .input('Pallets', db.callbackTable(callback.items)).execute(db.PROCEDURES.callback);
         const duplicate = Boolean(saved.recordset?.[0]?.duplicate);
-        if (callback.status === 'COMPLETED') {
+        if (callback.status === 'COMPLETED' && !duplicate)
             await db.request(pool).input('ID_YeuCauXuatWMS', sql.Int, callback.id).execute(db.PROCEDURES.postErp);
-        }
-        return { ...result, duplicate, erpStatus: callback.status === 'COMPLETED' ? 'ERP_POSTED' : undefined };
+        const state = callback.status === 'COMPLETED'
+            ? (await db.request(pool).input('ID', sql.Int, callback.id)
+                .query('SELECT TrangThai,ERPStatus FROM dbo.YeuCauXuatWMS WHERE ID_YeuCauXuatWMS=@ID')).recordset[0]
+            : null;
+        return { ...result, duplicate, requestStatus: state?.TrangThai,
+            erpStatus: state?.ERPStatus };
     } catch (error) {
         throw error;
     }
 }
 
-module.exports = { SOURCE_TYPE, EDITABLE, positiveId, normalizeItems, buildPayload, dispatch, normalizeCallback, confirm };
+module.exports = { SOURCE_TYPE, EDITABLE, positiveId, normalizeItems, buildPayload, dispatch,
+    normalizeCallback, callbackEventID, confirm };
