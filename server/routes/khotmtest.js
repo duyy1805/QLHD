@@ -1690,7 +1690,7 @@ router.post('/btp/cau-truc/orders/:id/dispatch', async (req, res) => {
 const craneReportHandler = (loader) => async (req, res) => {
     try {
         const pool = await testpoolPromise;
-        return res.json(await loader(pool, TEST_WAREHOUSE_ID, req.query, await craneWmsInbound.testPendingLocationID(pool)));
+        return res.json(await loader(pool, TEST_WAREHOUSE_ID, { ...req.query, ...req.params }, await craneWmsInbound.testPendingLocationID(pool)));
     } catch (error) {
         return res.status(error.status || 500).json({ message: error.message || 'Không tải được báo cáo kho cầu trục' });
     }
@@ -1724,6 +1724,8 @@ router.get('/btp/cau-truc/reports/inventory/aisles', craneReportHandler(
     (pool, warehouseID, _query, temporaryLocationID) => craneWmsReports.inventoryAisles(pool, warehouseID, temporaryLocationID)));
 router.get('/btp/cau-truc/reports/inventory/location', craneReportHandler(
     (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.inventoryLocationByQr(pool, warehouseID, temporaryLocationID, query.qrCode)));
+router.get('/btp/cau-truc/reports/inventory/location/:id/packages', craneReportHandler(
+  (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.inventoryLocationPackages(pool, warehouseID, temporaryLocationID, query.id)));
 router.get('/btp/cau-truc/reports/inventory', craneReportHandler(
     (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.inventory(pool, warehouseID, temporaryLocationID, query)));
 

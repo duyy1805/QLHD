@@ -292,4 +292,36 @@ async function inventoryLocationByQr(pool, warehouseID, temporaryLocationID, qrC
     return result.recordset[0];
 }
 
-module.exports={filters,overview,inbound,outbound,alerts,inventoryAisles,inventory,inventoryLocationByQr,STATUS_LABELS};
+async function inventoryLocationPackages(pool, warehouseID, temporaryLocationID, locationID) {
+    locationID=Number(locationID);
+    if (!Number.isSafeInteger(locationID)||locationID<=0)
+        throw Object.assign(new Error('Vị trí kho không hợp lệ'),{status:400});
+    const result=await pool.request().input('WarehouseID',sql.Int,warehouseID)
+      .input('TemporaryLocationID',sql.Int,temporaryLocationID).input('LocationID',sql.Int,locationID).query(`
+      ;WITH ActivePallet AS (
+        SELECT ID_TheKhoKienBTP,Status FROM dbo.CraneWmsOutboundPallet
+        WHERE Status IN ('WAITING_WMS','FAILED_RETRY','WAITING_RETURN')
+      ), Exported AS (
+        SELECT x.ID_TheKhoKienBTP_ChiTiet,
+          SUM(CASE WHEN active.ID_TheKhoKienBTP IS NOT NULL AND active.Status IN ('WAITING_WMS','FAILED_RETRY')
+                   THEN 0 ELSE x.SoLuong_XuatKho END) ExportedQuantity
+        FROM dbo.PhieuXuatBTP_ChiTiet_TheKhoKien x
+        JOIN dbo.TheKhoKienBTP_ChiTiet d ON d.ID_TheKhoKienBTP_ChiTiet=x.ID_TheKhoKienBTP_ChiTiet
+        LEFT JOIN ActivePallet active ON active.ID_TheKhoKienBTP=d.ID_TheKhoKienBTP
+        GROUP BY x.ID_TheKhoKienBTP_ChiTiet
+      )
+      SELECT k.ID_TheKhoKienBTP idPackage,k.QRCode qrCode,d.ItemCode itemCode,d.Ten_SanPham productName,d.DauTuan weekMark,
+        CASE WHEN d.SoLuong-ISNULL(e.ExportedQuantity,0)>0 THEN d.SoLuong-ISNULL(e.ExportedQuantity,0) ELSE 0 END stockQuantity,
+        v.ID_ViTriKho idViTriKho,v.MaViTriKho maViTriKho
+      FROM dbo.TheKhoKienBTP k
+      JOIN dbo.DM_Kho_ViTri v ON v.ID_ViTriKho=k.ID_ViTriKho
+      JOIN dbo.TheKhoKienBTP_ChiTiet d ON d.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP AND ISNULL(d.TonTai,1)=1
+      LEFT JOIN Exported e ON e.ID_TheKhoKienBTP_ChiTiet=d.ID_TheKhoKienBTP_ChiTiet
+      WHERE k.ID_ViTriKho=@LocationID AND k.TonTai=1 AND v.ID_Kho=@WarehouseID AND v.MaNha=N'Z76'
+        AND v.MaKhuVuc=N'CT' AND v.TonTai=1 AND v.SuDung=1 AND v.ID_ViTriKho<>@TemporaryLocationID
+        AND d.SoLuong-ISNULL(e.ExportedQuantity,0)>0
+      ORDER BY d.ItemCode,k.ID_TheKhoKienBTP,d.DauTuan;`);
+    return {items:(result.recordset||[]).map(row=>({...row,stockQuantity:Number(row.stockQuantity||0)}))};
+}
+
+module.exports={filters,overview,inbound,outbound,alerts,inventoryAisles,inventory,inventoryLocationByQr,inventoryLocationPackages,STATUS_LABELS};

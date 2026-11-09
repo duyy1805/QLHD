@@ -2381,7 +2381,7 @@ const craneReportHandler = (loader) => async (req, res) => {
   try {
     const config = craneWms.getCraneConfig();
     if (!config) return res.status(503).json({ message: 'Chưa cấu hình kho cầu trục' });
-    return res.json(await loader(await tagpoolPromise, config.warehouseID, req.query, config.temporaryLocationID));
+    return res.json(await loader(await tagpoolPromise, config.warehouseID, { ...req.query, ...req.params }, config.temporaryLocationID));
   } catch (error) {
     return res.status(error.status || 500).json({ message: error.message || 'Không tải được báo cáo kho cầu trục' });
   }
@@ -2399,6 +2399,8 @@ router.get('/btp/cau-truc/reports/inventory/aisles', craneReportHandler(
   (pool, warehouseID, _query, temporaryLocationID) => craneWmsReports.inventoryAisles(pool, warehouseID, temporaryLocationID)));
 router.get('/btp/cau-truc/reports/inventory/location', craneReportHandler(
   (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.inventoryLocationByQr(pool, warehouseID, temporaryLocationID, query.qrCode)));
+router.get('/btp/cau-truc/reports/inventory/location/:id/packages', craneReportHandler(
+  (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.inventoryLocationPackages(pool, warehouseID, temporaryLocationID, query.id)));
 router.get('/btp/cau-truc/reports/inventory', craneReportHandler(
   (pool, warehouseID, query, temporaryLocationID) => craneWmsReports.inventory(pool, warehouseID, temporaryLocationID, query)));
 
