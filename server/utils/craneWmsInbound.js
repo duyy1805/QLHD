@@ -592,6 +592,25 @@ async function tryFinalize(pool, orderID) {
         const result = await new sql.Request(tx).input('TheKhoKienBTPChiTietNhapsTable', table)
             .output('InsertResult', sql.NVarChar(50)).execute('App_XacNhanPhieuNhap_BTP');
         if (result.output?.InsertResult !== 'success') throw new Error(result.output?.InsertResult || 'Xác nhận phiếu nhập thất bại');
+
+        // App_XacNhanPhieuNhap_BTP giữ hành vi cũ: xóa ID lô sản xuất của BTP công đoạn 6.
+        // Luồng cầu trục cần ID này để yêu cầu xuất đối chiếu đúng LSX công đoạn kế tiếp (ID 7),
+        // nên khôi phục chính xác giá trị đã khóa/đã gửi vào thủ tục trong cùng transaction.
+        for (const d of finalRows.filter(row => Number(row.ID_DonHang_LoSanXuat) > 0)) {
+            const restored = await new sql.Request(tx)
+                .input('OrderID', sql.Int, orderID)
+                .input('DetailID', sql.Int, Number(d.ID_TheKhoKienBTP_ChiTiet))
+                .input('ProductionLotID', sql.Int, Number(d.ID_DonHang_LoSanXuat))
+                .query(`UPDATE d
+                        SET d.ID_DonHang_LoSanXuat=@ProductionLotID
+                        FROM dbo.TheKhoKienBTP_ChiTiet d
+                        JOIN dbo.TheKhoKienBTP k ON k.ID_TheKhoKienBTP=d.ID_TheKhoKienBTP AND k.TonTai=1
+                        WHERE d.ID_TheKhoKienBTP_ChiTiet=@DetailID AND d.TonTai=1
+                          AND k.ID_PhieuNhapBTP=@OrderID`);
+            if (Number(restored.rowsAffected?.[0]) !== 1) {
+                throw new Error(`Không khôi phục được lô sản xuất cho chi tiết kiện ${d.ID_TheKhoKienBTP_ChiTiet}`);
+            }
+        }
         await new sql.Request(tx).input('OrderID', sql.Int, orderID).query(`UPDATE dbo.CraneWmsInbound
             SET FinalizeStatus='COMPLETE',FinalizeError=NULL,FinalizedAt=SYSUTCDATETIME(),UpdatedAt=SYSUTCDATETIME()
             WHERE ID_PhieuNhapBTP=@OrderID`);

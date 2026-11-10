@@ -9,6 +9,11 @@ const {
 	verifyOtp,
 	resendOtp,
 	logoutTrustedDevice,
+	telegramSetupStatus,
+	telegramWebhook,
+	listTelegramAccounts,
+	updateTelegramAccount,
+	resetTelegramAccount,
 } = require('../utils/erpOtpAuth');
 
 
@@ -252,6 +257,11 @@ router.post('/verify-token', (req, res) => {
 router.post('/otp/verify', verifyOtp);
 router.post('/otp/resend', resendOtp);
 router.post('/otp/logout', logoutTrustedDevice);
+router.post('/telegram/setup/status', telegramSetupStatus);
+router.post('/telegram/webhook', telegramWebhook);
+router.get('/admin/telegram-accounts', verifyToken, listTelegramAccounts);
+router.put('/admin/telegram-accounts/:userId', verifyToken, updateTelegramAccount);
+router.post('/admin/telegram-accounts/:userId/reset', verifyToken, resetTelegramAccount);
 
 module.exports = router
 

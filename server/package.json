@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "test": "node --test",
-    "server": "nodemon index.js"
+    "server": "nodemon index.js",
+    "telegram:webhook": "node scripts/setupTelegramWebhook.js"
   },
   "author": "",
   "license": "ISC",
