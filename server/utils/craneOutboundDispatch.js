@@ -1,5 +1,6 @@
 const axios = require('axios');
 const sql = require('mssql');
+const wmsHttp = require('./wmsHttp');
 const DEFAULT_URL = 'https://camera-grimacing-recolor.ngrok-free.dev/api/share/wmsOutbound';
 
 function getDispatchErrorMessage(error) {
@@ -198,7 +199,7 @@ async function dispatch(pool, id, warehouseID, post = axios.post, requestedSkipL
     let errorMessage = null;
     try {
         const response = await post(process.env.WMS_OUTBOUND_URL || DEFAULT_URL, payload, {
-            timeout: 10000, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `outbound-${id}` },
+            timeout: 10000, headers: wmsHttp.headers(`outbound-${id}`),
         });
         if (response.status < 200 || response.status >= 300) throw new Error(`WMS HTTP ${response.status}`);
     } catch (error) {

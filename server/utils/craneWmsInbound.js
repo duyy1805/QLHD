@@ -1,5 +1,6 @@
 const axios = require('axios');
 const sql = require('mssql');
+const wmsHttp = require('./wmsHttp');
 const TEST_WAREHOUSE_ID = 5;
 const TEST_TEMP_LOCATION_CODE = 'CT-TEMP';
 
@@ -296,8 +297,7 @@ async function dispatch(pool, orderID, post = axios.post) {
                 const response = await post(process.env.WMS_INBOUND_URL || DEFAULT_URL,
                     { ...payload, pallets: [pallet] }, {
                         timeout: 10000,
-                        headers: { 'Content-Type': 'application/json',
-                            'Idempotency-Key': `inbound-${orderID}-${pallet.palletID.trim()}` },
+                        headers: wmsHttp.headers(`inbound-${orderID}-${pallet.palletID.trim()}`),
                     });
                 responseStatus = response.status;
                 if (responseStatus < 200 || responseStatus >= 300) throw new Error(`WMS HTTP ${responseStatus}`);
@@ -374,10 +374,8 @@ async function dispatchPackage(pool, orderID, packageID, post = axios.post) {
             .query(`UPDATE dbo.CraneWmsInboundPackage SET RequestJson=@Payload,UpdatedAt=SYSUTCDATETIME()
                     WHERE ID_PhieuNhapBTP=@OrderID AND ID_TheKhoKienBTP=@PackageID AND DispatchStatus='SENDING'`);
         const response = await post(process.env.WMS_INBOUND_URL || DEFAULT_URL,
-            payload, { timeout: 10000, headers: {
-                'Content-Type': 'application/json',
-                'Idempotency-Key': `inbound-${orderID}-${row.PalletID}`,
-            } });
+            payload, { timeout: 10000,
+                headers: wmsHttp.headers(`inbound-${orderID}-${row.PalletID}`) });
         responseStatus = response.status;
         if (responseStatus < 200 || responseStatus >= 300) throw new Error(`WMS HTTP ${responseStatus}`);
     } catch (error) {
