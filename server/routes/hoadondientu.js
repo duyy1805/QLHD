@@ -1064,7 +1064,7 @@ router.get('/role/:userId', async (req, res) => {
                 WHERE pq.ID_TaiKhoanDangNhap = @UserId
                   AND pq.CapNhat = 1
                   AND cn.TonTai = 1
-                  AND cn.Ma_ChucNang IN (N'HD_TBP', N'HD_XuatHoaDon', N'HD_XemHoaDonDaXuat', N'HD_Admin', N'TBP', N'Admin');
+                  AND cn.Ma_ChucNang IN (N'HD_TBP', N'HD_XuatHoaDon', N'HD_XemHoaDonDaXuat', N'HD_XemDashboardToanBo', N'HD_Admin', N'TBP', N'Admin');
 
                 SELECT MaLoaiHoaDon
                 FROM dbo.HD_NguoiPhuTrach

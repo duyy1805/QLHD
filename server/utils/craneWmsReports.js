@@ -242,7 +242,20 @@ async function inventory(pool, warehouseID, temporaryLocationID, query={}) {
     const lot=String(query.lot||query.dauTuan||'').trim().slice(0,50);
     const result=await pool.request().input('WarehouseID',sql.Int,warehouseID).input('TemporaryLocationID',sql.Int,temporaryLocationID)
       .input('Aisle',sql.NVarChar(100),aisle).input('ItemCode',sql.NVarChar(255),itemCode).input('Lot',sql.NVarChar(50),lot).query(`
-      ;WITH ActivePallet AS (
+      ;WITH EligibleLocations AS (
+        SELECT v.ID_ViTriKho,v.MaViTriKho,v.QRCode,v.TenViTriKho,v.MaNha,v.TenNha,
+          v.MaDay,v.TenDay,v.MaTang,v.TenTang,v.MaKe,v.TenKe
+        FROM dbo.DM_Kho_ViTri v
+        WHERE v.ID_Kho=@WarehouseID AND v.MaNha=N'Z76' AND v.MaKhuVuc=N'CT'
+          AND v.TonTai=1 AND v.SuDung=1 AND v.ID_ViTriKho<>@TemporaryLocationID
+          AND (@Aisle='' OR v.MaDay=@Aisle)
+      ), RelevantDetails AS (
+        SELECT k.ID_ViTriKho,k.ID_TheKhoKienBTP,d.ID_TheKhoKienBTP_ChiTiet,d.SoLuong
+        FROM EligibleLocations v
+        JOIN dbo.TheKhoKienBTP k ON k.ID_ViTriKho=v.ID_ViTriKho AND ISNULL(k.TonTai,1)=1
+        JOIN dbo.TheKhoKienBTP_ChiTiet d ON d.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP AND ISNULL(d.TonTai,1)=1
+        WHERE (@ItemCode='' OR d.ItemCode=@ItemCode) AND (@Lot='' OR LTRIM(RTRIM(d.DauTuan))=@Lot)
+      ), ActivePallet AS (
         SELECT ID_PhieuXuatBTP,ID_TheKhoKienBTP,Status FROM dbo.CraneWmsOutboundPallet
         WHERE Status IN ('WAITING_WMS','FAILED_RETRY','WAITING_RETURN')
       ), Exported AS (
@@ -250,19 +263,18 @@ async function inventory(pool, warehouseID, temporaryLocationID, query={}) {
           SUM(CASE WHEN active.ID_TheKhoKienBTP IS NOT NULL AND active.Status IN ('WAITING_WMS','FAILED_RETRY')
                    THEN 0 ELSE x.SoLuong_XuatKho END) ExportedQuantity
         FROM dbo.PhieuXuatBTP_ChiTiet_TheKhoKien x
-        JOIN dbo.TheKhoKienBTP_ChiTiet d ON d.ID_TheKhoKienBTP_ChiTiet=x.ID_TheKhoKienBTP_ChiTiet
+        JOIN RelevantDetails d ON d.ID_TheKhoKienBTP_ChiTiet=x.ID_TheKhoKienBTP_ChiTiet
         LEFT JOIN ActivePallet active ON active.ID_PhieuXuatBTP=x.ID_PhieuXuatBTP AND active.ID_TheKhoKienBTP=d.ID_TheKhoKienBTP
         GROUP BY x.ID_TheKhoKienBTP_ChiTiet
       ), Lines AS (
-        SELECT k.ID_ViTriKho,k.ID_TheKhoKienBTP,
+        SELECT d.ID_ViTriKho,d.ID_TheKhoKienBTP,
           CASE WHEN d.SoLuong-ISNULL(e.ExportedQuantity,0)>0 THEN d.SoLuong-ISNULL(e.ExportedQuantity,0) ELSE 0 END Quantity,
           CASE WHEN active.ID_TheKhoKienBTP IS NOT NULL OR
             (inbound.ID_TheKhoKienBTP IS NOT NULL AND (inbound.DispatchStatus<>'SENT' OR inbound.LocationID IS NULL)) THEN 1 ELSE 0 END IsLocked
-        FROM dbo.TheKhoKienBTP k JOIN dbo.TheKhoKienBTP_ChiTiet d ON d.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP AND ISNULL(d.TonTai,1)=1
+        FROM RelevantDetails d
         LEFT JOIN Exported e ON e.ID_TheKhoKienBTP_ChiTiet=d.ID_TheKhoKienBTP_ChiTiet
-        LEFT JOIN ActivePallet active ON active.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP
-        LEFT JOIN dbo.CraneWmsInboundPackage inbound ON inbound.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP
-        WHERE ISNULL(k.TonTai,1)=1 AND (@ItemCode='' OR d.ItemCode=@ItemCode) AND (@Lot='' OR LTRIM(RTRIM(d.DauTuan))=@Lot)
+        LEFT JOIN ActivePallet active ON active.ID_TheKhoKienBTP=d.ID_TheKhoKienBTP
+        LEFT JOIN dbo.CraneWmsInboundPackage inbound ON inbound.ID_TheKhoKienBTP=d.ID_TheKhoKienBTP
       )
       SELECT v.ID_ViTriKho idViTriKho,v.MaViTriKho maViTriKho,v.QRCode qrCode,v.TenViTriKho,
         v.MaNha maNha,v.TenNha,v.MaDay maDay,v.TenDay,v.MaTang,v.TenTang,v.MaKe,v.TenKe,
@@ -270,9 +282,7 @@ async function inventory(pool, warehouseID, temporaryLocationID, query={}) {
         ISNULL(SUM(line.Quantity),0) tonViTri,
         ISNULL(SUM(CASE WHEN line.IsLocked=0 THEN line.Quantity ELSE 0 END),0) tonKhaDung,
         COUNT(DISTINCT CASE WHEN line.Quantity>0 AND line.IsLocked=1 THEN line.ID_TheKhoKienBTP END) kienDangKhoa
-      FROM dbo.DM_Kho_ViTri v LEFT JOIN Lines line ON line.ID_ViTriKho=v.ID_ViTriKho
-      WHERE v.ID_Kho=@WarehouseID AND v.MaNha=N'Z76' AND v.MaKhuVuc=N'CT' AND v.TonTai=1 AND v.SuDung=1 AND v.ID_ViTriKho<>@TemporaryLocationID
-        AND (@Aisle='' OR v.MaDay=@Aisle)
+      FROM EligibleLocations v LEFT JOIN Lines line ON line.ID_ViTriKho=v.ID_ViTriKho
       GROUP BY v.ID_ViTriKho,v.MaViTriKho,v.QRCode,v.TenViTriKho,v.MaNha,v.TenNha,v.MaDay,v.TenDay,v.MaTang,v.TenTang,v.MaKe,v.TenKe
       HAVING (@ItemCode='' AND @Lot='') OR ISNULL(SUM(line.Quantity),0)>0
       ORDER BY v.MaDay,v.MaTang,v.MaKe,v.MaViTriKho`);

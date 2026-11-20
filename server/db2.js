@@ -5,6 +5,8 @@ const TAGconfig = {
     user: process.env.DB_USER2,
     password: process.env.DB_PASSWORD2,
     port: parseInt(process.env.DB_PORT2, 10),
+    connectionTimeout: Number(process.env.DB_CONNECTION_TIMEOUT_MS2 || 30000),
+    requestTimeout: Number(process.env.DB_REQUEST_TIMEOUT_MS2 || 60000),
     options: {
         encrypt: true, // Nếu sử dụng Azure, cần bật
         trustedConnection: process.env.DB_TRUSTED_CONNECTION === 'true',
