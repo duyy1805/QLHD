@@ -12,6 +12,7 @@ const craneWmsReports = require('../utils/craneWmsReports');
 const { isCraneNote, assertCraneDocument } = require('../utils/craneDocument');
 const checkApiKey = require('../middleware/apiKey');
 const createWmsOutboundRequestRouter = require('./wmsOutboundRequests');
+const createBtpWarehouseTransferRouter = require('./btpWarehouseTransfers');
 const {
   RENTAL_WAREHOUSE_ID,
   RENTAL_FACTORY_WAREHOUSE_ID,
@@ -1985,45 +1986,9 @@ router.get(
   async (req, res) => {
     try {
       const pool = await tagpoolPromise;
-      const currentPackage = await pool.request()
-        .input("QrCode_Current", sql.NVarChar(255), req.params.qrcode)
-        .input("ID_PhieuXuat_Current", sql.Int, toIntOrNull(req.params.idPhieuXuat))
-        .query(`
-          SELECT TOP (1) k.ID_TheKhoKienBTP
-          FROM dbo.TheKhoKienBTP k
-          JOIN dbo.DM_Kho_ViTri vt ON vt.ID_ViTriKho = k.ID_ViTriKho
-          JOIN dbo.PhieuNhapBTP pn ON pn.ID_PhieuNhapBTP = k.ID_PhieuNhapBTP AND pn.TonTai = 1
-          LEFT JOIN dbo.PhieuXuatBTP sourceExport
-            ON sourceExport.ID_PhieuXuatBTP = pn.ID_PhieuXuatBTP AND sourceExport.TonTai = 1
-          JOIN dbo.PhieuXuatBTP px ON px.ID_PhieuXuatBTP = @ID_PhieuXuat_Current
-                                      AND px.TonTai = 1 AND px.ID_KhoXuat = vt.ID_Kho
-          WHERE k.QRCode = @QrCode_Current AND ISNULL(k.TonTai, 1) = 1
-            AND (pn.ID_PhieuXuatBTP IS NULL
-                 OR NOT ((pn.ID_KhoNhap = ${RENTAL_WAREHOUSE_ID}
-                          OR (pn.ID_KhoXuat = ${RENTAL_WAREHOUSE_ID}
-                              AND pn.ID_KhoNhap = ${RENTAL_FACTORY_WAREHOUSE_ID}))
-                         AND CHARINDEX(N'[KHOTHUE]', UPPER(ISNULL(sourceExport.GhiChu, N''))) > 0)
-                 OR ISNULL(pn.TrangThai, 0) = 5
-            AND EXISTS (
-              SELECT 1
-              FROM dbo.TheKhoKienBTP_ChiTiet d
-              LEFT JOIN (
-                SELECT x.ID_TheKhoKienBTP_ChiTiet, SUM(x.SoLuong_XuatKho) AS DaXuat
-                FROM dbo.PhieuXuatBTP_ChiTiet_TheKhoKien x
-                JOIN dbo.PhieuXuatBTP ep ON ep.ID_PhieuXuatBTP = x.ID_PhieuXuatBTP AND ep.TonTai = 1
-                GROUP BY x.ID_TheKhoKienBTP_ChiTiet
-              ) used ON used.ID_TheKhoKienBTP_ChiTiet = d.ID_TheKhoKienBTP_ChiTiet
-              WHERE d.ID_TheKhoKienBTP = k.ID_TheKhoKienBTP AND ISNULL(d.TonTai, 1) = 1
-                AND d.SoLuong - ISNULL(used.DaXuat, 0) > 0
-            )
-          ORDER BY k.ID_TheKhoKienBTP DESC;
-        `);
-      const currentPackageId = toIntOrNull(currentPackage.recordset?.[0]?.ID_TheKhoKienBTP);
-      if (!currentPackageId)
-        return res.status(404).json({ message: "Không tìm thấy kiện còn tồn tại trong kho xuất" });
       const result = await pool
         .request()
-        .input("QrCode", sql.NVarChar(255), req.params.qrcode)
+        .input("QrCode", sql.NVarChar(100), req.params.qrcode)
         .input("ID_PhieuXuatBTP", sql.Int, toIntOrNull(req.params.idPhieuXuat))
         .input(
           "ID_DonHang_LoSanXuat",
@@ -2031,16 +1996,12 @@ router.get(
           toIntOrNull(req.params.idDonHangLoSanXuat) || 0,
         )
         .execute("App_ChiTiet_PhieuXuatBTP_ByKien");
-      const header = (result.recordsets?.[0] || []).find(
-        (row) => Number(row.ID_TheKhoKienBTP) === currentPackageId,
-      );
+      const header = result.recordsets?.[0]?.[0];
       if (!header)
         return res.status(404).json({ message: "Không tìm thấy kiện phù hợp" });
       const qrCode = header.QRCode ?? header.QrCode;
-      if (craneWms.getCraneConfig() && await craneWms.findActivePallet(pool, String(qrCode)))
-        return res.status(409).json({ message: 'Pallet đang chờ WMS hoặc chờ nhập lại' });
       const details = (result.recordsets?.[1] || [])
-        .filter((row) => Number(row.ID_TheKhoKienBTP) === currentPackageId)
+        .filter((row) => Number(row.ID_TheKhoKienBTP) === Number(header.ID_TheKhoKienBTP))
         .map((row) => ({
         ...row,
         idTheKhoKienBTPChiTiet: row.ID_TheKhoKienBTP_ChiTiet,
@@ -2050,6 +2011,8 @@ router.get(
         idDonHang: row.ID_DonHang,
         itemCode: row.ItemCode,
         tenSanPham: row.Ten_SanPham,
+        weekMark: row.DauTuan ?? header.DauTuan ?? null,
+        dauTuan: row.DauTuan ?? header.DauTuan ?? null,
         soLuongBanDau: row.SoLuong,
         soLuongTon: row.SoLuongTon,
         soLuongXuat: row.SoLuongXuat,
@@ -2065,6 +2028,8 @@ router.get(
         qrCode,
         idViTriKho: header.ID_ViTriKho,
         maViTriKho: header.MaViTriKho,
+        weekMark: header.DauTuan ?? null,
+        dauTuan: header.DauTuan ?? null,
         bTPs: details,
       });
     } catch (error) {
@@ -2115,6 +2080,138 @@ router.get("/btp/phieuxuat/list-kien", async (req, res) => {
         message: "Không tải được danh sách kiện BTP",
         detail: error.message,
       });
+  }
+});
+
+router.put("/btp/phieuxuat/quet-kien", async (req, res) => {
+  const idPhieuXuat = toIntOrNull(req.body?.IdPhieuXuat);
+  const qrCode = String(req.body?.QrCode || "").trim();
+  const idDonHangLoSanXuat = toIntOrNull(req.body?.IdDonHangLoSanXuat) || 0;
+  const idDonHangSanPham = toIntOrNull(req.body?.IdDonHangSanPham) || 0;
+  const idDonHang = toIntOrNull(req.body?.IdDonHang) || 0;
+  const idQuyTrinhSanXuat = toIntOrNull(req.body?.IdQuyTrinhSanXuat) || 0;
+  if (!idPhieuXuat || !qrCode)
+    return res.status(400).json({ message: "Thiếu phiếu xuất hoặc QR kiện" });
+
+  const sameSelectedLine = (row) => {
+    if ((toIntOrNull(row?.ID_DonHang) || 0) !== idDonHang) return false;
+    if ((toIntOrNull(row?.ID_DonHang_SanPham) || 0) !== idDonHangSanPham) return false;
+    if ((toIntOrNull(row?.ID_DonHang_LoSanXuat) || 0) !== idDonHangLoSanXuat) return false;
+    const rowProcessId = toIntOrNull(row?.ID_QuyTrinhSanXuat) || 0;
+    return !idQuyTrinhSanXuat || !rowProcessId || rowProcessId === idQuyTrinhSanXuat;
+  };
+
+  const matchesPackageLine = (row) => {
+    if ((toIntOrNull(row?.ID_DonHang) || 0) !== idDonHang) return false;
+    const rowProductId = toIntOrNull(row?.ID_DonHang_SanPham) || 0;
+    const rowLotId = toIntOrNull(row?.ID_DonHang_LoSanXuat) || 0;
+    return (
+      (rowProductId === idDonHangSanPham && rowLotId === idDonHangLoSanXuat) ||
+      rowLotId === 0 ||
+      rowProductId === 0
+    );
+  };
+
+  let transaction;
+  try {
+    const pool = await tagpoolPromise;
+    transaction = new sql.Transaction(pool);
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+
+    const exportResult = await new sql.Request(transaction)
+      .input("ID_PhieuXuatBTP", sql.Int, idPhieuXuat)
+      .execute("App_BTP_PhieuXuat_ThongTinChiTiet");
+    const header = exportResult.recordsets?.[0]?.[0];
+    if (!header) {
+      await transaction.rollback();
+      transaction = null;
+      return res.status(404).json({ message: "Không tìm thấy phiếu xuất BTP" });
+    }
+    if (header.QrStatus) {
+      await transaction.rollback();
+      transaction = null;
+      return res.status(409).json({ message: "Phiếu xuất BTP đã xác nhận" });
+    }
+
+    const exportLines = (exportResult.recordsets?.[1] || []).filter(sameSelectedLine);
+    if (!exportLines.length) {
+      await transaction.rollback();
+      transaction = null;
+      return res.status(400).json({ message: "Không tìm thấy dòng phiếu phù hợp với kiện quét" });
+    }
+
+    const requestedQuantity = exportLines.reduce(
+      (sum, row) => sum + toNumber(row.SoLuong_XuatKho),
+      0,
+    );
+    const savedQuantity = (exportResult.recordsets?.[2] || [])
+      .filter(matchesPackageLine)
+      .reduce((sum, row) => sum + toNumber(row.SoLuong_XuatKho), 0);
+    let remainingQuantity = Math.max(0, requestedQuantity - savedQuantity);
+    if (remainingQuantity <= 0) {
+      await transaction.rollback();
+      transaction = null;
+      return res.status(409).json({ message: "Dòng phiếu đã đủ số lượng" });
+    }
+
+    const packageResult = await new sql.Request(transaction)
+      .input("QRCode", sql.NVarChar(100), qrCode)
+      .input("StartDate", sql.Date, null)
+      .input("EndDate", sql.Date, null)
+      .execute("sp_KhoTM_PXK_FindByQRCode");
+    const packageHeader = packageResult.recordsets?.[0]?.[0];
+    if (!packageHeader) {
+      await transaction.rollback();
+      transaction = null;
+      return res.status(404).json({ message: "Không tìm thấy thông tin kiện theo QR" });
+    }
+
+    const packageDetails = (packageResult.recordsets?.[1] || []).filter((row) => {
+      if (!matchesPackageLine(row)) return false;
+      const rowProcessId = toIntOrNull(row?.ID_QuyTrinhSanXuat) || 0;
+      if (idQuyTrinhSanXuat && rowProcessId && rowProcessId !== idQuyTrinhSanXuat) return false;
+      return toNumber(row.ConLai ?? row.SoLuongTon) > 0;
+    });
+    if (!packageDetails.length) {
+      await transaction.rollback();
+      transaction = null;
+      return res.status(400).json({
+        message: "Kiện không khớp đơn hàng, sản phẩm, lô sản xuất của dòng phiếu hoặc đã hết tồn",
+      });
+    }
+
+    const details = packageDetails.map((row) => ({
+      ...row,
+      idTheKhoKienBTPChiTiet: row.ID_TheKhoKienBTP_ChiTiet,
+      idTheKhoKienBTP: row.ID_TheKhoKienBTP ?? packageHeader.ID_TheKhoKienBTP,
+      idDonHangLoSanXuat: row.ID_DonHang_LoSanXuat,
+      idDonHangSanPham: row.ID_DonHang_SanPham,
+      idDonHang: row.ID_DonHang,
+      idQuyTrinhSanXuat: row.ID_QuyTrinhSanXuat,
+      itemCode: row.ItemCode,
+      tenSanPham: row.Ten_SanPham,
+      soLuongTon: toNumber(row.ConLai ?? row.SoLuongTon),
+      conLai: toNumber(row.ConLai ?? row.SoLuongTon),
+      qrCode: packageHeader.QRCode ?? packageHeader.QrCode ?? qrCode,
+      QRCode: packageHeader.QRCode ?? packageHeader.QrCode ?? qrCode,
+    }));
+
+    await transaction.rollback();
+    transaction = null;
+    return res.json({
+      ...packageHeader,
+      qrCode: packageHeader.QRCode ?? packageHeader.QrCode ?? qrCode,
+      QRCode: packageHeader.QRCode ?? packageHeader.QrCode ?? qrCode,
+      bTPs: details,
+      remainingQuantity,
+    });
+  } catch (error) {
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (_) {}
+    }
+    return res.status(400).json({ message: error.message });
   }
 });
 
@@ -2309,6 +2406,7 @@ router.use(createWmsOutboundRequestRouter(tagpoolPromise, async () => {
   if (!config) { const error = new Error('Chưa cấu hình kho cầu trục'); error.statusCode = 503; throw error; }
   return config.warehouseID;
 }));
+router.use(createBtpWarehouseTransferRouter(tagpoolPromise));
 router.get('/btp/cau-truc/orders/:id/available-lots', async (req, res) => {
   const id = craneWms.positiveId(req.params.id);
   if (!id) return res.status(400).json({ message: 'ID phiếu không hợp lệ' });

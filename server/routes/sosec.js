@@ -81,6 +81,7 @@ function mapPhieuSec(r) {
         gdTime: r.GD_Time,
         traLaiTime: r.TraLai_Time,
         lyDoTraLai: r.LyDoTraLai,
+        nguoiTraLai: r.NguoiTraLai ?? null,
         tenDonVi: r.TenDonVi,
         tenChuyenKhoanHuongThu: r.TenChuyenKhoan ?? null,
         soTaiKhoanHuongThu: r.SoTaiKhoan ?? null,
@@ -108,6 +109,24 @@ async function getLatestRejection(pool, phieuSecId) {
             FROM dbo.SS_PhieuSec_Duyet d
             WHERE d.PhieuSecId = @PhieuSecId
               AND d.TrangThai = N'Rejected'
+            ORDER BY d.PheDuyetId DESC;
+        `);
+    return result.recordset?.[0] || {};
+}
+
+async function getLatestReturn(pool, phieuSecId) {
+    const result = await pool.request()
+        .input("PhieuSecId", sql.Int, Number(phieuSecId))
+        .query(`
+            SELECT TOP 1
+                d.GhiChu AS LyDoTraLai,
+                d.ThoiDiem AS TraLai_Time,
+                COALESCE(u.TenDayDu, d.TenNguoiDuyet) AS NguoiTraLai
+            FROM dbo.SS_PhieuSec_Duyet d
+            LEFT JOIN Tag_System.dbo.TaiKhoanDangNhap u
+                ON u.ID_TaiKhoanDangNhap = d.NguoiDuyetId
+            WHERE d.PhieuSecId = @PhieuSecId
+              AND d.TrangThai = N'TraLai'
             ORDER BY d.PheDuyetId DESC;
         `);
     return result.recordset?.[0] || {};
@@ -656,7 +675,10 @@ router.get("/phieu/:id", /* verifyToken, */ async (req, res) => {
         if (!r) return res.status(404).json({ message: "Không tìm thấy phiếu" });
 
         // Map về shape FE đang dùng
-        const latestRejection = await getLatestRejection(pool, phieuId);
+        const [latestRejection, latestReturn] = await Promise.all([
+            getLatestRejection(pool, phieuId),
+            getLatestReturn(pool, phieuId),
+        ]);
         const mapped = {
             id: r.PhieuSecId,
             maSoSec: r.MaSoSec,               // << quan trọng
@@ -677,8 +699,9 @@ router.get("/phieu/:id", /* verifyToken, */ async (req, res) => {
             expenseReviewerName: r.ExpenseReviewer_Name,
             kttTime: r.KTT_Time,
             gdTime: r.GD_Time,
-            traLaiTime: r.TraLai_Time,
-            lyDoTraLai: r.LyDoTraLai,
+            traLaiTime: latestReturn.TraLai_Time ?? r.TraLai_Time,
+            lyDoTraLai: latestReturn.LyDoTraLai ?? r.LyDoTraLai,
+            nguoiTraLai: latestReturn.NguoiTraLai ?? r.NguoiTraLai ?? null,
             tuChoiTime: latestRejection.TuChoi_Time ?? null,
             lyDoTuChoi: latestRejection.LyDoTuChoi ?? null,
             nguoiTuChoi: latestRejection.NguoiTuChoi ?? null,
@@ -1005,7 +1028,10 @@ router.post("/phieu/:id/approve", async (req, res) => {
         }
         if (!r) return res.status(404).json({ message: "Không tìm thấy phiếu sau khi duyệt" });
 
-        const latestRejection = await getLatestRejection(pool, Number(id));
+        const [latestRejection, latestReturn] = await Promise.all([
+            getLatestRejection(pool, Number(id)),
+            getLatestReturn(pool, Number(id)),
+        ]);
 
         // 💾 Đảm bảo proc SS_sp_PhieuSec_DanhSach trả thêm:
         // r.MaSoSec, r.TBPUserId, r.KTTUserId, r.GDUserId, r.NguoiDangKyId, ...
@@ -1027,8 +1053,9 @@ router.post("/phieu/:id/approve", async (req, res) => {
             expenseReviewerName: r.ExpenseReviewer_Name,
             kttTime: r.KTT_Time,
             gdTime: r.GD_Time,
-            traLaiTime: r.TraLai_Time,
-            lyDoTraLai: r.LyDoTraLai,
+            traLaiTime: latestReturn.TraLai_Time ?? r.TraLai_Time,
+            lyDoTraLai: latestReturn.LyDoTraLai ?? r.LyDoTraLai,
+            nguoiTraLai: latestReturn.NguoiTraLai ?? r.NguoiTraLai ?? null,
             tuChoiTime: latestRejection.TuChoi_Time ?? null,
             lyDoTuChoi: latestRejection.LyDoTuChoi ?? null,
             nguoiTuChoi: latestRejection.NguoiTuChoi ?? null,
