@@ -1536,6 +1536,31 @@ router.post('/btp/phieunhap/:id/gui-wms-kien', async (req, res) => {
   }
 });
 
+router.post('/btp/phieunhap/:id/luu-so-luong-thuc-te', async (req, res) => {
+  const orderID = craneWms.positiveId(req.params.id);
+  if (!orderID) return res.status(400).json({ message: 'Phiếu nhập không hợp lệ' });
+  try {
+    const config = craneWms.getCraneConfig();
+    if (!config) return res.status(503).json({ message: 'Chưa cấu hình kho cầu trục' });
+    const pool = await tagpoolPromise;
+    await assertCraneDocument(pool, 'inbound', orderID, config.warehouseID);
+    const quantities = await craneWmsInbound.saveActualImportQuantities(
+      pool, orderID, config.warehouseID,
+    );
+    const finalize = await craneWmsInbound.safeTryFinalize(pool, orderID);
+    if (finalize.ready && !finalize.finalized) {
+      return res.status(400).json({
+        message: finalize.error || 'Đã lưu số lượng nhưng chưa thể xác nhận phiếu nhập',
+        quantities,
+        finalize,
+      });
+    }
+    return res.json({ ok: true, quantities, finalize });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
 router.post('/btp/phieunhap/:id/kien/:idKien/gui-wms', async (req, res) => {
   const orderID = craneWms.positiveId(req.params.id);
   const packageID = craneWms.positiveId(req.params.idKien);

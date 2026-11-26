@@ -635,6 +635,181 @@ async function safeTryFinalize(pool, orderID) {
     }
 }
 
+async function saveActualImportQuantities(pool, orderID, warehouseID) {
+    const tx = new sql.Transaction(pool);
+    try {
+        await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        await require('./craneDocument').assertCraneDocument(tx, 'inbound', orderID, warehouseID);
+        const result = await new sql.Request(tx)
+            .input('OrderID', sql.Int, orderID)
+            .input('WarehouseID', sql.Int, warehouseID)
+            .query(`
+                SET XACT_ABORT ON;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM dbo.PhieuNhapBTP WITH (UPDLOCK,HOLDLOCK)
+                    WHERE ID_PhieuNhapBTP=@OrderID AND ID_KhoNhap=@WarehouseID
+                      AND TonTai=1 AND ISNULL(QrStatus,0)=0
+                ) THROW 51081,N'Phiếu nhập cầu trục không hợp lệ hoặc đã xác nhận',1;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM dbo.TheKhoKienBTP
+                    WHERE ID_PhieuNhapBTP=@OrderID AND TonTai=1
+                ) THROW 51082,N'Phiếu nhập chưa có kiện',1;
+
+                IF EXISTS (
+                    SELECT 1
+                    FROM dbo.TheKhoKienBTP k
+                    LEFT JOIN dbo.CraneWmsInboundPackage w
+                      ON w.ID_PhieuNhapBTP=k.ID_PhieuNhapBTP
+                     AND w.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP
+                    WHERE k.ID_PhieuNhapBTP=@OrderID AND k.TonTai=1
+                      AND (NULLIF(LTRIM(RTRIM(k.QRCode)),N'') IS NULL
+                        OR k.ID_ViTriKho IS NULL OR w.DispatchStatus<>'SENT' OR w.LocationID IS NULL
+                        OR k.ID_ViTriKho<>w.LocationID)
+                ) THROW 51083,N'Tất cả kiện phải được WMS cập nhật vị trí trước khi lưu số lượng',1;
+
+                IF EXISTS (
+                    SELECT 1 FROM dbo.TheKhoKienBTP k
+                    LEFT JOIN dbo.TheKhoKienBTP_ChiTiet d
+                      ON d.ID_TheKhoKienBTP=k.ID_TheKhoKienBTP AND d.TonTai=1
+                    WHERE k.ID_PhieuNhapBTP=@OrderID AND k.TonTai=1
+                      AND (d.ID_TheKhoKienBTP_ChiTiet IS NULL OR d.SoLuong<=0
+                        OR NULLIF(LTRIM(RTRIM(d.ItemCode)),N'') IS NULL
+                        OR NULLIF(LTRIM(RTRIM(d.Ten_SanPham)),N'') IS NULL
+                        OR NULLIF(LTRIM(RTRIM(d.DauTuan)),N'') IS NULL)
+                ) THROW 51084,N'Các kiện chưa cập nhật đủ BTP, số lượng hoặc dấu tuần',1;
+
+                SELECT ISNULL(d.ID_KeHoachSanXuat,0) ID_KeHoachSanXuat,
+                       ISNULL(d.ID_DonHang_SanPham,0) ID_DonHang_SanPham,
+                       ISNULL(d.ID_DonHang,0) ID_DonHang,
+                       ISNULL(d.ID_DonHang_LoSanXuat,0) ID_DonHang_LoSanXuat,
+                       CAST(SUM(d.SoLuong) AS decimal(18,2)) SoLuong
+                INTO #Actual
+                FROM dbo.TheKhoKienBTP_ChiTiet d
+                JOIN dbo.TheKhoKienBTP k ON k.ID_TheKhoKienBTP=d.ID_TheKhoKienBTP
+                WHERE k.ID_PhieuNhapBTP=@OrderID AND k.TonTai=1 AND d.TonTai=1
+                GROUP BY ISNULL(d.ID_KeHoachSanXuat,0),ISNULL(d.ID_DonHang_SanPham,0),
+                         ISNULL(d.ID_DonHang,0),ISNULL(d.ID_DonHang_LoSanXuat,0);
+
+                DECLARE @ActualTotal decimal(18,2)=(SELECT ISNULL(SUM(SoLuong),0) FROM #Actual);
+                DECLARE @PlannedTotal decimal(18,2);
+                DECLARE @UsePlan bit=CASE WHEN EXISTS (
+                    SELECT 1 FROM dbo.PhieuNhapBTP_KeHoachSanXuat
+                    WHERE ID_PhieuNhapBTP=@OrderID
+                ) THEN 1 ELSE 0 END;
+
+                IF @ActualTotal<=0 THROW 51085,N'Phiếu nhập chưa có số lượng kiện hợp lệ',1;
+
+                IF @UsePlan=1
+                BEGIN
+                    SELECT @PlannedTotal=ISNULL(SUM(SoLuong_NhapKho),0)
+                    FROM dbo.PhieuNhapBTP_KeHoachSanXuat WITH (UPDLOCK,HOLDLOCK)
+                    WHERE ID_PhieuNhapBTP=@OrderID;
+
+                    IF EXISTS (
+                        SELECT 1 FROM #Actual a WHERE NOT EXISTS (
+                            SELECT 1 FROM dbo.PhieuNhapBTP_KeHoachSanXuat p
+                            LEFT JOIN TAG_QLSX.dbo.KeHoachSanXuat kh ON kh.ID_KeHoachSanXuat=p.ID_KeHoachSanXuat
+                            LEFT JOIN TAG_QLSX.dbo.LenhSanXuat l ON l.ID_LenhSanXuat=kh.ID_LenhSanXuat
+                            WHERE p.ID_PhieuNhapBTP=@OrderID
+                              AND ISNULL(p.ID_KeHoachSanXuat,0)=a.ID_KeHoachSanXuat
+                              AND ISNULL(p.ID_DonHang_SanPham,0)=a.ID_DonHang_SanPham
+                              AND ISNULL(l.ID_DonHang,0)=a.ID_DonHang
+                              AND ISNULL(p.ID_DonHang_LoSanXuat,0)=a.ID_DonHang_LoSanXuat
+                        )
+                    ) THROW 51086,N'Có BTP trong kiện không thuộc kế hoạch của phiếu nhập',1;
+
+                    IF EXISTS (
+                        SELECT ISNULL(p.ID_KeHoachSanXuat,0),ISNULL(p.ID_DonHang_SanPham,0),
+                               ISNULL(l.ID_DonHang,0),ISNULL(p.ID_DonHang_LoSanXuat,0)
+                        FROM dbo.PhieuNhapBTP_KeHoachSanXuat p
+                        LEFT JOIN TAG_QLSX.dbo.KeHoachSanXuat kh ON kh.ID_KeHoachSanXuat=p.ID_KeHoachSanXuat
+                        LEFT JOIN TAG_QLSX.dbo.LenhSanXuat l ON l.ID_LenhSanXuat=kh.ID_LenhSanXuat
+                        WHERE p.ID_PhieuNhapBTP=@OrderID
+                        GROUP BY ISNULL(p.ID_KeHoachSanXuat,0),ISNULL(p.ID_DonHang_SanPham,0),
+                                 ISNULL(l.ID_DonHang,0),ISNULL(p.ID_DonHang_LoSanXuat,0)
+                        HAVING COUNT(*)>1
+                    ) THROW 51087,N'Phiếu có dòng kế hoạch trùng khóa, không thể tự cập nhật số lượng',1;
+
+                    IF EXISTS (
+                        SELECT 1 FROM #Actual a
+                        JOIN dbo.PhieuNhapBTP_KeHoachSanXuat p
+                          ON p.ID_PhieuNhapBTP=@OrderID
+                         AND ISNULL(p.ID_KeHoachSanXuat,0)=a.ID_KeHoachSanXuat
+                         AND ISNULL(p.ID_DonHang_SanPham,0)=a.ID_DonHang_SanPham
+                         AND ISNULL(p.ID_DonHang_LoSanXuat,0)=a.ID_DonHang_LoSanXuat
+                        LEFT JOIN TAG_QLSX.dbo.KeHoachSanXuat kh ON kh.ID_KeHoachSanXuat=p.ID_KeHoachSanXuat
+                        LEFT JOIN TAG_QLSX.dbo.LenhSanXuat l ON l.ID_LenhSanXuat=kh.ID_LenhSanXuat
+                        WHERE ISNULL(l.ID_DonHang,0)=a.ID_DonHang AND a.SoLuong>p.SoLuong_NhapKho
+                    ) THROW 51091,N'Số lượng kiện của một dòng lớn hơn số lượng kế hoạch trên phiếu',1;
+
+                    UPDATE p SET SoLuong_NhapKho=ISNULL(a.SoLuong,0)
+                    FROM dbo.PhieuNhapBTP_KeHoachSanXuat p
+                    LEFT JOIN TAG_QLSX.dbo.KeHoachSanXuat kh ON kh.ID_KeHoachSanXuat=p.ID_KeHoachSanXuat
+                    LEFT JOIN TAG_QLSX.dbo.LenhSanXuat l ON l.ID_LenhSanXuat=kh.ID_LenhSanXuat
+                    LEFT JOIN #Actual a ON a.ID_KeHoachSanXuat=ISNULL(p.ID_KeHoachSanXuat,0)
+                      AND a.ID_DonHang_SanPham=ISNULL(p.ID_DonHang_SanPham,0)
+                      AND a.ID_DonHang=ISNULL(l.ID_DonHang,0)
+                      AND a.ID_DonHang_LoSanXuat=ISNULL(p.ID_DonHang_LoSanXuat,0)
+                    WHERE p.ID_PhieuNhapBTP=@OrderID;
+                END
+                ELSE
+                BEGIN
+                    SELECT @PlannedTotal=ISNULL(SUM(SoLuong_NhapKho),0)
+                    FROM dbo.PhieuNhapBTP_ChiTiet WITH (UPDLOCK,HOLDLOCK)
+                    WHERE ID_PhieuNhapBTP=@OrderID;
+
+                    IF EXISTS (
+                        SELECT 1 FROM #Actual a WHERE NOT EXISTS (
+                            SELECT 1 FROM dbo.PhieuNhapBTP_ChiTiet p
+                            WHERE p.ID_PhieuNhapBTP=@OrderID
+                              AND a.ID_KeHoachSanXuat=0
+                              AND ISNULL(p.ID_DonHang_SanPham,0)=a.ID_DonHang_SanPham
+                              AND ISNULL(p.ID_DonHang,0)=a.ID_DonHang
+                              AND ISNULL(p.ID_DonHang_LoSanXuat,0)=a.ID_DonHang_LoSanXuat
+                        )
+                    ) THROW 51088,N'Có BTP trong kiện không thuộc chi tiết phiếu nhập',1;
+
+                    IF EXISTS (
+                        SELECT ISNULL(ID_DonHang_SanPham,0),ISNULL(ID_DonHang,0),ISNULL(ID_DonHang_LoSanXuat,0)
+                        FROM dbo.PhieuNhapBTP_ChiTiet WHERE ID_PhieuNhapBTP=@OrderID
+                        GROUP BY ISNULL(ID_DonHang_SanPham,0),ISNULL(ID_DonHang,0),ISNULL(ID_DonHang_LoSanXuat,0)
+                        HAVING COUNT(*)>1
+                    ) THROW 51089,N'Phiếu có dòng BTP trùng khóa, không thể tự cập nhật số lượng',1;
+
+                    IF EXISTS (
+                        SELECT 1 FROM #Actual a
+                        JOIN dbo.PhieuNhapBTP_ChiTiet p ON p.ID_PhieuNhapBTP=@OrderID
+                          AND a.ID_KeHoachSanXuat=0
+                          AND ISNULL(p.ID_DonHang_SanPham,0)=a.ID_DonHang_SanPham
+                          AND ISNULL(p.ID_DonHang,0)=a.ID_DonHang
+                          AND ISNULL(p.ID_DonHang_LoSanXuat,0)=a.ID_DonHang_LoSanXuat
+                        WHERE a.SoLuong>p.SoLuong_NhapKho
+                    ) THROW 51092,N'Số lượng kiện của một dòng lớn hơn số lượng trên phiếu',1;
+
+                    UPDATE p SET SoLuong_NhapKho=ISNULL(a.SoLuong,0)
+                    FROM dbo.PhieuNhapBTP_ChiTiet p
+                    LEFT JOIN #Actual a ON a.ID_KeHoachSanXuat=0
+                      AND a.ID_DonHang_SanPham=ISNULL(p.ID_DonHang_SanPham,0)
+                      AND a.ID_DonHang=ISNULL(p.ID_DonHang,0)
+                      AND a.ID_DonHang_LoSanXuat=ISNULL(p.ID_DonHang_LoSanXuat,0)
+                    WHERE p.ID_PhieuNhapBTP=@OrderID;
+                END;
+
+                IF @ActualTotal>=@PlannedTotal
+                    THROW 51090,N'Chỉ được lưu số lượng thực tế khi tổng số lượng kiện nhỏ hơn số lượng phiếu',1;
+
+                SELECT @ActualTotal ActualTotal,@PlannedTotal PreviousPlannedTotal;
+            `);
+        await tx.commit();
+        return result.recordset?.[0] || null;
+    } catch (error) {
+        try { await tx.rollback(); } catch (_) { /* noop */ }
+        throw error;
+    }
+}
+
 async function decorateImportDetail(pool, response, orderID) {
     const inbound = await statusWithPackages(pool, orderID);
     if (!inbound) return response;
@@ -653,4 +828,4 @@ async function decorateImportDetail(pool, response, orderID) {
 module.exports = { TEST_WAREHOUSE_ID, TEST_TEMP_LOCATION_CODE, buildPayload, buildPackagePayload, getWarehouseID, testPendingLocationID, stagePackages,
     enqueue, dispatch, status, assertPackageUnlocked, assignQrOnly, enqueuePackage, assignQrAndEnqueue, dispatchPackage,
     runSelectedPackageDispatch, dispatchSelectedPackages, dispatchFailedPackages, statusWithPackages,
-    markPackageLocated, tryFinalize, safeTryFinalize, decorateImportDetail };
+    markPackageLocated, tryFinalize, safeTryFinalize, saveActualImportQuantities, decorateImportDetail };
